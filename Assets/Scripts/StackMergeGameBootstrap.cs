@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -16,34 +17,47 @@ namespace StackMerge
         private readonly IStackMergeSolver[] solvers =
         {
             new RandomStackMergeSolver(),
+            new MergeFirstStackMergeSolver(),
+            new BalancedStackMergeSolver(),
             new HeuristicStackMergeSolver(),
+            new LookaheadStackMergeSolver(),
             new MonteCarloStackMergeSolver()
         };
 
         [Header("Scene UI")]
         [SerializeField] private Camera gameCamera;
         [SerializeField] private Canvas canvas;
-        [SerializeField] private Text scoreText;
-        [SerializeField] private Text bestText;
-        [SerializeField] private Text highestText;
-        [SerializeField] private Text droppedText;
-        [SerializeField] private Text feedbackText;
+        [SerializeField] private TMP_Text scoreText;
+        [SerializeField] private TMP_Text bestText;
+        [SerializeField] private TMP_Text highestText;
+        [SerializeField] private TMP_Text droppedText;
+        [SerializeField] private TMP_Text feedbackText;
         [SerializeField] private RectTransform nextBlocksRoot;
         [SerializeField] private Button[] stackButtons = Array.Empty<Button>();
         [SerializeField] private RectTransform[] stackBlockLayers = Array.Empty<RectTransform>();
         [SerializeField] private Button[] newGameButtons = Array.Empty<Button>();
 
+        [Header("Tabs")]
+        [SerializeField] private GameObject gameplayPanel;
+        [SerializeField] private GameObject algorithmsPanel;
+        [SerializeField] private GameObject upgradesPanel;
+        [SerializeField] private GameObject agentsPanel;
+        [SerializeField] private GameObject settingsPanel;
+        [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
+
         [Header("AI UI")]
-        [SerializeField] private Text chipsText;
-        [SerializeField] private Text solverText;
-        [SerializeField] private Text speedText;
-        [SerializeField] private Text capacityText;
-        [SerializeField] private Text runStatusText;
+        [SerializeField] private TMP_Text chipsText;
+        [SerializeField] private TMP_Text solverText;
+        [SerializeField] private TMP_Text speedText;
+        [SerializeField] private TMP_Text capacityText;
+        [SerializeField] private TMP_Text runStatusText;
+        [SerializeField] private TMP_Text agentSlotsText;
         [SerializeField] private Toggle autoSolveToggle;
         [SerializeField] private Button[] solverButtons = Array.Empty<Button>();
         [SerializeField] private Button speedUpgradeButton;
         [SerializeField] private Button autoRestartButton;
         [SerializeField] private Button stackCapacityButton;
+        [SerializeField] private Button[] agentButtons = Array.Empty<Button>();
 
         [Header("Templates")]
         [SerializeField] private RectTransform blockTemplate;
@@ -51,8 +65,8 @@ namespace StackMerge
 
         [Header("Game Over")]
         [SerializeField] private GameObject gameOverOverlay;
-        [SerializeField] private Text gameOverScoreText;
-        [SerializeField] private Text gameOverBestText;
+        [SerializeField] private TMP_Text gameOverScoreText;
+        [SerializeField] private TMP_Text gameOverBestText;
 
         private StackMergeGameState gameState;
         private StackMergeProgression progression;
@@ -62,6 +76,7 @@ namespace StackMerge
         private float autoRestartTimer;
         private int lastScreenWidth;
         private int lastScreenHeight;
+        private int selectedTabIndex;
 
         private void Awake()
         {
@@ -69,6 +84,7 @@ namespace StackMerge
             EnsureEventSystem();
             WireButtons();
             HideTemplate();
+            SelectTab(0);
         }
 
         private void Start()
@@ -94,29 +110,37 @@ namespace StackMerge
         public void ConfigureSceneReferences(
             Camera cameraReference,
             Canvas canvasReference,
-            Text score,
-            Text best,
-            Text highest,
-            Text dropped,
-            Text feedback,
+            TMP_Text score,
+            TMP_Text best,
+            TMP_Text highest,
+            TMP_Text dropped,
+            TMP_Text feedback,
             RectTransform nextRoot,
             Button[] columns,
             RectTransform[] blockLayers,
             Button[] resetButtons,
-            Text chips,
-            Text solver,
-            Text speed,
-            Text capacity,
-            Text runStatus,
+            GameObject gameplay,
+            GameObject algorithms,
+            GameObject upgrades,
+            GameObject agents,
+            GameObject settings,
+            Button[] bottomTabs,
+            TMP_Text chips,
+            TMP_Text solver,
+            TMP_Text speed,
+            TMP_Text capacity,
+            TMP_Text runStatus,
+            TMP_Text agentSlots,
             Toggle autoSolve,
             Button[] solverSelectionButtons,
             Button speedButton,
             Button restartButton,
             Button capacityButton,
+            Button[] agentSelectionButtons,
             RectTransform blockTemplateReference,
             GameObject gameOver,
-            Text gameOverScore,
-            Text gameOverBest)
+            TMP_Text gameOverScore,
+            TMP_Text gameOverBest)
         {
             gameCamera = cameraReference;
             canvas = canvasReference;
@@ -129,16 +153,24 @@ namespace StackMerge
             stackButtons = columns;
             stackBlockLayers = blockLayers;
             newGameButtons = resetButtons;
+            gameplayPanel = gameplay;
+            algorithmsPanel = algorithms;
+            upgradesPanel = upgrades;
+            agentsPanel = agents;
+            settingsPanel = settings;
+            tabButtons = bottomTabs;
             chipsText = chips;
             solverText = solver;
             speedText = speed;
             capacityText = capacity;
             runStatusText = runStatus;
+            agentSlotsText = agentSlots;
             autoSolveToggle = autoSolve;
             solverButtons = solverSelectionButtons;
             speedUpgradeButton = speedButton;
             autoRestartButton = restartButton;
             stackCapacityButton = capacityButton;
+            agentButtons = agentSelectionButtons;
             blockTemplate = blockTemplateReference;
             gameOverOverlay = gameOver;
             gameOverScoreText = gameOverScore;
@@ -199,6 +231,18 @@ namespace StackMerge
                 newGameButton.onClick.AddListener(StartNewGame);
             }
 
+            for (int i = 0; i < tabButtons.Length; i++)
+            {
+                int tabIndex = i;
+                if (tabButtons[i] == null)
+                {
+                    continue;
+                }
+
+                tabButtons[i].onClick.RemoveAllListeners();
+                tabButtons[i].onClick.AddListener(() => SelectTab(tabIndex));
+            }
+
             for (int i = 0; i < solverButtons.Length; i++)
             {
                 int solverIndex = i;
@@ -209,6 +253,18 @@ namespace StackMerge
 
                 solverButtons[i].onClick.RemoveAllListeners();
                 solverButtons[i].onClick.AddListener(() => SelectOrUnlockSolver((SolverId)solverIndex));
+            }
+
+            for (int i = 0; i < agentButtons.Length; i++)
+            {
+                int agentIndex = i;
+                if (agentButtons[i] == null)
+                {
+                    continue;
+                }
+
+                agentButtons[i].onClick.RemoveAllListeners();
+                agentButtons[i].onClick.AddListener(() => BuyOrToggleAgent((AgentId)agentIndex));
             }
 
             if (speedUpgradeButton != null)
@@ -233,6 +289,25 @@ namespace StackMerge
             {
                 autoSolveToggle.onValueChanged.RemoveAllListeners();
                 autoSolveToggle.onValueChanged.AddListener(SetAutoSolveEnabled);
+            }
+        }
+
+        private void SelectTab(int tabIndex)
+        {
+            selectedTabIndex = Mathf.Clamp(tabIndex, 0, 4);
+            SetActive(gameplayPanel, selectedTabIndex == 0);
+            SetActive(algorithmsPanel, selectedTabIndex == 1);
+            SetActive(upgradesPanel, selectedTabIndex == 2);
+            SetActive(agentsPanel, selectedTabIndex == 3);
+            SetActive(settingsPanel, selectedTabIndex == 4);
+
+            for (int i = 0; i < tabButtons.Length; i++)
+            {
+                TMP_Text label = tabButtons[i] != null ? tabButtons[i].GetComponentInChildren<TMP_Text>(true) : null;
+                if (label != null)
+                {
+                    label.color = i == selectedTabIndex ? HexColor("#FDE68A") : Color.white;
+                }
             }
         }
 
@@ -366,7 +441,7 @@ namespace StackMerge
             }
 
             bool changed = progression.SelectOrUnlockSolver(solverId);
-            SetText(feedbackText, changed ? $"Solver: {solverId.ToString().ToUpperInvariant()}" : "Not enough chips");
+            SetText(feedbackText, changed ? $"Solver: {StackMergeSolverCatalog.GetDefinition(solverId).DisplayName}" : "Not enough chips");
             progression.Save();
             RefreshEverything();
         }
@@ -411,6 +486,20 @@ namespace StackMerge
                 ApplyCurrentCapacityToGameState();
             }
 
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyOrToggleAgent(AgentId agentId)
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool changed = progression.BuyOrToggleAgent(agentId);
+            AgentDefinition definition = progression.GetAgentDefinition(agentId);
+            SetText(feedbackText, changed ? $"Agent updated: {definition.DisplayName}" : "Agent unavailable");
             progression.Save();
             RefreshEverything();
         }
@@ -469,6 +558,7 @@ namespace StackMerge
             SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
             SetText(speedText, $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
             SetText(capacityText, $"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
+            SetText(agentSlotsText, $"Active agents: {progression.ActiveAgentCount}/{progression.ActiveAgentSlots}");
 
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -481,12 +571,13 @@ namespace StackMerge
             }
 
             RefreshSolverButtons();
+            RefreshAgentButtons();
             RefreshUpgradeButtons();
         }
 
         private void RefreshSolverButtons()
         {
-            for (int i = 0; i < solverButtons.Length && i < solvers.Length; i++)
+            for (int i = 0; i < solverButtons.Length && i < StackMergeSolverCatalog.Definitions.Length; i++)
             {
                 Button button = solverButtons[i];
                 if (button == null)
@@ -494,19 +585,59 @@ namespace StackMerge
                     continue;
                 }
 
-                SolverId solverId = solvers[i].Id;
-                bool unlocked = progression.IsSolverUnlocked(solverId);
-                bool selected = progression.SelectedSolver == solverId;
-                long cost = progression.GetSolverUnlockCost(solverId);
+                SolverDefinition definition = StackMergeSolverCatalog.Definitions[i];
+                bool unlocked = progression.IsSolverUnlocked(definition.Id);
+                bool selected = progression.SelectedSolver == definition.Id;
 
-                string label = selected ? $"> {solvers[i].DisplayName}" : solvers[i].DisplayName;
-                if (!unlocked)
+                string label = selected ? $"> {definition.DisplayName}" : definition.DisplayName;
+                if (unlocked)
                 {
-                    label = $"{solvers[i].DisplayName}\n{FormatNumber(cost)}";
+                    label += $"\n{definition.Description}";
+                }
+                else
+                {
+                    label += $"\n{FormatNumber(definition.Cost)} chips\nLocked";
                 }
 
                 SetButtonText(button, label);
-                button.interactable = unlocked || progression.Chips >= cost;
+                button.interactable = unlocked || progression.Chips >= definition.Cost;
+            }
+        }
+
+        private void RefreshAgentButtons()
+        {
+            for (int i = 0; i < agentButtons.Length && i < StackMergeProgression.Agents.Length; i++)
+            {
+                Button button = agentButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                AgentDefinition definition = StackMergeProgression.Agents[i];
+                bool unlocked = progression.IsAgentUnlocked(definition.Id);
+                bool active = progression.IsAgentActive(definition.Id);
+
+                string label = active ? $"> {definition.DisplayName}" : definition.DisplayName;
+                if (unlocked)
+                {
+                    label += $"\n{definition.Description}";
+                    if (!active && progression.ActiveAgentCount >= progression.ActiveAgentSlots && definition.Id != AgentId.Coordinator)
+                    {
+                        label += "\nNo free slot";
+                    }
+                }
+                else
+                {
+                    label += $"\n{FormatNumber(definition.Cost)} chips\nLocked";
+                }
+
+                SetButtonText(button, label);
+                bool coordinatorCanCreateSlot = definition.Id == AgentId.Coordinator
+                    && progression.ActiveAgentCount == progression.ActiveAgentSlots
+                    && progression.ActiveAgentSlots == 2;
+                bool hasEquipRoom = active || progression.ActiveAgentCount < progression.ActiveAgentSlots || coordinatorCanCreateSlot;
+                button.interactable = unlocked ? hasEquipRoom : progression.Chips >= definition.Cost;
             }
         }
 
@@ -661,15 +792,15 @@ namespace StackMerge
                 }
             }
 
-            Text text = block.GetComponentInChildren<Text>(true);
+            TMP_Text text = block.GetComponentInChildren<TMP_Text>(true);
             if (text != null)
             {
                 text.text = FormatNumber(value);
                 text.fontSize = fontSize;
                 text.color = GetReadableTextColor(color);
-                text.resizeTextForBestFit = true;
-                text.resizeTextMinSize = 12;
-                text.resizeTextMaxSize = Mathf.Max(14, fontSize);
+                text.enableAutoSizing = true;
+                text.fontSizeMin = 12;
+                text.fontSizeMax = Mathf.Max(14, fontSize);
             }
 
             return block;
@@ -680,16 +811,14 @@ namespace StackMerge
             GameObject gameObject = new GameObject("Block", typeof(RectTransform), typeof(Image));
             gameObject.transform.SetParent(parent, false);
 
-            GameObject labelObject = new GameObject("Value", typeof(RectTransform), typeof(Text));
+            GameObject labelObject = new GameObject("Value", typeof(RectTransform), typeof(TextMeshProUGUI));
             labelObject.transform.SetParent(gameObject.transform, false);
             RectTransform labelRect = labelObject.GetComponent<RectTransform>();
             Stretch(labelRect, 6f, 4f, 6f, 4f);
 
-            Text text = labelObject.GetComponent<Text>();
-            text.alignment = TextAnchor.MiddleCenter;
-            text.fontStyle = FontStyle.Bold;
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf") ??
-                        Resources.GetBuiltinResource<Font>("Arial.ttf");
+            TMP_Text text = labelObject.GetComponent<TMP_Text>();
+            text.alignment = TextAlignmentOptions.Center;
+            text.fontStyle = FontStyles.Bold;
 
             return gameObject.GetComponent<RectTransform>();
         }
@@ -768,7 +897,7 @@ namespace StackMerge
             return gameObject.TryGetComponent(out T component) ? component : gameObject.AddComponent<T>();
         }
 
-        private static void SetText(Text target, string value)
+        private static void SetText(TMP_Text target, string value)
         {
             if (target != null)
             {
@@ -778,8 +907,16 @@ namespace StackMerge
 
         private static void SetButtonText(Button button, string value)
         {
-            Text text = button != null ? button.GetComponentInChildren<Text>(true) : null;
+            TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
             SetText(text, value);
+        }
+
+        private static void SetActive(GameObject target, bool active)
+        {
+            if (target != null && target.activeSelf != active)
+            {
+                target.SetActive(active);
+            }
         }
 
         private static void Stretch(RectTransform rectTransform, float left = 0f, float top = 0f, float right = 0f, float bottom = 0f)

@@ -106,6 +106,27 @@ namespace StackMerge.Tests
         }
 
         [Test]
+        public void SolverCatalog_OffersSixUnlockableAlgorithms()
+        {
+            Assert.That(StackMergeSolverCatalog.Definitions.Length, Is.EqualTo(6));
+            Assert.That(StackMergeSolverCatalog.Definitions[0].Id, Is.EqualTo(SolverId.Rand));
+            Assert.That(StackMergeSolverCatalog.Definitions[5].Id, Is.EqualTo(SolverId.Moca));
+        }
+
+        [Test]
+        public void Progression_RevealsSolverDescriptionAfterUnlock()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 1000 });
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(SolverId.Look);
+
+            Assert.That(progression.IsSolverUnlocked(SolverId.Look), Is.False);
+            Assert.That(progression.GetSolverDescription(SolverId.Look), Is.EqualTo(definition.LockedHint));
+            Assert.That(progression.SelectOrUnlockSolver(SolverId.Look), Is.True);
+            Assert.That(progression.SelectedSolver, Is.EqualTo(SolverId.Look));
+            Assert.That(progression.GetSolverDescription(SolverId.Look), Is.EqualTo(definition.Description));
+        }
+
+        [Test]
         public void Progression_UnlocksSpeedRestartAndStackCapacity()
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 1000 });
@@ -120,6 +141,36 @@ namespace StackMerge.Tests
             Assert.That(progression.AutoRestartEnabled, Is.True);
             Assert.That(progression.BuyStackCapacityUpgrade(), Is.True);
             Assert.That(progression.StackCapacity, Is.EqualTo(6));
+        }
+
+        [Test]
+        public void Progression_AgentsUnlockEquipAndCoordinatorAddsSlot()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+            AgentDefinition quartermaster = progression.GetAgentDefinition(AgentId.Quartermaster);
+
+            Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
+            Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.LockedHint));
+
+            Assert.That(progression.BuyOrToggleAgent(AgentId.MergeBroker), Is.True);
+            Assert.That(progression.BuyOrToggleAgent(AgentId.HighwaterAnalyst), Is.True);
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
+
+            Assert.That(progression.BuyOrToggleAgent(AgentId.Quartermaster), Is.True);
+            Assert.That(progression.IsAgentUnlocked(AgentId.Quartermaster), Is.True);
+            Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.False);
+            Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.Description));
+
+            Assert.That(progression.BuyOrToggleAgent(AgentId.Coordinator), Is.True);
+            Assert.That(progression.IsAgentActive(AgentId.Coordinator), Is.True);
+            Assert.That(progression.ActiveAgentSlots, Is.EqualTo(3));
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
+
+            Assert.That(progression.BuyOrToggleAgent(AgentId.HighwaterAnalyst), Is.True);
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
+            Assert.That(progression.BuyOrToggleAgent(AgentId.Quartermaster), Is.True);
+            Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.True);
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
         }
     }
 }
