@@ -16,6 +16,8 @@ namespace StackMerge
         public bool autoRestartUnlocked;
         public bool autoRestartEnabled;
         public int stackCapacityLevel;
+        public int queuePreviewLevel;
+        public int incomeLevel;
         public int runsCompleted;
         public bool[] agentUnlocked;
         public int[] activeAgentIds;
@@ -58,9 +60,11 @@ namespace StackMerge
         private const string PlayerPrefsKey = "StackMerge.Progression.v2";
         private const int BaseAgentSlots = 2;
 
-        private static readonly int[] SpeedUpgradeCosts = { 20, 55, 130, 300, 680, 1500, 3300 };
-        private static readonly float[] MoveIntervals = { 1.4f, 0.95f, 0.65f, 0.45f, 0.32f, 0.23f, 0.16f, 0.11f };
+        private static readonly int[] SpeedUpgradeCosts = { 20, 55, 130, 300, 680 };
+        private static readonly float[] MoveIntervals = { 1.4f, 0.95f, 0.65f, 0.45f, 0.30f, 0.20f };
         private static readonly int[] StackCapacityCosts = { 60, 140, 320, 720, 1600 };
+        private static readonly int[] QueuePreviewUpgradeCosts = { 260, 900 };
+        private static readonly int[] IncomeUpgradeCosts = { 90, 220, 520, 1200, 2800 };
 
         public static readonly AgentDefinition[] Agents =
         {
@@ -98,6 +102,20 @@ namespace StackMerge
 
         public int StackCapacity => StackMergeGameState.DefaultStackCapacity + data.stackCapacityLevel;
 
+        public int StackCapacityLevel => data.stackCapacityLevel;
+
+        public int MaxStackCapacityLevel => StackCapacityCosts.Length;
+
+        public int QueueLength => StackMergeGameState.DefaultQueueLength + data.queuePreviewLevel;
+
+        public int QueuePreviewLevel => data.queuePreviewLevel;
+
+        public int MaxQueuePreviewLevel => QueuePreviewUpgradeCosts.Length;
+
+        public int IncomeLevel => data.incomeLevel;
+
+        public int MaxIncomeLevel => IncomeUpgradeCosts.Length;
+
         public int RunsCompleted => data.runsCompleted;
 
         public int MonteCarloSimulationCount => 8 + data.speedLevel * 4;
@@ -108,9 +126,17 @@ namespace StackMerge
 
         public bool IsMaxSpeed => data.speedLevel >= MoveIntervals.Length - 1;
 
+        public int MaxSpeedLevel => SpeedUpgradeCosts.Length;
+
         public bool IsMaxStackCapacity => StackCapacity >= StackMergeGameState.MaxStackCapacity;
 
+        public bool IsMaxQueuePreview => data.queuePreviewLevel >= QueuePreviewUpgradeCosts.Length;
+
+        public bool IsMaxIncome => data.incomeLevel >= IncomeUpgradeCosts.Length;
+
         public int ActiveAgentSlots => BaseAgentSlots + (IsAgentActive(AgentId.Coordinator) ? 1 : 0);
+
+        public int MaxAgentSlots => BaseAgentSlots + 1;
 
         public static StackMergeProgression Load()
         {
@@ -185,6 +211,11 @@ namespace StackMerge
             return IsMaxSpeed ? 0 : SpeedUpgradeCosts[data.speedLevel];
         }
 
+        public long GetSpeedUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < SpeedUpgradeCosts.Length ? SpeedUpgradeCosts[upgradeIndex] : 0;
+        }
+
         public bool BuySpeedUpgrade()
         {
             if (IsMaxSpeed || !Spend(GetSpeedUpgradeCost()))
@@ -194,6 +225,11 @@ namespace StackMerge
 
             data.speedLevel++;
             return true;
+        }
+
+        public bool BuySpeedUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.speedLevel && BuySpeedUpgrade();
         }
 
         public long GetAutoRestartCost()
@@ -224,6 +260,11 @@ namespace StackMerge
             return IsMaxStackCapacity ? 0 : StackCapacityCosts[data.stackCapacityLevel];
         }
 
+        public long GetStackCapacityUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < StackCapacityCosts.Length ? StackCapacityCosts[upgradeIndex] : 0;
+        }
+
         public bool BuyStackCapacityUpgrade()
         {
             if (IsMaxStackCapacity || !Spend(GetStackCapacityUpgradeCost()))
@@ -233,6 +274,63 @@ namespace StackMerge
 
             data.stackCapacityLevel++;
             return true;
+        }
+
+        public bool BuyStackCapacityUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.stackCapacityLevel && BuyStackCapacityUpgrade();
+        }
+
+        public long GetQueuePreviewUpgradeCost()
+        {
+            return IsMaxQueuePreview ? 0 : QueuePreviewUpgradeCosts[data.queuePreviewLevel];
+        }
+
+        public long GetQueuePreviewUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < QueuePreviewUpgradeCosts.Length ? QueuePreviewUpgradeCosts[upgradeIndex] : 0;
+        }
+
+        public bool BuyQueuePreviewUpgrade()
+        {
+            if (IsMaxQueuePreview || !Spend(GetQueuePreviewUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.queuePreviewLevel++;
+            return true;
+        }
+
+        public bool BuyQueuePreviewUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.queuePreviewLevel && BuyQueuePreviewUpgrade();
+        }
+
+        public long GetIncomeUpgradeCost()
+        {
+            return IsMaxIncome ? 0 : IncomeUpgradeCosts[data.incomeLevel];
+        }
+
+        public long GetIncomeUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < IncomeUpgradeCosts.Length ? IncomeUpgradeCosts[upgradeIndex] : 0;
+        }
+
+        public bool BuyIncomeUpgrade()
+        {
+            if (IsMaxIncome || !Spend(GetIncomeUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.incomeLevel++;
+            return true;
+        }
+
+        public bool BuyIncomeUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.incomeLevel && BuyIncomeUpgrade();
         }
 
         public AgentDefinition GetAgentDefinition(AgentId agentId)
@@ -253,10 +351,53 @@ namespace StackMerge
 
         public int ActiveAgentCount => data.activeAgentIds.Count(id => id >= 0);
 
+        public int GetActiveAgentIdAtSlot(int slotIndex)
+        {
+            return slotIndex >= 0 && slotIndex < data.activeAgentIds.Length ? data.activeAgentIds[slotIndex] : -1;
+        }
+
         public string GetAgentInfo(AgentId agentId)
         {
             AgentDefinition definition = GetAgentDefinition(agentId);
             return IsAgentUnlocked(agentId) ? definition.Description : definition.LockedHint;
+        }
+
+        public bool BuyAgent(AgentId agentId)
+        {
+            int index = (int)agentId;
+            if (index < 0 || index >= Agents.Length || IsAgentUnlocked(agentId))
+            {
+                return false;
+            }
+
+            if (!Spend(Agents[index].Cost))
+            {
+                return false;
+            }
+
+            data.agentUnlocked[index] = true;
+            return true;
+        }
+
+        public bool EquipAgent(AgentId agentId)
+        {
+            if (!IsAgentUnlocked(agentId))
+            {
+                return false;
+            }
+
+            return TryEquipAgent(agentId);
+        }
+
+        public bool UnequipAgent(AgentId agentId)
+        {
+            if (!IsAgentActive(agentId))
+            {
+                return false;
+            }
+
+            UnequipAgentInternal(agentId);
+            return true;
         }
 
         public bool BuyOrToggleAgent(AgentId agentId)
@@ -281,7 +422,7 @@ namespace StackMerge
 
             if (IsAgentActive(agentId))
             {
-                UnequipAgent(agentId);
+                UnequipAgentInternal(agentId);
                 return true;
             }
 
@@ -304,6 +445,7 @@ namespace StackMerge
             long gained = placement;
             gained += (long)Math.Ceiling(merge * AgentMergeMultiplier);
             gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
+            gained = ApplyIncomeMultiplier(gained);
             data.chips += gained;
             return gained;
         }
@@ -312,6 +454,7 @@ namespace StackMerge
         {
             data.runsCompleted++;
             long bonus = Math.Max(1, (long)Math.Ceiling((runScore / 50.0) * AgentScoreMultiplier));
+            bonus = ApplyIncomeMultiplier(bonus);
             data.chips += bonus;
             return bonus;
         }
@@ -329,8 +472,7 @@ namespace StackMerge
                 return false;
             }
 
-            bool coordinatorCreatesSlot = agentId == AgentId.Coordinator && ActiveAgentCount == BaseAgentSlots;
-            if (!coordinatorCreatesSlot && ActiveAgentCount >= ActiveAgentSlots)
+            if (ActiveAgentCount >= ActiveAgentSlots)
             {
                 return false;
             }
@@ -339,7 +481,7 @@ namespace StackMerge
             return true;
         }
 
-        private void UnequipAgent(AgentId agentId)
+        private void UnequipAgentInternal(AgentId agentId)
         {
             for (int i = 0; i < data.activeAgentIds.Length; i++)
             {
@@ -363,6 +505,12 @@ namespace StackMerge
                     continue;
                 }
 
+                if (i >= allowedSlots)
+                {
+                    data.activeAgentIds[i] = -1;
+                    continue;
+                }
+
                 activeCount++;
                 if (activeCount > allowedSlots)
                 {
@@ -380,6 +528,11 @@ namespace StackMerge
         private float AgentMoveIntervalMultiplier => IsAgentActive(AgentId.Overclocker) ? 0.85f : 1f;
 
         private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? 1 : 0;
+
+        private long ApplyIncomeMultiplier(long amount)
+        {
+            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.12)));
+        }
 
         private bool Spend(long cost)
         {
@@ -425,6 +578,8 @@ namespace StackMerge
             data.highestUnlockedSolver = Math.Max(data.highestUnlockedSolver, data.selectedSolver);
             data.speedLevel = Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1);
             data.stackCapacityLevel = Mathf.Clamp(data.stackCapacityLevel, 0, StackMergeGameState.MaxStackCapacity - StackMergeGameState.DefaultStackCapacity);
+            data.queuePreviewLevel = Mathf.Clamp(data.queuePreviewLevel, 0, QueuePreviewUpgradeCosts.Length);
+            data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
 
             if (data.agentUnlocked == null || data.agentUnlocked.Length != Agents.Length)
             {

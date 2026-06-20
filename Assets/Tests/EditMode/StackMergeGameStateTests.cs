@@ -106,11 +106,13 @@ namespace StackMerge.Tests
         }
 
         [Test]
-        public void SolverCatalog_OffersSixUnlockableAlgorithms()
+        public void SolverCatalog_OffersEightUnlockableAlgorithms()
         {
-            Assert.That(StackMergeSolverCatalog.Definitions.Length, Is.EqualTo(6));
+            Assert.That(StackMergeSolverCatalog.Definitions.Length, Is.EqualTo(8));
             Assert.That(StackMergeSolverCatalog.Definitions[0].Id, Is.EqualTo(SolverId.Rand));
             Assert.That(StackMergeSolverCatalog.Definitions[5].Id, Is.EqualTo(SolverId.Moca));
+            Assert.That(StackMergeSolverCatalog.Definitions[6].Id, Is.EqualTo(SolverId.Plan3));
+            Assert.That(StackMergeSolverCatalog.Definitions[7].Id, Is.EqualTo(SolverId.Plan5));
         }
 
         [Test]
@@ -141,6 +143,54 @@ namespace StackMerge.Tests
             Assert.That(progression.AutoRestartEnabled, Is.True);
             Assert.That(progression.BuyStackCapacityUpgrade(), Is.True);
             Assert.That(progression.StackCapacity, Is.EqualTo(6));
+            Assert.That(progression.QueueLength, Is.EqualTo(3));
+            Assert.That(progression.BuyQueuePreviewUpgrade(), Is.True);
+            Assert.That(progression.QueueLength, Is.EqualTo(4));
+            Assert.That(progression.BuyIncomeUpgrade(), Is.True);
+            Assert.That(progression.IncomeLevel, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RestoreSnapshotResized_ExtendsNextQueueWithoutDroppingBoard()
+        {
+            var state = new StackMergeGameState(seed: 6);
+            state.SetNextBlocksForTesting(1, 2, 4);
+            state.SetStacksForTesting(
+                new[] { 1 },
+                new[] { 2 },
+                new int[] { },
+                new int[] { });
+
+            StackMergeSnapshot snapshot = state.CreateSnapshot();
+            var resized = new StackMergeGameState(stackCapacity: 6, queueLength: 5, seed: 7);
+            resized.RestoreSnapshotResized(snapshot);
+
+            Assert.That(resized.StackCapacity, Is.EqualTo(6));
+            Assert.That(resized.QueueLength, Is.EqualTo(5));
+            Assert.That(resized.Stacks[0], Is.EqualTo(new[] { 1 }));
+            Assert.That(resized.Stacks[1], Is.EqualTo(new[] { 2 }));
+            Assert.That(resized.NextBlocks[0], Is.EqualTo(1));
+            Assert.That(resized.NextBlocks[1], Is.EqualTo(2));
+            Assert.That(resized.NextBlocks[2], Is.EqualTo(4));
+            Assert.That(resized.NextBlocks.Count, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void Plan5Solver_ReturnsLegalMoveWithExtendedQueue()
+        {
+            var state = new StackMergeGameState(queueLength: 5, seed: 8);
+            state.SetNextBlocksForTesting(1, 2, 1, 4, 1);
+            state.SetStacksForTesting(
+                new[] { 1 },
+                new[] { 4 },
+                new[] { 8 },
+                new int[] { });
+
+            var solver = new Plan5StackMergeSolver();
+            SolverDecision decision = solver.ChooseMove(state, new SolverContext(new Random(8), 4, 4));
+
+            Assert.That(decision.HasMove, Is.True);
+            Assert.That(state.CanPlace(decision.StackIndex), Is.True);
         }
 
         [Test]
@@ -152,25 +202,32 @@ namespace StackMerge.Tests
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
             Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.LockedHint));
 
-            Assert.That(progression.BuyOrToggleAgent(AgentId.MergeBroker), Is.True);
-            Assert.That(progression.BuyOrToggleAgent(AgentId.HighwaterAnalyst), Is.True);
+            Assert.That(progression.BuyAgent(AgentId.MergeBroker), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.MergeBroker), Is.True);
+            Assert.That(progression.BuyAgent(AgentId.HighwaterAnalyst), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.HighwaterAnalyst), Is.True);
             Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
 
-            Assert.That(progression.BuyOrToggleAgent(AgentId.Quartermaster), Is.True);
+            Assert.That(progression.BuyAgent(AgentId.Quartermaster), Is.True);
             Assert.That(progression.IsAgentUnlocked(AgentId.Quartermaster), Is.True);
             Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.False);
             Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.Description));
 
-            Assert.That(progression.BuyOrToggleAgent(AgentId.Coordinator), Is.True);
+            Assert.That(progression.BuyAgent(AgentId.Coordinator), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.Coordinator), Is.False);
+            Assert.That(progression.UnequipAgent(AgentId.HighwaterAnalyst), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.Coordinator), Is.True);
             Assert.That(progression.IsAgentActive(AgentId.Coordinator), Is.True);
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(3));
-            Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
-
-            Assert.That(progression.BuyOrToggleAgent(AgentId.HighwaterAnalyst), Is.True);
             Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
-            Assert.That(progression.BuyOrToggleAgent(AgentId.Quartermaster), Is.True);
+
+            Assert.That(progression.EquipAgent(AgentId.Quartermaster), Is.True);
             Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.True);
             Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
+
+            Assert.That(progression.UnequipAgent(AgentId.Coordinator), Is.True);
+            Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
+            Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.False);
         }
     }
 }

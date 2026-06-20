@@ -11,7 +11,9 @@ namespace StackMerge
         Balance = 2,
         Heur = 3,
         Look = 4,
-        Moca = 5
+        Moca = 5,
+        Plan3 = 6,
+        Plan5 = 7
     }
 
     public readonly struct SolverDefinition
@@ -45,7 +47,9 @@ namespace StackMerge
             new(SolverId.Balance, "BAL", 160, "Keeps stacks even.", "Avoids tall dangerous stacks and spreads risk across the board."),
             new(SolverId.Heur, "HEUR", 320, "Scores every legal move.", "Uses handcrafted heuristics: merge value, danger, future queue fit, and free space."),
             new(SolverId.Look, "LOOK", 700, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
-            new(SolverId.Moca, "MOCA", 1400, "Runs simulations.", "Monte Carlo solver: rolls out multiple futures and picks the best average result.")
+            new(SolverId.Moca, "MOCA", 1400, "Runs simulations.", "Monte Carlo solver: rolls out multiple futures and picks the best average result."),
+            new(SolverId.Plan3, "PLAN-3", 950, "Reads the visible queue.", "Queue planner: searches lines through up to 3 visible next blocks before choosing."),
+            new(SolverId.Plan5, "PLAN-5", 2400, "Uses the extended queue.", "Deep queue planner: searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked.")
         };
 
         public static SolverDefinition GetDefinition(SolverId id)
@@ -279,6 +283,118 @@ namespace StackMerge
             }
 
             return best;
+        }
+    }
+
+    public class QueuePlannerStackMergeSolver : IStackMergeSolver
+    {
+        private readonly SolverId id;
+        private readonly string displayName;
+        private readonly int planningDepth;
+
+        public QueuePlannerStackMergeSolver(SolverId id, string displayName, int planningDepth)
+        {
+            this.id = id;
+            this.displayName = displayName;
+            this.planningDepth = Math.Max(1, planningDepth);
+        }
+
+        public SolverId Id => id;
+
+        public string DisplayName => displayName;
+
+        public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
+        {
+            int[] legalMoves = state.GetLegalMoveIndices();
+            if (legalMoves.Length == 0)
+            {
+                return SolverDecision.NoMove;
+            }
+
+            SolverDecision best = SolverDecision.NoMove;
+            int depth = Math.Min(planningDepth, state.NextBlocks.Count);
+            foreach (int firstMove in legalMoves)
+            {
+                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
+                long beforeScore = copy.Score;
+                MoveResult result = copy.PlaceNext(firstMove);
+                if (!result.Accepted)
+                {
+                    continue;
+                }
+
+                double score = HeuristicStackMergeSolver.ScoreMove(copy, result, copy.Score - beforeScore);
+                score += Search(copy, context, depth - 1) * 0.78;
+                score += context.Random.NextDouble() * 0.001;
+
+                if (!best.HasMove || score > best.Score)
+                {
+                    best = new SolverDecision(true, firstMove, score, $"Plans {depth} blocks");
+                }
+            }
+
+            return best;
+        }
+
+        private static double Search(StackMergeGameState state, SolverContext context, int depth)
+        {
+            if (depth <= 0 || state.IsGameOver)
+            {
+                return EvaluateBoard(state);
+            }
+
+            int[] legalMoves = state.GetLegalMoveIndices();
+            if (legalMoves.Length == 0)
+            {
+                return EvaluateBoard(state) - 5000;
+            }
+
+            double best = double.NegativeInfinity;
+            foreach (int move in legalMoves)
+            {
+                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
+                long beforeScore = copy.Score;
+                MoveResult result = copy.PlaceNext(move);
+                if (!result.Accepted)
+                {
+                    continue;
+                }
+
+                double score = HeuristicStackMergeSolver.ScoreMove(copy, result, copy.Score - beforeScore);
+                score += Search(copy, context, depth - 1) * 0.70;
+                if (score > best)
+                {
+                    best = score;
+                }
+            }
+
+            return double.IsNegativeInfinity(best) ? EvaluateBoard(state) - 5000 : best;
+        }
+
+        private static double EvaluateBoard(StackMergeGameState state)
+        {
+            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
+            int topMatches = state.Stacks.Count(stack => stack.Count > 0 && state.NextBlocks.Contains(stack[^1]));
+            return state.Score * 0.1
+                + FloorLog2(Math.Max(1, state.HighestBlock)) * 90
+                + FreeSlots(state) * 24
+                + topMatches * 80
+                - MaxHeight(state) * MaxHeight(state) * 12
+                - dangerStacks * 280;
+        }
+    }
+
+    public sealed class Plan3StackMergeSolver : QueuePlannerStackMergeSolver
+    {
+        public Plan3StackMergeSolver() : base(SolverId.Plan3, "PLAN-3", 3)
+        {
+        }
+    }
+
+    public sealed class Plan5StackMergeSolver : QueuePlannerStackMergeSolver
+    {
+        public Plan5StackMergeSolver() : base(SolverId.Plan5, "PLAN-5", 5)
+        {
         }
     }
 

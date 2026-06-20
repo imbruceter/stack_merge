@@ -43,35 +43,11 @@ namespace StackMerge.Editor
 
             RectTransform appRoot = CreateRect("App Root", canvasRect);
             Stretch(appRoot);
-            VerticalLayoutGroup rootLayout = appRoot.gameObject.AddComponent<VerticalLayoutGroup>();
-            rootLayout.padding = new RectOffset(52, 52, 34, 28);
-            rootLayout.spacing = 16f;
-            rootLayout.childAlignment = TextAnchor.UpperCenter;
-            rootLayout.childControlWidth = true;
-            rootLayout.childControlHeight = true;
-            rootLayout.childForceExpandWidth = false;
-            rootLayout.childForceExpandHeight = false;
 
             BuildHeader(appRoot);
 
-            TMP_Text scoreText;
-            TMP_Text bestText;
-            TMP_Text highestText;
-            BuildStats(appRoot, out scoreText, out bestText, out highestText);
-
-            TMP_Text chipsText;
-            TMP_Text solverText;
-            TMP_Text speedText;
-            TMP_Text capacityText;
-            TMP_Text runStatusText;
-            TMP_Text agentSlotsText;
-            BuildStatusBar(appRoot, out chipsText, out solverText, out speedText, out capacityText, out runStatusText, out agentSlotsText);
-
             RectTransform contentRoot = CreateRect("Tab Content", appRoot);
-            LayoutElement contentLayout = contentRoot.gameObject.AddComponent<LayoutElement>();
-            contentLayout.preferredWidth = 920f;
-            contentLayout.flexibleHeight = 1f;
-            Stretch(contentRoot);
+            SetStretch(contentRoot, 40f, 126f, 40f, 124f);
 
             RectTransform gameplayPanel;
             RectTransform algorithmsPanel;
@@ -80,24 +56,80 @@ namespace StackMerge.Editor
             RectTransform settingsPanel;
             BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out agentsPanel, out settingsPanel);
 
+            TMP_Text scoreText;
+            TMP_Text bestText;
+            TMP_Text highestText;
+            TMP_Text gameplayChipsText;
+            TMP_Text solverText;
+            TMP_Text speedText;
+            TMP_Text capacityText;
+            TMP_Text queueText;
+            TMP_Text runStatusText;
+            TMP_Text agentSlotsText;
             RectTransform nextBlocksRoot;
             RectTransform[] stackLayers;
             Button[] stackButtons;
             TMP_Text droppedText;
             TMP_Text feedbackText;
             Button footerNewGameButton;
-            BuildGameplayPanel(gameplayPanel, out nextBlocksRoot, out stackButtons, out stackLayers, out droppedText, out feedbackText, out footerNewGameButton);
+            BuildGameplayPanel(
+                gameplayPanel,
+                out scoreText,
+                out bestText,
+                out highestText,
+                out gameplayChipsText,
+                out solverText,
+                out speedText,
+                out capacityText,
+                out queueText,
+                out runStatusText,
+                out agentSlotsText,
+                out nextBlocksRoot,
+                out stackButtons,
+                out stackLayers,
+                out droppedText,
+                out feedbackText,
+                out footerNewGameButton);
 
-            Button[] solverButtons = BuildAlgorithmsPanel(algorithmsPanel);
+            TMP_Text algorithmsChipsText;
+            TMP_Text solverDetailNameText;
+            TMP_Text solverDetailInfoText;
+            TMP_Text solverDetailStatusText;
+            Button solverDetailActionButton;
+            Button[] solverButtons = BuildAlgorithmsPanel(
+                algorithmsPanel,
+                out algorithmsChipsText,
+                out solverDetailNameText,
+                out solverDetailInfoText,
+                out solverDetailStatusText,
+                out solverDetailActionButton);
 
+            TMP_Text upgradesChipsText;
             Toggle autoSolveToggle;
-            Button speedUpgradeButton;
+            Button[] speedUpgradeButtons;
             Button autoRestartButton;
-            Button stackCapacityButton;
-            BuildUpgradesPanel(upgradesPanel, out autoSolveToggle, out speedUpgradeButton, out autoRestartButton, out stackCapacityButton);
+            Button[] stackCapacityUpgradeButtons;
+            Button[] queuePreviewUpgradeButtons;
+            Button[] incomeUpgradeButtons;
+            BuildUpgradesPanel(upgradesPanel, out upgradesChipsText, out autoSolveToggle, out speedUpgradeButtons, out autoRestartButton, out stackCapacityUpgradeButtons, out queuePreviewUpgradeButtons, out incomeUpgradeButtons);
 
-            Button[] agentButtons = BuildAgentsPanel(agentsPanel);
-            BuildSettingsPanel(settingsPanel);
+            TMP_Text agentsChipsText;
+            TMP_Text[] agentSlotTexts;
+            TMP_Text agentDetailNameText;
+            TMP_Text agentDetailInfoText;
+            TMP_Text agentDetailStatusText;
+            Button agentDetailActionButton;
+            Button[] agentButtons = BuildAgentsPanel(
+                agentsPanel,
+                out agentsChipsText,
+                out agentSlotTexts,
+                out agentDetailNameText,
+                out agentDetailInfoText,
+                out agentDetailStatusText,
+                out agentDetailActionButton);
+
+            TMP_Text settingsChipsText;
+            BuildSettingsPanel(settingsPanel, out settingsChipsText);
 
             Button[] tabButtons = BuildBottomTabs(appRoot);
 
@@ -126,18 +158,30 @@ namespace StackMerge.Editor
                 agentsPanel.gameObject,
                 settingsPanel.gameObject,
                 tabButtons,
-                chipsText,
+                new[] { gameplayChipsText, algorithmsChipsText, upgradesChipsText, agentsChipsText, settingsChipsText },
                 solverText,
                 speedText,
                 capacityText,
+                queueText,
                 runStatusText,
                 agentSlotsText,
                 autoSolveToggle,
                 solverButtons,
-                speedUpgradeButton,
+                solverDetailNameText,
+                solverDetailInfoText,
+                solverDetailStatusText,
+                solverDetailActionButton,
+                speedUpgradeButtons,
                 autoRestartButton,
-                stackCapacityButton,
+                stackCapacityUpgradeButtons,
+                queuePreviewUpgradeButtons,
+                incomeUpgradeButtons,
                 agentButtons,
+                agentSlotTexts,
+                agentDetailNameText,
+                agentDetailInfoText,
+                agentDetailStatusText,
+                agentDetailActionButton,
                 blockTemplate,
                 gameOverOverlay,
                 gameOverScoreText,
@@ -210,99 +254,25 @@ namespace StackMerge.Editor
         {
             RectTransform background = CreateRect("Background", parent);
             Stretch(background);
-            Image image = background.gameObject.AddComponent<Image>();
-            image.color = HexColor("#111827");
+            background.gameObject.AddComponent<Image>().color = HexColor("#111827");
         }
 
         private static void BuildHeader(RectTransform parent)
         {
-            RectTransform header = CreateRect("Header", parent);
-            LayoutElement layout = header.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 98f;
+            RectTransform header = CreatePanel("Header", parent, HexColor("#0F172A"));
+            SetTopStretch(header, 40f, 24f, 40f, 82f);
 
-            HorizontalLayoutGroup horizontal = header.gameObject.AddComponent<HorizontalLayoutGroup>();
-            horizontal.spacing = 14f;
-            horizontal.childAlignment = TextAnchor.MiddleCenter;
-            horizontal.childControlWidth = false;
-            horizontal.childControlHeight = false;
-            horizontal.childForceExpandWidth = false;
-            horizontal.childForceExpandHeight = false;
+            TMP_Text title = CreateText("Stack Merge", header, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetStretch(title.rectTransform, 26f, 0f, 340f, 0f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 18;
+            title.fontSizeMax = 38;
 
-            CreateLogoBlock(header, "Stack", HexColor("#F59E0B"));
-            CreateLogoBlock(header, "Merge", HexColor("#7C3AED"));
-        }
-
-        private static void BuildStats(RectTransform parent, out TMP_Text scoreText, out TMP_Text bestText, out TMP_Text highestText)
-        {
-            RectTransform stats = CreateRect("Stats", parent);
-            LayoutElement layout = stats.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 92f;
-
-            HorizontalLayoutGroup horizontal = stats.gameObject.AddComponent<HorizontalLayoutGroup>();
-            horizontal.spacing = 12f;
-            horizontal.childAlignment = TextAnchor.MiddleCenter;
-            horizontal.childControlWidth = true;
-            horizontal.childControlHeight = true;
-            horizontal.childForceExpandWidth = true;
-            horizontal.childForceExpandHeight = true;
-
-            scoreText = CreateStatPanel(stats, "Pont", "0", HexColor("#14B8A6"));
-            bestText = CreateStatPanel(stats, "Rekord", "0", HexColor("#F97316"));
-            highestText = CreateStatPanel(stats, "Legnagyobb", "2", HexColor("#8B5CF6"));
-        }
-
-        private static void BuildStatusBar(
-            RectTransform parent,
-            out TMP_Text chipsText,
-            out TMP_Text solverText,
-            out TMP_Text speedText,
-            out TMP_Text capacityText,
-            out TMP_Text runStatusText,
-            out TMP_Text agentSlotsText)
-        {
-            RectTransform status = CreatePanel("Status Bar", parent, HexColor("#172033"));
-            LayoutElement layout = status.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 104f;
-
-            VerticalLayoutGroup vertical = status.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.padding = new RectOffset(14, 14, 10, 10);
-            vertical.spacing = 8f;
-            vertical.childAlignment = TextAnchor.MiddleCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = true;
-            vertical.childForceExpandWidth = true;
-            vertical.childForceExpandHeight = true;
-
-            RectTransform top = CreateRect("Economy Status", status);
-            top.gameObject.AddComponent<LayoutElement>().preferredHeight = 40f;
-            HorizontalLayoutGroup topLayout = top.gameObject.AddComponent<HorizontalLayoutGroup>();
-            topLayout.spacing = 8f;
-            topLayout.childAlignment = TextAnchor.MiddleCenter;
-            topLayout.childControlWidth = true;
-            topLayout.childControlHeight = true;
-            topLayout.childForceExpandWidth = true;
-            topLayout.childForceExpandHeight = true;
-
-            chipsText = CreateStatusText(top, "Chips: 0", HexColor("#FDE68A"));
-            solverText = CreateStatusText(top, "Solver: RAND", HexColor("#93C5FD"));
-            speedText = CreateStatusText(top, "Speed L0 | 1.40s", HexColor("#5EEAD4"));
-
-            RectTransform bottom = CreateRect("Run Status", status);
-            bottom.gameObject.AddComponent<LayoutElement>().preferredHeight = 36f;
-            HorizontalLayoutGroup bottomLayout = bottom.gameObject.AddComponent<HorizontalLayoutGroup>();
-            bottomLayout.spacing = 8f;
-            bottomLayout.childAlignment = TextAnchor.MiddleCenter;
-            bottomLayout.childControlWidth = true;
-            bottomLayout.childControlHeight = true;
-            bottomLayout.childForceExpandWidth = true;
-            bottomLayout.childForceExpandHeight = true;
-
-            capacityText = CreateStatusText(bottom, $"Stack cap: {StackMergeGameState.DefaultStackCapacity}/{StackMergeGameState.MaxStackCapacity}", HexColor("#C4B5FD"));
-            agentSlotsText = CreateStatusText(bottom, "Active agents: 0/2", HexColor("#F0ABFC"));
-            runStatusText = CreateStatusText(bottom, "Auto solving", HexColor("#D1D5DB"));
+            TMP_Text mode = CreateText("Idle Lab", header, 22, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#93C5FD"));
+            SetStretch(mode.rectTransform, 700f, 0f, 26f, 0f);
+            mode.enableAutoSizing = true;
+            mode.fontSizeMin = 13;
+            mode.fontSizeMax = 22;
         }
 
         private static void BuildTabPanels(
@@ -327,13 +297,23 @@ namespace StackMerge.Editor
 
         private static RectTransform CreateTabPanel(string name, RectTransform parent)
         {
-            RectTransform panel = CreatePanel(name, parent, HexColor("#111827", 0.01f));
+            RectTransform panel = CreateRect(name, parent);
             Stretch(panel);
             return panel;
         }
 
         private static void BuildGameplayPanel(
             RectTransform panel,
+            out TMP_Text scoreText,
+            out TMP_Text bestText,
+            out TMP_Text highestText,
+            out TMP_Text chipsText,
+            out TMP_Text solverText,
+            out TMP_Text speedText,
+            out TMP_Text capacityText,
+            out TMP_Text queueText,
+            out TMP_Text runStatusText,
+            out TMP_Text agentSlotsText,
             out RectTransform nextBlocksRoot,
             out Button[] stackButtons,
             out RectTransform[] stackLayers,
@@ -341,42 +321,91 @@ namespace StackMerge.Editor
             out TMP_Text feedbackText,
             out Button newGameButton)
         {
-            VerticalLayoutGroup vertical = panel.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.spacing = 14f;
-            vertical.childAlignment = TextAnchor.UpperCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = true;
-            vertical.childForceExpandWidth = false;
-            vertical.childForceExpandHeight = false;
-
+            BuildStats(panel, out scoreText, out bestText, out highestText);
+            BuildStatusBar(panel, out chipsText, out solverText, out speedText, out capacityText, out queueText, out runStatusText, out agentSlotsText);
             nextBlocksRoot = BuildNextBlocks(panel);
             BuildBoard(panel, out stackButtons, out stackLayers);
             BuildFooter(panel, out droppedText, out feedbackText, out newGameButton);
         }
 
+        private static void BuildStats(RectTransform parent, out TMP_Text scoreText, out TMP_Text bestText, out TMP_Text highestText)
+        {
+            RectTransform stats = CreateRect("Stats", parent);
+            SetTopStretch(stats, 0f, 0f, 0f, 92f);
+
+            scoreText = CreateStatBox(stats, "Score Stat", "Pont", "0", HexColor("#14B8A6"), 0);
+            bestText = CreateStatBox(stats, "Best Stat", "Rekord", "0", HexColor("#F97316"), 1);
+            highestText = CreateStatBox(stats, "Highest Stat", "Legnagyobb", "2", HexColor("#8B5CF6"), 2);
+        }
+
+        private static TMP_Text CreateStatBox(RectTransform parent, string name, string label, string value, Color accent, int column)
+        {
+            RectTransform box = CreatePanel(name, parent, HexColor("#1F2937"));
+            SetGridCell(box, column, 3, 0, 1, 12f);
+
+            TMP_Text labelText = CreateText(label, box, 16, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#9CA3AF"));
+            SetTopStretch(labelText.rectTransform, 10f, 7f, 10f, 24f);
+
+            TMP_Text valueText = CreateText(value, box, 34, FontStyles.Bold, TextAlignmentOptions.Center, accent);
+            SetStretch(valueText.rectTransform, 10f, 28f, 10f, 8f);
+            valueText.enableAutoSizing = true;
+            valueText.fontSizeMin = 18;
+            valueText.fontSizeMax = 34;
+            return valueText;
+        }
+
+        private static void BuildStatusBar(
+            RectTransform parent,
+            out TMP_Text chipsText,
+            out TMP_Text solverText,
+            out TMP_Text speedText,
+            out TMP_Text capacityText,
+            out TMP_Text queueText,
+            out TMP_Text runStatusText,
+            out TMP_Text agentSlotsText)
+        {
+            RectTransform status = CreatePanel("Status Bar", parent, HexColor("#172033"));
+            SetTopStretch(status, 0f, 104f, 0f, 96f);
+
+            RectTransform topRow = CreateRect("Economy Status", status);
+            SetTopStretch(topRow, 12f, 10f, 12f, 34f);
+
+            chipsText = CreateStatusPill(topRow, "Chips", "Chips: 0", HexColor("#FDE68A"), 0, 3);
+            solverText = CreateStatusPill(topRow, "Solver", "Solver: RAND", HexColor("#93C5FD"), 1, 3);
+            speedText = CreateStatusPill(topRow, "Speed", "Speed L0 | 1.40s", HexColor("#5EEAD4"), 2, 3);
+
+            RectTransform bottomRow = CreateRect("Run Status", status);
+            SetTopStretch(bottomRow, 12f, 52f, 12f, 34f);
+
+            capacityText = CreateStatusPill(bottomRow, "Capacity", $"Stack cap: {StackMergeGameState.DefaultStackCapacity}/{StackMergeGameState.MaxStackCapacity}", HexColor("#C4B5FD"), 0, 4);
+            queueText = CreateStatusPill(bottomRow, "Next Queue", $"Next: {StackMergeGameState.DefaultQueueLength}", HexColor("#DDD6FE"), 1, 4);
+            agentSlotsText = CreateStatusPill(bottomRow, "Agent Slots", "Active agents: 0/2", HexColor("#F0ABFC"), 2, 4);
+            runStatusText = CreateStatusPill(bottomRow, "Run State", "Auto solving", HexColor("#D1D5DB"), 3, 4);
+        }
+
+        private static TMP_Text CreateStatusPill(RectTransform parent, string name, string value, Color color, int column, int columns)
+        {
+            RectTransform pill = CreatePanel(name, parent, HexColor("#111827", 0.72f));
+            SetGridCell(pill, column, columns, 0, 1, 8f);
+
+            TMP_Text text = CreateText(value, pill, 18, FontStyles.Bold, TextAlignmentOptions.Center, color);
+            SetStretch(text.rectTransform, 6f, 0f, 6f, 0f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 11;
+            text.fontSizeMax = 18;
+            return text;
+        }
+
         private static RectTransform BuildNextBlocks(RectTransform parent)
         {
             RectTransform panel = CreatePanel("Next Blocks Panel", parent, HexColor("#1F2937"));
-            LayoutElement layout = panel.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 144f;
+            SetTopStretch(panel, 0f, 214f, 0f, 132f);
 
-            VerticalLayoutGroup vertical = panel.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.padding = new RectOffset(18, 18, 10, 14);
-            vertical.spacing = 8f;
-            vertical.childAlignment = TextAnchor.MiddleCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = false;
-            vertical.childForceExpandWidth = false;
-            vertical.childForceExpandHeight = false;
-
-            TMP_Text title = CreateText("Kovetkezo", panel, 24, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
-            title.gameObject.AddComponent<LayoutElement>().preferredHeight = 30f;
+            TMP_Text title = CreateText("Kovetkezo", panel, 22, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
+            SetTopStretch(title.rectTransform, 16f, 8f, 16f, 28f);
 
             RectTransform nextBlocksRoot = CreateRect("Next Blocks", panel);
-            LayoutElement nextLayout = nextBlocksRoot.gameObject.AddComponent<LayoutElement>();
-            nextLayout.preferredHeight = 82f;
-            nextLayout.preferredWidth = 540f;
+            SetStretch(nextBlocksRoot, 112f, 44f, 112f, 10f);
 
             HorizontalLayoutGroup horizontal = nextBlocksRoot.gameObject.AddComponent<HorizontalLayoutGroup>();
             horizontal.spacing = 16f;
@@ -392,18 +421,7 @@ namespace StackMerge.Editor
         private static void BuildBoard(RectTransform parent, out Button[] stackButtons, out RectTransform[] stackLayers)
         {
             RectTransform board = CreateRect("Board", parent);
-            LayoutElement layout = board.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 660f;
-            layout.flexibleHeight = 1f;
-
-            HorizontalLayoutGroup horizontal = board.gameObject.AddComponent<HorizontalLayoutGroup>();
-            horizontal.spacing = 18f;
-            horizontal.childAlignment = TextAnchor.MiddleCenter;
-            horizontal.childControlWidth = true;
-            horizontal.childControlHeight = true;
-            horizontal.childForceExpandWidth = true;
-            horizontal.childForceExpandHeight = true;
+            SetStretch(board, 0f, 360f, 0f, 102f);
 
             stackButtons = new Button[StackMergeGameState.DefaultStackCount];
             stackLayers = new RectTransform[StackMergeGameState.DefaultStackCount];
@@ -411,10 +429,7 @@ namespace StackMerge.Editor
             for (int i = 0; i < StackMergeGameState.DefaultStackCount; i++)
             {
                 RectTransform column = CreatePanel($"Stack {i + 1}", board, HexColor("#182033"));
-                LayoutElement columnLayout = column.gameObject.AddComponent<LayoutElement>();
-                columnLayout.minWidth = 160f;
-                columnLayout.flexibleWidth = 1f;
-                columnLayout.flexibleHeight = 1f;
+                SetGridCell(column, i, StackMergeGameState.DefaultStackCount, 0, 1, 18f);
 
                 Button button = column.gameObject.AddComponent<Button>();
                 button.targetGraphic = column.GetComponent<Image>();
@@ -422,7 +437,7 @@ namespace StackMerge.Editor
                 stackButtons[i] = button;
 
                 RectTransform fill = CreateRect("Column Fill", column);
-                Stretch(fill, 10f, 10f, 10f, 10f);
+                SetStretch(fill, 10f, 10f, 10f, 10f);
                 Image fillImage = fill.gameObject.AddComponent<Image>();
                 fillImage.color = HexColor("#0F172A", 0.52f);
                 fill.gameObject.AddComponent<RectMask2D>();
@@ -433,171 +448,263 @@ namespace StackMerge.Editor
         private static void BuildFooter(RectTransform parent, out TMP_Text droppedText, out TMP_Text feedbackText, out Button newGameButton)
         {
             RectTransform footer = CreateRect("Footer", parent);
-            LayoutElement layout = footer.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 86f;
-
-            HorizontalLayoutGroup horizontal = footer.gameObject.AddComponent<HorizontalLayoutGroup>();
-            horizontal.spacing = 14f;
-            horizontal.childAlignment = TextAnchor.MiddleCenter;
-            horizontal.childControlWidth = true;
-            horizontal.childControlHeight = true;
-            horizontal.childForceExpandWidth = true;
-            horizontal.childForceExpandHeight = false;
+            SetBottomStretch(footer, 0f, 8f, 0f, 80f);
 
             RectTransform infoPanel = CreatePanel("Run Info", footer, HexColor("#1F2937"));
-            infoPanel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-
-            HorizontalLayoutGroup infoLayout = infoPanel.gameObject.AddComponent<HorizontalLayoutGroup>();
-            infoLayout.padding = new RectOffset(16, 16, 8, 8);
-            infoLayout.spacing = 14f;
-            infoLayout.childAlignment = TextAnchor.MiddleCenter;
-            infoLayout.childControlWidth = true;
-            infoLayout.childControlHeight = true;
-            infoLayout.childForceExpandWidth = true;
-            infoLayout.childForceExpandHeight = true;
+            SetStretch(infoPanel, 0f, 0f, 206f, 0f);
 
             droppedText = CreateText("Dobasok: 0", infoPanel, 22, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#D1D5DB"));
+            SetStretch(droppedText.rectTransform, 18f, 0f, 420f, 0f);
+            droppedText.enableAutoSizing = true;
+            droppedText.fontSizeMin = 13;
+            droppedText.fontSizeMax = 22;
+
             feedbackText = CreateText(string.Empty, infoPanel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#5EEAD4"));
+            SetStretch(feedbackText.rectTransform, 230f, 0f, 18f, 0f);
+            feedbackText.enableAutoSizing = true;
+            feedbackText.fontSizeMin = 12;
+            feedbackText.fontSizeMax = 20;
 
             newGameButton = CreateButton(footer, "Uj jatek", HexColor("#DC2626"), 22);
-            LayoutElement resetLayout = newGameButton.gameObject.AddComponent<LayoutElement>();
-            resetLayout.preferredWidth = 190f;
-            resetLayout.preferredHeight = 68f;
+            SetRightStretch(newGameButton.GetComponent<RectTransform>(), 0f, 0f, 0f, 190f);
         }
 
-        private static Button[] BuildAlgorithmsPanel(RectTransform panel)
+        private static Button[] BuildAlgorithmsPanel(
+            RectTransform panel,
+            out TMP_Text chipsText,
+            out TMP_Text detailNameText,
+            out TMP_Text detailInfoText,
+            out TMP_Text detailStatusText,
+            out Button detailActionButton)
         {
-            VerticalLayoutGroup vertical = ConfigureTabList(panel);
-            TMP_Text title = CreateSectionTitle(panel, "Algorithms");
-            title.text = "Algorithms";
+            BuildMenuHeader(panel, "Algoritmusok", out chipsText);
 
-            TMP_Text subtitle = CreateText("Unlock solvers to reveal how they think. Locked cards only show price.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
-            subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 48f;
+            TMP_Text subtitle = CreateText("Select an algorithm to inspect it. Locked algorithms hide detailed behavior until unlocked.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 42f);
+            subtitle.enableAutoSizing = true;
+            subtitle.fontSizeMin = 12;
+            subtitle.fontSizeMax = 20;
 
-            RectTransform grid = CreateRect("Algorithm Cards", panel);
-            grid.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1f;
-            GridLayoutGroup gridLayout = grid.gameObject.AddComponent<GridLayoutGroup>();
-            gridLayout.cellSize = new Vector2(285f, 150f);
-            gridLayout.spacing = new Vector2(14f, 14f);
-            gridLayout.childAlignment = TextAnchor.UpperCenter;
-            gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            gridLayout.constraintCount = 3;
+            RectTransform details = CreateCategoryPanel(panel, "Selected Algorithm", 136f, 154f);
+            detailNameText = CreateText("RAND", details, 28, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 230f, 36f);
+            detailNameText.enableAutoSizing = true;
+            detailNameText.fontSizeMin = 16;
+            detailNameText.fontSizeMax = 28;
+
+            detailStatusText = CreateText("Active", details, 18, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#FDE68A"));
+            SetTopStretch(detailStatusText.rectTransform, 650f, 0f, 0f, 32f);
+            detailStatusText.enableAutoSizing = true;
+            detailStatusText.fontSizeMin = 11;
+            detailStatusText.fontSizeMax = 18;
+
+            detailInfoText = CreateText("Randomly chooses any valid stack. Weak, chaotic, but fast.", details, 20, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(detailInfoText.rectTransform, 0f, 44f, 220f, 0f);
+            detailInfoText.enableAutoSizing = true;
+            detailInfoText.fontSizeMin = 12;
+            detailInfoText.fontSizeMax = 20;
+
+            detailActionButton = CreateButton(details, "Selected", HexColor("#0F766E"), 22);
+            SetRightStretch(detailActionButton.GetComponent<RectTransform>(), 44f, 0f, 0f, 190f);
 
             Button[] buttons = new Button[StackMergeSolverCatalog.Definitions.Length];
+
+            RectTransform basic = CreateCategoryPanel(panel, "Basic", 306f, 112f);
+            buttons[(int)SolverId.Rand] = CreateSolverButton(basic, SolverId.Rand, 0, 1);
+
+            RectTransform heuristics = CreateCategoryPanel(panel, "Heuristics", 434f, 126f);
+            buttons[(int)SolverId.Merge] = CreateSolverButton(heuristics, SolverId.Merge, 0, 4);
+            buttons[(int)SolverId.Balance] = CreateSolverButton(heuristics, SolverId.Balance, 1, 4);
+            buttons[(int)SolverId.Heur] = CreateSolverButton(heuristics, SolverId.Heur, 2, 4);
+            buttons[(int)SolverId.Look] = CreateSolverButton(heuristics, SolverId.Look, 3, 4);
+
+            RectTransform planning = CreateCategoryPanel(panel, "Planning", 576f, 112f);
+            buttons[(int)SolverId.Plan3] = CreateSolverButton(planning, SolverId.Plan3, 0, 2);
+            buttons[(int)SolverId.Plan5] = CreateSolverButton(planning, SolverId.Plan5, 1, 2);
+
+            RectTransform monteCarlo = CreateCategoryPanel(panel, "Monte Carlo", 704f, 112f);
+            buttons[(int)SolverId.Moca] = CreateSolverButton(monteCarlo, SolverId.Moca, 0, 1);
+
+            return buttons;
+        }
+
+        private static Button CreateSolverButton(RectTransform category, SolverId solverId, int column, int columns)
+        {
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(solverId);
+            Button button = CreateButton(category, $"{definition.DisplayName}\nLocked", HexColor("#2563EB"), 18);
+            SetGridCell(button.GetComponent<RectTransform>(), column, columns, 0, 1, 12f);
+            return button;
+        }
+
+        private static void BuildUpgradesPanel(
+            RectTransform panel,
+            out TMP_Text chipsText,
+            out Toggle autoSolveToggle,
+            out Button[] speedUpgradeButtons,
+            out Button autoRestartButton,
+            out Button[] stackCapacityUpgradeButtons,
+            out Button[] queuePreviewUpgradeButtons,
+            out Button[] incomeUpgradeButtons)
+        {
+            BuildMenuHeader(panel, "Fejlesztesek", out chipsText);
+
+            TMP_Text subtitle = CreateText("Unlock each row from left to right. Speed and stack upgrades have five steps; next preview has two.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 46f);
+            subtitle.enableAutoSizing = true;
+            subtitle.fontSizeMin = 12;
+            subtitle.fontSizeMax = 20;
+
+            RectTransform automation = CreateCategoryPanel(panel, "Automatization", 150f, 128f);
+            autoSolveToggle = CreateToggle(automation, "Auto solve", HexColor("#0F766E"));
+            SetGridCell(autoSolveToggle.GetComponent<RectTransform>(), 0, 2, 0, 1, 14f);
+            autoRestartButton = CreateButton(automation, "Auto restart\n180", HexColor("#C2410C"), 22);
+            SetGridCell(autoRestartButton.GetComponent<RectTransform>(), 1, 2, 0, 1, 14f);
+
+            RectTransform speed = CreateCategoryPanel(panel, "Solver Speed", 294f, 126f);
+            speedUpgradeButtons = CreateUpgradeRow(speed, "Speed", HexColor("#0891B2"));
+
+            RectTransform stack = CreateCategoryPanel(panel, "Stack Capacity", 436f, 126f);
+            stackCapacityUpgradeButtons = CreateUpgradeRow(stack, "Cap", HexColor("#4F46E5"));
+
+            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 578f, 126f);
+            queuePreviewUpgradeButtons = CreateUpgradeRow(queue, "Next", HexColor("#7C3AED"), 2);
+
+            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 720f, 126f);
+            incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
+        }
+
+        private static Button[] CreateUpgradeRow(RectTransform category, string prefix, Color color, int count = 5)
+        {
+            Button[] buttons = new Button[count];
             for (int i = 0; i < buttons.Length; i++)
             {
-                SolverDefinition definition = StackMergeSolverCatalog.Definitions[i];
-                buttons[i] = CreateButton(grid, $"{definition.DisplayName}\nLocked", HexColor("#2563EB"), 18);
+                buttons[i] = CreateButton(category, $"{prefix} {i + 1}", color, 18);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i, buttons.Length, 0, 1, 10f);
             }
 
             return buttons;
         }
 
-        private static void BuildUpgradesPanel(RectTransform panel, out Toggle autoSolveToggle, out Button speedUpgradeButton, out Button autoRestartButton, out Button stackCapacityButton)
+        private static Button[] BuildAgentsPanel(
+            RectTransform panel,
+            out TMP_Text chipsText,
+            out TMP_Text[] agentSlotTexts,
+            out TMP_Text detailNameText,
+            out TMP_Text detailInfoText,
+            out TMP_Text detailStatusText,
+            out Button detailActionButton)
         {
-            ConfigureTabList(panel);
-            CreateSectionTitle(panel, "Upgrades");
+            BuildMenuHeader(panel, "Agentek", out chipsText);
 
-            TMP_Text subtitle = CreateText("Speed makes every algorithm act faster. Stack capacity makes longer, richer runs possible.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
-            subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 56f;
+            RectTransform slots = CreateCategoryPanel(panel, "Active Slots 2 (+1)", 78f, 130f);
+            agentSlotTexts = new TMP_Text[3];
+            for (int i = 0; i < agentSlotTexts.Length; i++)
+            {
+                RectTransform slot = CreatePanel($"Agent Slot {i + 1}", slots, HexColor("#172033"));
+                SetGridCell(slot, i, 3, 0, 1, 12f);
 
-            RectTransform row = CreateRect("Upgrade Cards", panel);
-            row.gameObject.AddComponent<LayoutElement>().preferredHeight = 170f;
-            HorizontalLayoutGroup rowLayout = row.gameObject.AddComponent<HorizontalLayoutGroup>();
-            rowLayout.spacing = 14f;
-            rowLayout.childAlignment = TextAnchor.MiddleCenter;
-            rowLayout.childControlWidth = true;
-            rowLayout.childControlHeight = true;
-            rowLayout.childForceExpandWidth = true;
-            rowLayout.childForceExpandHeight = true;
+                TMP_Text slotText = CreateText(i == 2 ? "Bonus slot\nNeeds Coordinator" : $"Slot {i + 1}\nEmpty", slot, 18, FontStyles.Bold, TextAlignmentOptions.Center, i == 2 ? HexColor("#64748B") : HexColor("#CBD5E1"));
+                SetStretch(slotText.rectTransform, 10f, 0f, 10f, 0f);
+                slotText.enableAutoSizing = true;
+                slotText.fontSizeMin = 11;
+                slotText.fontSizeMax = 18;
+                agentSlotTexts[i] = slotText;
+            }
 
-            autoSolveToggle = CreateToggle(row, "Auto solve", HexColor("#0F766E"));
-            speedUpgradeButton = CreateButton(row, "Speed +\n20", HexColor("#0891B2"), 22);
-            autoRestartButton = CreateButton(row, "Auto restart\n180", HexColor("#C2410C"), 22);
-            stackCapacityButton = CreateButton(row, "Stack +1\n60", HexColor("#4F46E5"), 22);
+            RectTransform details = CreateCategoryPanel(panel, "Selected Agent", 224f, 166f);
+            detailNameText = CreateText("Merge Broker", details, 28, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 230f, 38f);
+            detailNameText.enableAutoSizing = true;
+            detailNameText.fontSizeMin = 16;
+            detailNameText.fontSizeMax = 28;
 
-            TMP_Text footer = CreateText("Auto restart starts a fresh run after game over. Stack capacity starts at 5 and can grow to 10.", panel, 18, FontStyles.Normal, TextAlignmentOptions.Center, HexColor("#94A3B8"));
-            footer.gameObject.AddComponent<LayoutElement>().preferredHeight = 44f;
-        }
+            detailStatusText = CreateText("Locked", details, 18, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#FDE68A"));
+            SetTopStretch(detailStatusText.rectTransform, 650f, 0f, 0f, 34f);
+            detailStatusText.enableAutoSizing = true;
+            detailStatusText.fontSizeMin = 11;
+            detailStatusText.fontSizeMax = 18;
 
-        private static Button[] BuildAgentsPanel(RectTransform panel)
-        {
-            ConfigureTabList(panel);
-            CreateSectionTitle(panel, "Agents");
+            detailInfoText = CreateText("Boosts merge income.\nCost: 120 chips", details, 20, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(detailInfoText.rectTransform, 0f, 46f, 220f, 0f);
+            detailInfoText.enableAutoSizing = true;
+            detailInfoText.fontSizeMin = 12;
+            detailInfoText.fontSizeMax = 20;
 
-            TMP_Text subtitle = CreateText("Agents are managers with passive effects. Buy them to reveal their exact bonus, then equip a small active team.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
-            subtitle.gameObject.AddComponent<LayoutElement>().preferredHeight = 56f;
+            detailActionButton = CreateButton(details, "Buy\n120", HexColor("#0F766E"), 22);
+            SetRightStretch(detailActionButton.GetComponent<RectTransform>(), 46f, 0f, 0f, 190f);
 
-            RectTransform grid = CreateRect("Agent Cards", panel);
-            grid.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1f;
-            GridLayoutGroup gridLayout = grid.gameObject.AddComponent<GridLayoutGroup>();
-            gridLayout.cellSize = new Vector2(285f, 150f);
-            gridLayout.spacing = new Vector2(14f, 14f);
-            gridLayout.childAlignment = TextAnchor.UpperCenter;
-            gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            gridLayout.constraintCount = 3;
+            RectTransform collection = CreateCategoryPanel(panel, "Collection", 406f, 290f);
 
             Button[] buttons = new Button[StackMergeProgression.Agents.Length];
             for (int i = 0; i < buttons.Length; i++)
             {
                 AgentDefinition definition = StackMergeProgression.Agents[i];
-                buttons[i] = CreateButton(grid, $"{definition.DisplayName}\nLocked", HexColor("#9333EA"), 17);
+                buttons[i] = CreateButton(collection, $"{definition.DisplayName}\nLocked", HexColor("#9333EA"), 17);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, 2, 14f);
             }
 
             return buttons;
         }
 
-        private static void BuildSettingsPanel(RectTransform panel)
+        private static void BuildSettingsPanel(RectTransform panel, out TMP_Text chipsText)
         {
-            ConfigureTabList(panel);
-            CreateSectionTitle(panel, "Settings");
+            BuildMenuHeader(panel, "Settings", out chipsText);
 
-            TMP_Text placeholder = CreateText("Settings placeholder\n\nFuture options can live here: sound, animations, number format, reset save, and accessibility controls.", panel, 26, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
-            placeholder.gameObject.AddComponent<LayoutElement>().preferredHeight = 260f;
+            RectTransform placeholderPanel = CreatePanel("Settings Placeholder", panel, HexColor("#1F2937"));
+            SetTopStretch(placeholderPanel, 0f, 138f, 0f, 260f);
+
+            TMP_Text placeholder = CreateText("Placeholder\n\nSound, animation, number format, save reset, and accessibility options can live here later.", placeholderPanel, 26, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
+            SetStretch(placeholder.rectTransform, 24f, 24f, 24f, 24f);
+            placeholder.enableAutoSizing = true;
+            placeholder.fontSizeMin = 14;
+            placeholder.fontSizeMax = 26;
         }
 
-        private static VerticalLayoutGroup ConfigureTabList(RectTransform panel)
+        private static RectTransform CreateCategoryPanel(RectTransform parent, string titleText, float top, float height)
         {
-            VerticalLayoutGroup vertical = panel.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.padding = new RectOffset(18, 18, 18, 18);
-            vertical.spacing = 14f;
-            vertical.childAlignment = TextAnchor.UpperCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = true;
-            vertical.childForceExpandWidth = false;
-            vertical.childForceExpandHeight = false;
-            return vertical;
+            RectTransform panel = CreatePanel($"{titleText} Category", parent, HexColor("#1F2937"));
+            SetTopStretch(panel, 0f, top, 0f, height);
+
+            TMP_Text title = CreateText(titleText, panel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            SetTopStretch(title.rectTransform, 18f, 8f, 18f, 28f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 12;
+            title.fontSizeMax = 20;
+
+            RectTransform content = CreateRect($"{titleText} Content", panel);
+            SetStretch(content, 18f, 44f, 18f, 14f);
+            return content;
         }
 
-        private static TMP_Text CreateSectionTitle(Transform parent, string text)
+        private static void BuildMenuHeader(RectTransform panel, string titleText, out TMP_Text chipsText)
         {
-            TMP_Text title = CreateText(text, parent, 38, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#F8FAFC"));
-            title.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
-            return title;
+            TMP_Text title = CreateText(titleText, panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(title.rectTransform, 0f, 0f, 280f, 58f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 20;
+            title.fontSizeMax = 38;
+
+            RectTransform wallet = CreatePanel("Wallet", panel, HexColor("#172033"));
+            SetTopRight(wallet, 0f, 0f, 240f, 58f);
+
+            chipsText = CreateText("Chips: 0", wallet, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDE68A"));
+            SetStretch(chipsText.rectTransform, 12f, 0f, 12f, 0f);
+            chipsText.enableAutoSizing = true;
+            chipsText.fontSizeMin = 12;
+            chipsText.fontSizeMax = 20;
         }
 
         private static Button[] BuildBottomTabs(RectTransform parent)
         {
             RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0F172A"));
-            LayoutElement layout = tabs.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 920f;
-            layout.preferredHeight = 86f;
+            SetBottomStretch(tabs, 40f, 24f, 40f, 86f);
 
-            HorizontalLayoutGroup horizontal = tabs.gameObject.AddComponent<HorizontalLayoutGroup>();
-            horizontal.padding = new RectOffset(10, 10, 10, 10);
-            horizontal.spacing = 8f;
-            horizontal.childAlignment = TextAnchor.MiddleCenter;
-            horizontal.childControlWidth = true;
-            horizontal.childControlHeight = true;
-            horizontal.childForceExpandWidth = true;
-            horizontal.childForceExpandHeight = true;
-
-            string[] labels = { "Gameplay", "Algorithms", "Upgrades", "Agents", "Settings" };
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Agent", "Settings" };
             Button[] buttons = new Button[labels.Length];
             for (int i = 0; i < labels.Length; i++)
             {
-                buttons[i] = CreateButton(tabs, labels[i], i == 0 ? HexColor("#1D4ED8") : HexColor("#1F2937"), 20);
+                buttons[i] = CreateButton(tabs, labels[i], i == 0 ? HexColor("#1D4ED8") : HexColor("#1F2937"), 18);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i, labels.Length, 0, 1, 8f);
             }
 
             return buttons;
@@ -611,33 +718,19 @@ namespace StackMerge.Editor
             scrim.color = HexColor("#030712", 0.78f);
 
             RectTransform modal = CreatePanel("Game Over Modal", overlay, HexColor("#1F2937"));
-            modal.anchorMin = new Vector2(0.5f, 0.5f);
-            modal.anchorMax = new Vector2(0.5f, 0.5f);
-            modal.pivot = new Vector2(0.5f, 0.5f);
-            modal.sizeDelta = new Vector2(720f, 440f);
-
-            VerticalLayoutGroup vertical = modal.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.padding = new RectOffset(42, 42, 36, 36);
-            vertical.spacing = 22f;
-            vertical.childAlignment = TextAnchor.MiddleCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = false;
-            vertical.childForceExpandWidth = true;
-            vertical.childForceExpandHeight = false;
+            SetCenter(modal, 720f, 440f);
 
             TMP_Text title = CreateText("Jatek vege", modal, 54, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#F9FAFB"));
-            title.gameObject.AddComponent<LayoutElement>().preferredHeight = 72f;
+            SetTopStretch(title.rectTransform, 42f, 36f, 42f, 76f);
 
             scoreText = CreateText("Pont: 0", modal, 34, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDBA74"));
-            scoreText.gameObject.AddComponent<LayoutElement>().preferredHeight = 48f;
+            SetTopStretch(scoreText.rectTransform, 42f, 136f, 42f, 54f);
 
             bestText = CreateText("Rekord: 0", modal, 28, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#C4B5FD"));
-            bestText.gameObject.AddComponent<LayoutElement>().preferredHeight = 44f;
+            SetTopStretch(bestText.rectTransform, 42f, 200f, 42f, 48f);
 
             newGameButton = CreateButton(modal, "Uj jatek", HexColor("#14B8A6"), 28);
-            LayoutElement restartLayout = newGameButton.gameObject.AddComponent<LayoutElement>();
-            restartLayout.preferredWidth = 300f;
-            restartLayout.preferredHeight = 82f;
+            SetBottomCenter(newGameButton.GetComponent<RectTransform>(), 300f, 82f, 42f);
 
             overlay.gameObject.SetActive(false);
             return overlay.gameObject;
@@ -654,11 +747,10 @@ namespace StackMerge.Editor
 
             RectTransform blockTemplate = CreateRect("Block Template", templates);
             blockTemplate.sizeDelta = new Vector2(144f, 78f);
-            Image image = blockTemplate.gameObject.AddComponent<Image>();
-            image.color = HexColor("#5EEAD4");
+            blockTemplate.gameObject.AddComponent<Image>().color = HexColor("#5EEAD4");
 
             TMP_Text value = CreateText("4", blockTemplate, 34, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#111827"));
-            Stretch(value.rectTransform, 6f, 4f, 6f, 4f);
+            SetStretch(value.rectTransform, 6f, 4f, 6f, 4f);
             value.enableAutoSizing = true;
             value.fontSizeMin = 12;
             value.fontSizeMax = 34;
@@ -667,66 +759,15 @@ namespace StackMerge.Editor
             return blockTemplate;
         }
 
-        private static RectTransform CreateLogoBlock(Transform parent, string label, Color color)
-        {
-            RectTransform block = CreatePanel(label, parent, color);
-            LayoutElement layout = block.gameObject.AddComponent<LayoutElement>();
-            layout.preferredWidth = 210f;
-            layout.preferredHeight = 74f;
-
-            TMP_Text text = CreateText(label, block, 38, FontStyles.Bold, TextAlignmentOptions.Center, Color.white);
-            Stretch(text.rectTransform);
-            text.enableAutoSizing = true;
-            text.fontSizeMin = 18;
-            text.fontSizeMax = 38;
-            return block;
-        }
-
-        private static TMP_Text CreateStatPanel(Transform parent, string label, string value, Color accent)
-        {
-            RectTransform panel = CreatePanel(label, parent, HexColor("#1F2937"));
-
-            VerticalLayoutGroup vertical = panel.gameObject.AddComponent<VerticalLayoutGroup>();
-            vertical.padding = new RectOffset(10, 10, 6, 8);
-            vertical.spacing = 1f;
-            vertical.childAlignment = TextAnchor.MiddleCenter;
-            vertical.childControlWidth = true;
-            vertical.childControlHeight = false;
-            vertical.childForceExpandWidth = true;
-            vertical.childForceExpandHeight = false;
-
-            TMP_Text labelText = CreateText(label, panel, 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#9CA3AF"));
-            labelText.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
-
-            TMP_Text valueText = CreateText(value, panel, 34, FontStyles.Bold, TextAlignmentOptions.Center, accent);
-            valueText.enableAutoSizing = true;
-            valueText.fontSizeMin = 20;
-            valueText.fontSizeMax = 34;
-            valueText.gameObject.AddComponent<LayoutElement>().preferredHeight = 46f;
-            return valueText;
-        }
-
-        private static TMP_Text CreateStatusText(Transform parent, string value, Color color)
-        {
-            RectTransform panel = CreatePanel(value, parent, HexColor("#111827", 0.72f));
-            TMP_Text text = CreateText(value, panel, 18, FontStyles.Bold, TextAlignmentOptions.Center, color);
-            Stretch(text.rectTransform, 6f, 0f, 6f, 0f);
-            text.enableAutoSizing = true;
-            text.fontSizeMin = 12;
-            text.fontSizeMax = 18;
-            return text;
-        }
-
         private static Button CreateButton(Transform parent, string label, Color color, int fontSize)
         {
             RectTransform rectTransform = CreatePanel(label, parent, color);
-            rectTransform.gameObject.AddComponent<LayoutElement>().minWidth = 120f;
             Button button = rectTransform.gameObject.AddComponent<Button>();
             button.targetGraphic = rectTransform.GetComponent<Image>();
             button.colors = ButtonColors(color, Color.Lerp(color, Color.white, 0.18f), Color.Lerp(color, Color.black, 0.5f));
 
             TMP_Text text = CreateText(label, rectTransform, fontSize, FontStyles.Bold, TextAlignmentOptions.Center, Color.white);
-            Stretch(text.rectTransform, 8f, 0f, 8f, 0f);
+            SetStretch(text.rectTransform, 10f, 0f, 10f, 0f);
             text.enableAutoSizing = true;
             text.fontSizeMin = 10;
             text.fontSizeMax = fontSize;
@@ -736,42 +777,33 @@ namespace StackMerge.Editor
         private static Toggle CreateToggle(Transform parent, string label, Color color)
         {
             RectTransform root = CreatePanel(label, parent, color);
-            root.gameObject.AddComponent<LayoutElement>().minWidth = 150f;
-
             Toggle toggle = root.gameObject.AddComponent<Toggle>();
             toggle.targetGraphic = root.GetComponent<Image>();
             toggle.isOn = true;
 
-            HorizontalLayoutGroup layout = root.gameObject.AddComponent<HorizontalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 8, 8);
-            layout.spacing = 10f;
-            layout.childAlignment = TextAnchor.MiddleCenter;
-            layout.childControlWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandWidth = false;
-            layout.childForceExpandHeight = false;
-
             RectTransform box = CreatePanel("Box", root, HexColor("#ECFEFF"));
-            LayoutElement boxLayout = box.gameObject.AddComponent<LayoutElement>();
-            boxLayout.preferredWidth = 34f;
-            boxLayout.preferredHeight = 34f;
+            box.anchorMin = new Vector2(0f, 0.5f);
+            box.anchorMax = new Vector2(0f, 0.5f);
+            box.pivot = new Vector2(0f, 0.5f);
+            box.anchoredPosition = new Vector2(24f, 0f);
+            box.sizeDelta = new Vector2(38f, 38f);
+
             Image check = CreatePanel("Checkmark", box, HexColor("#14B8A6")).GetComponent<Image>();
-            Stretch(check.rectTransform, 7f, 7f, 7f, 7f);
+            SetStretch(check.rectTransform, 8f, 8f, 8f, 8f);
             toggle.graphic = check;
 
-            TMP_Text text = CreateText(label, root, 22, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, Color.white);
-            text.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            TMP_Text text = CreateText(label, root, 24, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, Color.white);
+            SetStretch(text.rectTransform, 78f, 0f, 18f, 0f);
             text.enableAutoSizing = true;
             text.fontSizeMin = 13;
-            text.fontSizeMax = 22;
+            text.fontSizeMax = 24;
             return toggle;
         }
 
         private static RectTransform CreatePanel(string name, Transform parent, Color color)
         {
             RectTransform panel = CreateRect(name, parent);
-            Image image = panel.gameObject.AddComponent<Image>();
-            image.color = color;
+            panel.gameObject.AddComponent<Image>().color = color;
             return panel;
         }
 
@@ -785,6 +817,7 @@ namespace StackMerge.Editor
             uiText.alignment = alignment;
             uiText.color = color;
             uiText.overflowMode = TextOverflowModes.Ellipsis;
+            uiText.raycastTarget = false;
             return uiText;
         }
 
@@ -795,10 +828,87 @@ namespace StackMerge.Editor
             return gameObject.GetComponent<RectTransform>();
         }
 
-        private static void Stretch(RectTransform rectTransform, float left = 0f, float top = 0f, float right = 0f, float bottom = 0f)
+        private static void Stretch(RectTransform rectTransform)
+        {
+            SetStretch(rectTransform, 0f, 0f, 0f, 0f);
+        }
+
+        private static void SetStretch(RectTransform rectTransform, float left, float top, float right, float bottom)
         {
             rectTransform.anchorMin = Vector2.zero;
             rectTransform.anchorMax = Vector2.one;
+            rectTransform.offsetMin = new Vector2(left, bottom);
+            rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetTopStretch(RectTransform rectTransform, float left, float top, float right, float height)
+        {
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(0.5f, 1f);
+            rectTransform.offsetMin = new Vector2(left, -top - height);
+            rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetBottomStretch(RectTransform rectTransform, float left, float bottom, float right, float height)
+        {
+            rectTransform.anchorMin = new Vector2(0f, 0f);
+            rectTransform.anchorMax = new Vector2(1f, 0f);
+            rectTransform.pivot = new Vector2(0.5f, 0f);
+            rectTransform.offsetMin = new Vector2(left, bottom);
+            rectTransform.offsetMax = new Vector2(-right, bottom + height);
+        }
+
+        private static void SetRightStretch(RectTransform rectTransform, float top, float right, float bottom, float width)
+        {
+            rectTransform.anchorMin = new Vector2(1f, 0f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(1f, 0.5f);
+            rectTransform.offsetMin = new Vector2(-right - width, bottom);
+            rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetTopRight(RectTransform rectTransform, float top, float right, float width, float height)
+        {
+            rectTransform.anchorMin = new Vector2(1f, 1f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(1f, 1f);
+            rectTransform.anchoredPosition = new Vector2(-right, -top);
+            rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static void SetCenter(RectTransform rectTransform, float width, float height)
+        {
+            rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+            rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            rectTransform.anchoredPosition = Vector2.zero;
+            rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static void SetBottomCenter(RectTransform rectTransform, float width, float height, float bottom)
+        {
+            rectTransform.anchorMin = new Vector2(0.5f, 0f);
+            rectTransform.anchorMax = new Vector2(0.5f, 0f);
+            rectTransform.pivot = new Vector2(0.5f, 0f);
+            rectTransform.anchoredPosition = new Vector2(0f, bottom);
+            rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static void SetGridCell(RectTransform rectTransform, int column, int columns, int row, int rows, float gap)
+        {
+            float xMin = column / (float)columns;
+            float xMax = (column + 1) / (float)columns;
+            float yMax = 1f - row / (float)rows;
+            float yMin = 1f - (row + 1) / (float)rows;
+
+            float left = column == 0 ? 0f : gap * 0.5f;
+            float right = column == columns - 1 ? 0f : gap * 0.5f;
+            float top = row == 0 ? 0f : gap * 0.5f;
+            float bottom = row == rows - 1 ? 0f : gap * 0.5f;
+
+            rectTransform.anchorMin = new Vector2(xMin, yMin);
+            rectTransform.anchorMax = new Vector2(xMax, yMax);
             rectTransform.offsetMin = new Vector2(left, bottom);
             rectTransform.offsetMax = new Vector2(-right, -top);
         }

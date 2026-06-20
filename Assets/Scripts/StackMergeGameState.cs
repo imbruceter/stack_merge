@@ -232,6 +232,43 @@ namespace StackMerge
             IsGameOver = snapshot.IsGameOver || !HasLegalMove();
         }
 
+        public void RestoreSnapshotResized(StackMergeSnapshot snapshot)
+        {
+            if (snapshot.Stacks.Length != StackCount)
+            {
+                throw new ArgumentException("Snapshot stack count does not match this game.", nameof(snapshot));
+            }
+
+            for (int i = 0; i < StackCount; i++)
+            {
+                if (snapshot.Stacks[i].Length > StackCapacity)
+                {
+                    throw new ArgumentException("Snapshot contains a stack above capacity.", nameof(snapshot));
+                }
+
+                stacks[i].Clear();
+                stacks[i].AddRange(snapshot.Stacks[i]);
+            }
+
+            Score = snapshot.Score;
+            BlocksDropped = snapshot.BlocksDropped;
+            HighestBlock = Math.Max(2, snapshot.HighestBlock);
+
+            nextBlocks.Clear();
+            int preservedBlocks = Math.Min(snapshot.NextBlocks.Length, QueueLength);
+            for (int i = 0; i < preservedBlocks; i++)
+            {
+                nextBlocks.Add(snapshot.NextBlocks[i]);
+            }
+
+            while (nextBlocks.Count < QueueLength)
+            {
+                nextBlocks.Add(GenerateNextBlock());
+            }
+
+            IsGameOver = snapshot.IsGameOver || !HasLegalMove();
+        }
+
         public void SetNextBlocksForTesting(params int[] blocks)
         {
             if (blocks.Length != QueueLength)
