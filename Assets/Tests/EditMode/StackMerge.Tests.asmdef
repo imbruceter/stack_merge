@@ -1,12 +1,12 @@
 {
-    "name": "StackMerge.Runtime",
-    "rootNamespace": "StackMerge",
+    "name": "StackMerge.Tests",
+    "rootNamespace": "StackMerge.Tests",
     "references": [
-        "UnityEngine.UI",
-        "Unity.InputSystem",
-        "Unity.TextMeshPro"
+        "StackMerge.Runtime"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
@@ -14,5 +14,8 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [],
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ],
     "noEngineReferences": false
 }

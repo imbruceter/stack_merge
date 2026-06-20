@@ -7,7 +7,8 @@ namespace StackMerge
     public sealed class StackMergeGameState
     {
         public const int DefaultStackCount = 4;
-        public const int DefaultStackCapacity = 10;
+        public const int DefaultStackCapacity = 5;
+        public const int MaxStackCapacity = 10;
         public const int DefaultQueueLength = 3;
 
         private readonly List<int>[] stacks;
@@ -93,6 +94,43 @@ namespace StackMerge
                 return false;
             }
 
+            return CanPlaceIgnoringGameOver(stackIndex);
+        }
+
+        public bool HasLegalMove()
+        {
+            for (int i = 0; i < StackCount; i++)
+            {
+                if (CanPlaceIgnoringGameOver(i))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public int[] GetLegalMoveIndices()
+        {
+            if (IsGameOver)
+            {
+                return Array.Empty<int>();
+            }
+
+            List<int> legalMoves = new(StackCount);
+            for (int i = 0; i < StackCount; i++)
+            {
+                if (CanPlaceIgnoringGameOver(i))
+                {
+                    legalMoves.Add(i);
+                }
+            }
+
+            return legalMoves.ToArray();
+        }
+
+        private bool CanPlaceIgnoringGameOver(int stackIndex)
+        {
             List<int> stack = stacks[stackIndex];
             if (stack.Count < StackCapacity)
             {
@@ -100,19 +138,6 @@ namespace StackMerge
             }
 
             return stack.Count > 0 && stack[^1] == nextBlocks[0];
-        }
-
-        public bool HasLegalMove()
-        {
-            for (int i = 0; i < StackCount; i++)
-            {
-                if (CanPlace(i))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         public MoveResult PlaceNext(int stackIndex)
@@ -167,6 +192,13 @@ namespace StackMerge
                 BlocksDropped,
                 HighestBlock,
                 IsGameOver);
+        }
+
+        public StackMergeGameState CreateSimulationCopy(int? seed = null)
+        {
+            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, seed);
+            copy.RestoreSnapshot(CreateSnapshot());
+            return copy;
         }
 
         public void RestoreSnapshot(StackMergeSnapshot snapshot)

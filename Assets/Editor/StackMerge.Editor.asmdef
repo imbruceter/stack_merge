@@ -1,12 +1,15 @@
 {
-    "name": "StackMerge.Runtime",
-    "rootNamespace": "StackMerge",
+    "name": "StackMerge.Editor",
+    "rootNamespace": "StackMerge.Editor",
     "references": [
+        "StackMerge.Runtime",
         "UnityEngine.UI",
         "Unity.InputSystem",
         "Unity.TextMeshPro"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
