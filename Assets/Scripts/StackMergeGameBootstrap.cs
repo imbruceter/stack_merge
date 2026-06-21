@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -14,17 +15,7 @@ namespace StackMerge
         private const float AutoRestartDelay = 1.2f;
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
-        private readonly IStackMergeSolver[] solvers =
-        {
-            new RandomStackMergeSolver(),
-            new MergeFirstStackMergeSolver(),
-            new BalancedStackMergeSolver(),
-            new HeuristicStackMergeSolver(),
-            new LookaheadStackMergeSolver(),
-            new MonteCarloStackMergeSolver(),
-            new Plan3StackMergeSolver(),
-            new Plan5StackMergeSolver()
-        };
+        private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
 
         [Header("Scene UI")]
         [SerializeField] private Camera gameCamera;
@@ -35,14 +26,19 @@ namespace StackMerge
         [SerializeField] private TMP_Text droppedText;
         [SerializeField] private TMP_Text feedbackText;
         [SerializeField] private RectTransform nextBlocksRoot;
+        [SerializeField] private RectTransform boardRoot;
         [SerializeField] private Button[] stackButtons = Array.Empty<Button>();
         [SerializeField] private RectTransform[] stackBlockLayers = Array.Empty<RectTransform>();
         [SerializeField] private Button[] newGameButtons = Array.Empty<Button>();
+        [SerializeField] private Button historyButton;
+        [SerializeField] private Button achievementsButton;
 
         [Header("Tabs")]
         [SerializeField] private GameObject gameplayPanel;
         [SerializeField] private GameObject algorithmsPanel;
         [SerializeField] private GameObject upgradesPanel;
+        [SerializeField] private GameObject historyPanel;
+        [SerializeField] private GameObject achievementsPanel;
         [SerializeField] private GameObject agentsPanel;
         [SerializeField] private GameObject settingsPanel;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
@@ -66,6 +62,17 @@ namespace StackMerge
         [SerializeField] private Button[] stackCapacityUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button[] queuePreviewUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button[] incomeUpgradeButtons = Array.Empty<Button>();
+        [SerializeField] private Button[] difficultyUpgradeButtons = Array.Empty<Button>();
+        [SerializeField] private Button agentsMenuUnlockButton;
+        [SerializeField] private TMP_Text historySummaryText;
+        [SerializeField] private RectTransform historyChartRoot;
+        [SerializeField] private RectTransform historySolverTableRoot;
+        [SerializeField] private RectTransform historyRecentRunsRoot;
+        [SerializeField] private TMP_Text historyInsightText;
+        [SerializeField] private Button historyBackButton;
+        [SerializeField] private TMP_Text achievementStatsText;
+        [SerializeField] private RectTransform achievementListRoot;
+        [SerializeField] private Button achievementBackButton;
         [SerializeField] private Button[] agentButtons = Array.Empty<Button>();
         [SerializeField] private TMP_Text[] agentSlotTexts = Array.Empty<TMP_Text>();
         [SerializeField] private TMP_Text agentDetailNameText;
@@ -91,6 +98,10 @@ namespace StackMerge
         private int lastScreenWidth;
         private int lastScreenHeight;
         private int selectedTabIndex;
+        private bool historyOpen;
+        private bool achievementsOpen;
+        private bool currentRunUsedAutoSolve;
+        private int currentRunManualMoves;
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
 
@@ -133,12 +144,17 @@ namespace StackMerge
             TMP_Text dropped,
             TMP_Text feedback,
             RectTransform nextRoot,
+            RectTransform board,
             Button[] columns,
             RectTransform[] blockLayers,
             Button[] resetButtons,
+            Button openHistoryButton,
+            Button openAchievementsButton,
             GameObject gameplay,
             GameObject algorithms,
             GameObject upgrades,
+            GameObject history,
+            GameObject achievements,
             GameObject agents,
             GameObject settings,
             Button[] bottomTabs,
@@ -160,6 +176,17 @@ namespace StackMerge
             Button[] capacityButtons,
             Button[] queueButtons,
             Button[] incomeButtons,
+            Button[] difficultyButtons,
+            Button unlockAgentsButton,
+            TMP_Text historySummary,
+            RectTransform historyChart,
+            RectTransform historySolverTable,
+            RectTransform historyRecentRuns,
+            TMP_Text historyInsight,
+            Button closeHistoryButton,
+            TMP_Text achievementStats,
+            RectTransform achievementList,
+            Button closeAchievementButton,
             Button[] agentSelectionButtons,
             TMP_Text[] agentSlotsDisplays,
             TMP_Text selectedAgentName,
@@ -179,12 +206,17 @@ namespace StackMerge
             droppedText = dropped;
             feedbackText = feedback;
             nextBlocksRoot = nextRoot;
+            boardRoot = board;
             stackButtons = columns;
             stackBlockLayers = blockLayers;
             newGameButtons = resetButtons;
+            historyButton = openHistoryButton;
+            achievementsButton = openAchievementsButton;
             gameplayPanel = gameplay;
             algorithmsPanel = algorithms;
             upgradesPanel = upgrades;
+            historyPanel = history;
+            achievementsPanel = achievements;
             agentsPanel = agents;
             settingsPanel = settings;
             tabButtons = bottomTabs;
@@ -206,6 +238,17 @@ namespace StackMerge
             stackCapacityUpgradeButtons = capacityButtons;
             queuePreviewUpgradeButtons = queueButtons;
             incomeUpgradeButtons = incomeButtons;
+            difficultyUpgradeButtons = difficultyButtons;
+            agentsMenuUnlockButton = unlockAgentsButton;
+            historySummaryText = historySummary;
+            historyChartRoot = historyChart;
+            historySolverTableRoot = historySolverTable;
+            historyRecentRunsRoot = historyRecentRuns;
+            historyInsightText = historyInsight;
+            historyBackButton = closeHistoryButton;
+            achievementStatsText = achievementStats;
+            achievementListRoot = achievementList;
+            achievementBackButton = closeAchievementButton;
             agentButtons = agentSelectionButtons;
             agentSlotTexts = agentSlotsDisplays;
             agentDetailNameText = selectedAgentName;
@@ -258,7 +301,7 @@ namespace StackMerge
                 }
 
                 stackButtons[i].onClick.RemoveAllListeners();
-                stackButtons[i].onClick.AddListener(() => PlaceOnStack(stackIndex, "Manual"));
+                stackButtons[i].onClick.AddListener(() => PlaceOnStack(stackIndex, "Manual", false));
             }
 
             foreach (Button newGameButton in newGameButtons)
@@ -270,6 +313,30 @@ namespace StackMerge
 
                 newGameButton.onClick.RemoveAllListeners();
                 newGameButton.onClick.AddListener(StartNewGame);
+            }
+
+            if (historyButton != null)
+            {
+                historyButton.onClick.RemoveAllListeners();
+                historyButton.onClick.AddListener(OpenHistoryPanel);
+            }
+
+            if (historyBackButton != null)
+            {
+                historyBackButton.onClick.RemoveAllListeners();
+                historyBackButton.onClick.AddListener(CloseHistoryPanel);
+            }
+
+            if (achievementsButton != null)
+            {
+                achievementsButton.onClick.RemoveAllListeners();
+                achievementsButton.onClick.AddListener(OpenAchievementsPanel);
+            }
+
+            if (achievementBackButton != null)
+            {
+                achievementBackButton.onClick.RemoveAllListeners();
+                achievementBackButton.onClick.AddListener(CloseAchievementsPanel);
             }
 
             for (int i = 0; i < tabButtons.Length; i++)
@@ -362,6 +429,24 @@ namespace StackMerge
                 incomeUpgradeButtons[i].onClick.AddListener(() => BuyIncomeUpgrade(upgradeIndex));
             }
 
+            for (int i = 0; i < difficultyUpgradeButtons.Length; i++)
+            {
+                int upgradeIndex = i;
+                if (difficultyUpgradeButtons[i] == null)
+                {
+                    continue;
+                }
+
+                difficultyUpgradeButtons[i].onClick.RemoveAllListeners();
+                difficultyUpgradeButtons[i].onClick.AddListener(() => BuyDifficultyUpgrade(upgradeIndex));
+            }
+
+            if (agentsMenuUnlockButton != null)
+            {
+                agentsMenuUnlockButton.onClick.RemoveAllListeners();
+                agentsMenuUnlockButton.onClick.AddListener(BuyAgentsMenuUnlock);
+            }
+
             if (autoSolveToggle != null)
             {
                 autoSolveToggle.onValueChanged.RemoveAllListeners();
@@ -383,32 +468,101 @@ namespace StackMerge
 
         private void SelectTab(int tabIndex)
         {
-            selectedTabIndex = Mathf.Clamp(tabIndex, 0, 4);
+            historyOpen = false;
+            achievementsOpen = false;
+            int requestedTab = Mathf.Clamp(tabIndex, 0, 4);
+            if (requestedTab == 3 && progression != null && !progression.AgentsMenuUnlocked)
+            {
+                SetText(feedbackText, "Unlock Agents in Upgrades first");
+                requestedTab = selectedTabIndex;
+            }
+
+            selectedTabIndex = requestedTab;
             SetActive(gameplayPanel, selectedTabIndex == 0);
             SetActive(algorithmsPanel, selectedTabIndex == 1);
             SetActive(upgradesPanel, selectedTabIndex == 2);
+            SetActive(historyPanel, false);
+            SetActive(achievementsPanel, false);
             SetActive(agentsPanel, selectedTabIndex == 3);
             SetActive(settingsPanel, selectedTabIndex == 4);
-
-            for (int i = 0; i < tabButtons.Length; i++)
-            {
-                TMP_Text label = tabButtons[i] != null ? tabButtons[i].GetComponentInChildren<TMP_Text>(true) : null;
-                Image background = tabButtons[i] != null ? tabButtons[i].GetComponent<Image>() : null;
-                bool selected = i == selectedTabIndex;
-                if (label != null)
-                {
-                    label.color = selected ? HexColor("#FDE68A") : Color.white;
-                }
-
-                if (background != null)
-                {
-                    background.color = selected ? HexColor("#1D4ED8") : HexColor("#1F2937");
-                }
-            }
+            RefreshTabButtons();
 
             if (gameState != null)
             {
                 RefreshGameOver();
+            }
+        }
+
+        private void OpenHistoryPanel()
+        {
+            historyOpen = true;
+            achievementsOpen = false;
+            SetActive(gameplayPanel, false);
+            SetActive(algorithmsPanel, false);
+            SetActive(upgradesPanel, false);
+            SetActive(achievementsPanel, false);
+            SetActive(agentsPanel, false);
+            SetActive(settingsPanel, false);
+            SetActive(historyPanel, true);
+            RefreshHistory();
+            RefreshTabButtons();
+            RefreshGameOver();
+        }
+
+        private void CloseHistoryPanel()
+        {
+            SelectTab(0);
+        }
+
+        private void OpenAchievementsPanel()
+        {
+            achievementsOpen = true;
+            historyOpen = false;
+            SetActive(gameplayPanel, false);
+            SetActive(algorithmsPanel, false);
+            SetActive(upgradesPanel, false);
+            SetActive(historyPanel, false);
+            SetActive(agentsPanel, false);
+            SetActive(settingsPanel, false);
+            SetActive(achievementsPanel, true);
+            RefreshAchievements();
+            RefreshTabButtons();
+            RefreshGameOver();
+        }
+
+        private void CloseAchievementsPanel()
+        {
+            SelectTab(0);
+        }
+
+        private void RefreshTabButtons()
+        {
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Agent", "Settings" };
+            for (int i = 0; i < tabButtons.Length; i++)
+            {
+                Button button = tabButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
+                Image background = button.GetComponent<Image>();
+                bool selected = !historyOpen && !achievementsOpen && i == selectedTabIndex;
+                bool lockedAgentTab = i == 3 && progression != null && !progression.AgentsMenuUnlocked;
+
+                if (label != null)
+                {
+                    label.text = lockedAgentTab ? "Agent\nLocked" : i < labels.Length ? labels[i] : label.text;
+                    label.color = lockedAgentTab ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
+                }
+
+                if (background != null)
+                {
+                    background.color = lockedAgentTab ? HexColor("#111827") : selected ? HexColor("#1D4ED8") : HexColor("#1F2937");
+                }
+
+                button.interactable = !lockedAgentTab;
             }
         }
 
@@ -461,7 +615,7 @@ namespace StackMerge
 
             if (decision.HasMove)
             {
-                PlaceOnStack(decision.StackIndex, decision.Reason);
+                PlaceOnStack(decision.StackIndex, decision.Reason, true);
             }
         }
 
@@ -471,7 +625,7 @@ namespace StackMerge
             return solvers[solverIndex];
         }
 
-        private void PlaceOnStack(int stackIndex, string reason)
+        private void PlaceOnStack(int stackIndex, string reason, bool autoSolverMove)
         {
             if (gameState == null || progression == null)
             {
@@ -488,10 +642,26 @@ namespace StackMerge
             }
 
             long chipsGained = progression.AwardMove(result);
+            if (autoSolverMove)
+            {
+                currentRunUsedAutoSolve = true;
+            }
+            else
+            {
+                currentRunManualMoves++;
+            }
+
             long runBonus = 0;
             if (!wasGameOver && result.IsGameOver)
             {
-                runBonus = progression.AwardRunCompleted(gameState.Score);
+                bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
+                runBonus = progression.AwardRunCompleted(
+                    gameState.Score,
+                    progression.SelectedSolver,
+                    gameState.BlocksDropped,
+                    gameState.TotalMerges,
+                    gameState.HighestMergedBlock,
+                    manualRun);
             }
 
             progression.Save();
@@ -517,9 +687,12 @@ namespace StackMerge
         {
             int capacity = progression != null ? progression.StackCapacity : StackMergeGameState.DefaultStackCapacity;
             int queueLength = progression != null ? progression.QueueLength : StackMergeGameState.DefaultQueueLength;
-            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, seed: Environment.TickCount);
+            int difficulty = progression != null ? progression.DifficultyLevel : 0;
+            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, seed: Environment.TickCount);
             autoSolveTimer = 0f;
             autoRestartTimer = 0f;
+            currentRunUsedAutoSolve = false;
+            currentRunManualMoves = 0;
         }
 
         private void UpdateHighScore()
@@ -631,6 +804,37 @@ namespace StackMerge
             RefreshEverything();
         }
 
+        private void BuyDifficultyUpgrade(int upgradeIndex)
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyDifficultyUpgrade(upgradeIndex);
+            SetText(feedbackText, bought ? $"Risk level {progression.DifficultyLevel}" : "Risk upgrade unavailable");
+            if (bought)
+            {
+                ApplyCurrentBoardSettingsToGameState();
+            }
+
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyAgentsMenuUnlock()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyAgentsMenuUnlock();
+            SetText(feedbackText, bought ? "Agents menu unlocked" : "Not enough chips");
+            progression.Save();
+            RefreshEverything();
+        }
+
         private void SelectAgent(AgentId agentId)
         {
             selectedAgentId = agentId;
@@ -642,6 +846,13 @@ namespace StackMerge
         {
             if (progression == null)
             {
+                return;
+            }
+
+            if (!progression.AgentsMenuUnlocked)
+            {
+                SetText(feedbackText, "Unlock Agents in Upgrades first");
+                RefreshEverything();
                 return;
             }
 
@@ -670,7 +881,9 @@ namespace StackMerge
         private void ApplyCurrentBoardSettingsToGameState()
         {
             if (gameState == null
-                || (gameState.StackCapacity == progression.StackCapacity && gameState.QueueLength == progression.QueueLength))
+                || (gameState.StackCapacity == progression.StackCapacity
+                    && gameState.QueueLength == progression.QueueLength
+                    && gameState.DifficultyLevel == progression.DifficultyLevel))
             {
                 return;
             }
@@ -679,6 +892,7 @@ namespace StackMerge
             var resizedGame = new StackMergeGameState(
                 stackCapacity: progression.StackCapacity,
                 queueLength: progression.QueueLength,
+                difficultyLevel: progression.DifficultyLevel,
                 seed: Environment.TickCount);
             resizedGame.RestoreSnapshotResized(snapshot);
             gameState = resizedGame;
@@ -724,9 +938,11 @@ namespace StackMerge
             SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)}");
             SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
             SetText(speedText, $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
-            SetText(capacityText, $"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
+            SetText(capacityText, $"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity} | Risk L{progression.DifficultyLevel}");
             SetText(queueText, $"Next: {progression.QueueLength}");
-            SetText(agentSlotsText, $"Active agents: {progression.ActiveAgentCount}/{progression.ActiveAgentSlots}");
+            SetText(agentSlotsText, progression.AgentsMenuUnlocked
+                ? $"Active agents: {progression.ActiveAgentCount}/{progression.ActiveAgentSlots}"
+                : "Agents: locked");
 
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -744,6 +960,9 @@ namespace StackMerge
             RefreshAgentSlots();
             RefreshAgentDetails();
             RefreshUpgradeButtons();
+            RefreshHistory();
+            RefreshAchievements();
+            RefreshTabButtons();
         }
 
         private void RefreshSolverButtons()
@@ -816,6 +1035,14 @@ namespace StackMerge
                 }
 
                 AgentDefinition definition = StackMergeProgression.Agents[i];
+                if (!progression.AgentsMenuUnlocked)
+                {
+                    SetButtonText(button, $"{definition.DisplayName}\nLocked");
+                    button.interactable = false;
+                    SetButtonColor(button, HexColor("#334155"));
+                    continue;
+                }
+
                 bool unlocked = progression.IsAgentUnlocked(definition.Id);
                 bool active = progression.IsAgentActive(definition.Id);
                 bool selected = selectedAgentId == definition.Id;
@@ -846,6 +1073,13 @@ namespace StackMerge
                     continue;
                 }
 
+                if (!progression.AgentsMenuUnlocked)
+                {
+                    SetText(text, i == 0 ? "Agents\nLocked" : "Unlock in\nUpgrades");
+                    text.color = HexColor("#64748B");
+                    continue;
+                }
+
                 int activeAgentId = progression.GetActiveAgentIdAtSlot(i);
                 if (activeAgentId >= 0)
                 {
@@ -869,6 +1103,20 @@ namespace StackMerge
         private void RefreshAgentDetails()
         {
             AgentDefinition definition = progression.GetAgentDefinition(selectedAgentId);
+            if (!progression.AgentsMenuUnlocked)
+            {
+                SetText(agentDetailNameText, "Agents Locked");
+                SetText(agentDetailInfoText, $"Unlock the Agents menu in Upgrades.\nCost: {FormatNumber(progression.GetAgentsMenuUnlockCost())} chips");
+                SetText(agentDetailStatusText, "Locked");
+                SetButtonText(agentDetailActionButton, "Unlock in\nUpgrades");
+                if (agentDetailActionButton != null)
+                {
+                    agentDetailActionButton.interactable = false;
+                }
+
+                return;
+            }
+
             bool unlocked = progression.IsAgentUnlocked(selectedAgentId);
             bool active = progression.IsAgentActive(selectedAgentId);
 
@@ -952,6 +1200,23 @@ namespace StackMerge
                 }
             }
 
+            if (agentsMenuUnlockButton != null)
+            {
+                if (progression.AgentsMenuUnlocked)
+                {
+                    SetButtonText(agentsMenuUnlockButton, "Agents\nUnlocked");
+                    agentsMenuUnlockButton.interactable = false;
+                    SetButtonColor(agentsMenuUnlockButton, HexColor("#0F766E"));
+                }
+                else
+                {
+                    long cost = progression.GetAgentsMenuUnlockCost();
+                    SetButtonText(agentsMenuUnlockButton, $"Unlock Agents\n{FormatNumber(cost)}");
+                    agentsMenuUnlockButton.interactable = progression.Chips >= cost;
+                    SetButtonColor(agentsMenuUnlockButton, HexColor("#9333EA"));
+                }
+            }
+
             for (int i = 0; i < stackCapacityUpgradeButtons.Length; i++)
             {
                 Button button = stackCapacityUpgradeButtons[i];
@@ -1010,6 +1275,35 @@ namespace StackMerge
                 }
             }
 
+            for (int i = 0; i < difficultyUpgradeButtons.Length; i++)
+            {
+                Button button = difficultyUpgradeButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                if (i < progression.DifficultyLevel)
+                {
+                    SetButtonText(button, $"Risk {i + 1}\nDone");
+                    button.interactable = false;
+                    SetButtonColor(button, HexColor("#0F766E"));
+                }
+                else if (i == progression.DifficultyLevel && !progression.IsMaxDifficulty)
+                {
+                    long cost = progression.GetDifficultyUpgradeCost(i);
+                    SetButtonText(button, $"Risk {i + 1}\n{FormatNumber(cost)}");
+                    button.interactable = progression.Chips >= cost;
+                    SetButtonColor(button, HexColor("#DB2777"));
+                }
+                else
+                {
+                    SetButtonText(button, $"Risk {i + 1}\nLocked");
+                    button.interactable = false;
+                    SetButtonColor(button, HexColor("#334155"));
+                }
+            }
+
             for (int i = 0; i < incomeUpgradeButtons.Length; i++)
             {
                 Button button = incomeUpgradeButtons[i];
@@ -1038,6 +1332,337 @@ namespace StackMerge
                     SetButtonColor(button, HexColor("#334155"));
                 }
             }
+        }
+
+        private void RefreshHistory()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            RunHistoryEntry[] history = progression.RunHistory;
+            if (history.Length == 0)
+            {
+                SetText(historySummaryText, "No completed runs yet. Let a run end to start collecting solver stats.");
+                SetText(historyInsightText, "Tip: use the editor benchmark window for large balance samples without touching player progression.");
+                RefreshHistoryChart(Array.Empty<HistorySolverStats>());
+                CreateTable(historySolverTableRoot, new[] { "Solver", "Runs", "Median", "Avg", "Min", "Max", "High" }, Array.Empty<string[]>(), "No solver data yet.");
+                CreateTable(historyRecentRunsRoot, new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" }, Array.Empty<string[]>(), "Recent runs will appear here.");
+
+                return;
+            }
+
+            RunHistoryEntry latest = history[0];
+            RunHistoryEntry best = history.OrderByDescending(entry => entry.score).First();
+            HistorySolverStats[] solverStats = BuildHistorySolverStats(history);
+            HistorySolverStats bestMedian = solverStats.OrderByDescending(stats => stats.MedianScore).First();
+            HistorySolverStats bestPeak = solverStats.OrderByDescending(stats => stats.MaxScore).First();
+            HistorySolverStats mostStable = solverStats
+                .Where(stats => stats.Runs >= 2)
+                .OrderBy(stats => stats.ScoreRange)
+                .ThenByDescending(stats => stats.MedianScore)
+                .DefaultIfEmpty(bestMedian)
+                .First();
+
+            SetText(
+                historySummaryText,
+                $"Stored runs: {history.Length}/{250} | Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)}) | Best run: {FormatNumber(best.score)} ({SolverName(best.solverId)})");
+
+            SetText(
+                historyInsightText,
+                $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Most stable: {mostStable.SolverName} ({FormatNumber(mostStable.MinScore)}-{FormatNumber(mostStable.MaxScore)})");
+
+            RefreshHistoryChart(solverStats);
+            RefreshHistoryTables(solverStats, history);
+        }
+
+        private void RefreshAchievements()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            int completed = StackMergeProgression.Achievements.Count(progression.IsAchievementComplete);
+            SetText(
+                achievementStatsText,
+                $"Completed goals: {completed}/{StackMergeProgression.Achievements.Length} | Runs: {FormatNumber(progression.RunsCompleted)} ({FormatNumber(progression.ManualRunsCompleted)} manual) | Merges: {FormatNumber(progression.TotalMerges)} | Highest: {FormatNumber(progression.HighestBlockEver)} | Earned: {FormatNumber(progression.TotalChipsEarned)} | Spent: {FormatNumber(progression.TotalChipsSpent)} | Best run: {FormatNumber(progression.BestRunScore)}");
+
+            string[][] rows = StackMergeProgression.Achievements
+                .Select(achievement =>
+                {
+                    long progress = progression.GetAchievementProgress(achievement);
+                    long cappedProgress = Math.Min(progress, achievement.Target);
+                    bool complete = progression.IsAchievementComplete(achievement);
+                    float percent = achievement.Target <= 0 ? 1f : Mathf.Clamp01(progress / (float)achievement.Target);
+                    return new[]
+                    {
+                        achievement.Description,
+                        $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}",
+                        complete ? "Complete" : $"{percent * 100f:0}%"
+                    };
+                })
+                .ToArray();
+
+            CreateTable(
+                achievementListRoot,
+                new[] { "Goal", "Progress", "Status" },
+                rows,
+                "No achievements configured.");
+        }
+
+        private void RefreshHistoryTables(HistorySolverStats[] solverStats, RunHistoryEntry[] history)
+        {
+            string[][] solverRows = solverStats
+                .OrderByDescending(stats => stats.MedianScore)
+                .Select(stats => new[]
+                {
+                    stats.SolverName,
+                    stats.Runs.ToString(),
+                    FormatNumber(stats.MedianScore),
+                    FormatNumber(stats.AverageScore),
+                    FormatNumber(stats.MinScore),
+                    FormatNumber(stats.MaxScore),
+                    FormatNumber(stats.BestHighestMerged)
+                })
+                .ToArray();
+
+            CreateTable(
+                historySolverTableRoot,
+                new[] { "Solver", "Runs", "Median", "Avg", "Min", "Max", "High" },
+                solverRows,
+                "No solver data yet.");
+
+            string[][] recentRows = history
+                .Take(12)
+                .Select(entry => new[]
+                {
+                    $"#{entry.runIndex}",
+                    SolverName(entry.solverId),
+                    FormatNumber(entry.score),
+                    entry.moves.ToString(),
+                    entry.merges.ToString(),
+                    FormatNumber(entry.highestMergedBlock),
+                    $"L{entry.difficultyLevel}"
+                })
+                .ToArray();
+
+            CreateTable(
+                historyRecentRunsRoot,
+                new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" },
+                recentRows,
+                "Recent runs will appear here.");
+        }
+
+        private static HistorySolverStats[] BuildHistorySolverStats(RunHistoryEntry[] history)
+        {
+            return history
+                .GroupBy(entry => entry.solverId)
+                .Select(group =>
+                {
+                    long[] scores = group.Select(entry => entry.score).OrderBy(value => value).ToArray();
+                    int[] highest = group.Select(entry => entry.highestMergedBlock).OrderBy(value => value).ToArray();
+                    return new HistorySolverStats(
+                        group.Key,
+                        group.Count(),
+                        scores.First(),
+                        scores.Last(),
+                        Median(scores),
+                        scores.Average(),
+                        highest.Length > 0 ? highest.Last() : 0);
+                })
+                .ToArray();
+        }
+
+        private void RefreshHistoryChart(HistorySolverStats[] solverStats)
+        {
+            if (historyChartRoot == null)
+            {
+                return;
+            }
+
+            ClearChildren(historyChartRoot);
+            HistorySolverStats[] entries = solverStats
+                .OrderByDescending(stats => stats.MedianScore)
+                .Take(8)
+                .ToArray();
+            if (entries.Length == 0)
+            {
+                TMP_Text empty = CreateRuntimeText("Empty Chart", historyChartRoot, "No median data yet", 22, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
+                Stretch(empty.rectTransform, 0f, 0f, 0f, 0f);
+                return;
+            }
+
+            float chartWidth = Mathf.Max(480f, historyChartRoot.rect.width);
+            float chartHeight = Mathf.Max(180f, historyChartRoot.rect.height);
+            float gap = 8f;
+            float bottomLabelHeight = 42f;
+            float barWidth = Mathf.Max(22f, (chartWidth - gap * (entries.Length - 1)) / entries.Length);
+            long maxScore = Math.Max(1, entries.Max(entry => entry.MedianScore));
+
+            for (int i = 0; i < entries.Length; i++)
+            {
+                HistorySolverStats entry = entries[i];
+                float normalized = Mathf.Clamp01(entry.MedianScore / (float)maxScore);
+                float barHeight = Mathf.Lerp(16f, chartHeight - bottomLabelHeight - 14f, normalized);
+                float x = i * (barWidth + gap);
+
+                RectTransform bar = CreateRuntimePanel($"{entry.SolverName} Median Bar", historyChartRoot, HexColor("#2563EB"));
+                bar.anchorMin = new Vector2(0f, 0f);
+                bar.anchorMax = new Vector2(0f, 0f);
+                bar.pivot = new Vector2(0f, 0f);
+                bar.anchoredPosition = new Vector2(x, bottomLabelHeight);
+                bar.sizeDelta = new Vector2(barWidth, barHeight);
+                Image barImage = bar.GetComponent<Image>();
+                if (barImage != null)
+                {
+                    barImage.color = Color.Lerp(HexColor("#0F766E"), HexColor("#2563EB"), i / Mathf.Max(1f, entries.Length - 1f));
+                }
+
+                TMP_Text valueLabel = CreateRuntimeText(
+                    $"{entry.SolverName} Median Label",
+                    historyChartRoot,
+                    $"{entry.SolverName}\n{FormatNumber(entry.MedianScore)}",
+                    14,
+                    FontStyles.Bold,
+                    TextAlignmentOptions.Center,
+                    HexColor("#CBD5E1"));
+                valueLabel.enableAutoSizing = true;
+                valueLabel.fontSizeMin = 9;
+                valueLabel.fontSizeMax = 14;
+                RectTransform labelRect = valueLabel.rectTransform;
+                labelRect.anchorMin = new Vector2(0f, 0f);
+                labelRect.anchorMax = new Vector2(0f, 0f);
+                labelRect.pivot = new Vector2(0f, 0f);
+                labelRect.anchoredPosition = new Vector2(x, 0f);
+                labelRect.sizeDelta = new Vector2(barWidth, bottomLabelHeight - 4f);
+            }
+        }
+
+        private static void CreateTable(RectTransform root, string[] headers, string[][] rows, string emptyText)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            ClearChildren(root);
+            float tableWidth = Mathf.Max(620f, root.rect.width);
+            float rowHeight = 34f;
+            float y = 0f;
+            float[] widths = BuildEqualWidths(headers.Length, tableWidth);
+            CreateTableRow(root, headers, widths, y, rowHeight, true);
+            y += rowHeight + 4f;
+
+            if (rows.Length == 0)
+            {
+                TMP_Text empty = CreateRuntimeText("Empty Table", root, emptyText, 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
+                RectTransform emptyRect = empty.rectTransform;
+                emptyRect.anchorMin = new Vector2(0f, 1f);
+                emptyRect.anchorMax = new Vector2(0f, 1f);
+                emptyRect.pivot = new Vector2(0f, 1f);
+                emptyRect.anchoredPosition = new Vector2(0f, -y - 18f);
+                emptyRect.sizeDelta = new Vector2(tableWidth, 44f);
+                return;
+            }
+
+            for (int i = 0; i < rows.Length; i++)
+            {
+                CreateTableRow(root, rows[i], widths, y, rowHeight, false, i);
+                y += rowHeight + 3f;
+            }
+        }
+
+        private static void CreateTableRow(RectTransform root, string[] cells, float[] widths, float y, float height, bool header, int rowIndex = 0)
+        {
+            RectTransform row = CreateRuntimePanel($"Table Row {rowIndex}", root, header ? HexColor("#0F172A") : rowIndex % 2 == 0 ? HexColor("#172033") : HexColor("#111827", 0.86f));
+            row.anchorMin = new Vector2(0f, 1f);
+            row.anchorMax = new Vector2(0f, 1f);
+            row.pivot = new Vector2(0f, 1f);
+            row.anchoredPosition = new Vector2(0f, -y);
+            row.sizeDelta = new Vector2(widths.Sum(), height);
+
+            float x = 0f;
+            for (int i = 0; i < cells.Length && i < widths.Length; i++)
+            {
+                TMP_Text text = CreateRuntimeText($"Cell {i}", row, cells[i], header ? 15 : 14, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, header ? HexColor("#FDE68A") : HexColor("#E5E7EB"));
+                text.enableAutoSizing = true;
+                text.fontSizeMin = 9;
+                text.fontSizeMax = header ? 15 : 14;
+                RectTransform rect = text.rectTransform;
+                rect.anchorMin = new Vector2(0f, 0f);
+                rect.anchorMax = new Vector2(0f, 1f);
+                rect.pivot = new Vector2(0f, 0.5f);
+                rect.offsetMin = new Vector2(x + 8f, 0f);
+                rect.offsetMax = new Vector2(x + widths[i] - 6f, 0f);
+                x += widths[i];
+            }
+        }
+
+        private static float[] BuildEqualWidths(int columnCount, float tableWidth)
+        {
+            float[] widths = new float[columnCount];
+            float width = tableWidth / Math.Max(1, columnCount);
+            for (int i = 0; i < widths.Length; i++)
+            {
+                widths[i] = width;
+            }
+
+            return widths;
+        }
+
+        private static long Median(long[] orderedValues)
+        {
+            if (orderedValues.Length == 0)
+            {
+                return 0;
+            }
+
+            int middle = orderedValues.Length / 2;
+            if (orderedValues.Length % 2 == 1)
+            {
+                return orderedValues[middle];
+            }
+
+            return (long)Math.Round((orderedValues[middle - 1] + orderedValues[middle]) / 2.0);
+        }
+
+        private static string SolverName(int solverId)
+        {
+            return StackMergeSolverCatalog.GetDefinition((SolverId)solverId).DisplayName;
+        }
+
+        private readonly struct HistorySolverStats
+        {
+            public HistorySolverStats(int solverId, int runs, long minScore, long maxScore, long medianScore, double averageScore, int bestHighestMerged)
+            {
+                SolverId = solverId;
+                Runs = runs;
+                MinScore = minScore;
+                MaxScore = maxScore;
+                MedianScore = medianScore;
+                AverageScore = averageScore;
+                BestHighestMerged = bestHighestMerged;
+            }
+
+            public int SolverId { get; }
+
+            public string SolverName => StackMergeGameBootstrap.SolverName(SolverId);
+
+            public int Runs { get; }
+
+            public long MinScore { get; }
+
+            public long MaxScore { get; }
+
+            public long MedianScore { get; }
+
+            public double AverageScore { get; }
+
+            public int BestHighestMerged { get; }
+
+            public long ScoreRange => MaxScore - MinScore;
         }
 
         private void RefreshNextBlocks()
@@ -1072,6 +1697,7 @@ namespace StackMerge
                 return;
             }
 
+            ResizeBoardToCapacity();
             Canvas.ForceUpdateCanvases();
 
             for (int stackIndex = 0; stackIndex < stackBlockLayers.Length; stackIndex++)
@@ -1108,6 +1734,33 @@ namespace StackMerge
             }
         }
 
+        private void ResizeBoardToCapacity()
+        {
+            if (gameState == null)
+            {
+                return;
+            }
+
+            RectTransform board = boardRoot;
+            if (board == null && stackBlockLayers.Length > 0 && stackBlockLayers[0] != null)
+            {
+                board = stackBlockLayers[0].parent.parent as RectTransform;
+            }
+
+            if (board == null)
+            {
+                return;
+            }
+
+            const float top = 360f;
+            float height = CalculateBoardHeight(gameState.StackCapacity);
+            board.anchorMin = new Vector2(0f, 1f);
+            board.anchorMax = new Vector2(1f, 1f);
+            board.pivot = new Vector2(0.5f, 1f);
+            board.offsetMin = new Vector2(0f, -top - height);
+            board.offsetMax = new Vector2(0f, -top);
+        }
+
         private void RefreshGameOver()
         {
             if (gameOverOverlay == null)
@@ -1115,7 +1768,7 @@ namespace StackMerge
                 return;
             }
 
-            gameOverOverlay.SetActive(gameState.IsGameOver && selectedTabIndex == 0);
+            gameOverOverlay.SetActive(gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen);
             if (!gameState.IsGameOver)
             {
                 return;
@@ -1179,6 +1832,36 @@ namespace StackMerge
             text.fontStyle = FontStyles.Bold;
 
             return gameObject.GetComponent<RectTransform>();
+        }
+
+        private static RectTransform CreateRuntimePanel(string name, Transform parent, Color color)
+        {
+            GameObject gameObject = new GameObject(name, typeof(RectTransform), typeof(Image));
+            gameObject.transform.SetParent(parent, false);
+            gameObject.GetComponent<Image>().color = color;
+            return gameObject.GetComponent<RectTransform>();
+        }
+
+        private static TMP_Text CreateRuntimeText(
+            string name,
+            Transform parent,
+            string textValue,
+            int fontSize,
+            FontStyles style,
+            TextAlignmentOptions alignment,
+            Color color)
+        {
+            GameObject gameObject = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
+            gameObject.transform.SetParent(parent, false);
+            TextMeshProUGUI text = gameObject.GetComponent<TextMeshProUGUI>();
+            text.text = textValue;
+            text.fontSize = fontSize;
+            text.fontStyle = style;
+            text.alignment = alignment;
+            text.color = color;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+            text.raycastTarget = false;
+            return text;
         }
 
         private Sprite GetRoundedSprite(Color fill, Color border, int radius)
@@ -1307,6 +1990,15 @@ namespace StackMerge
             rectTransform.offsetMax = new Vector2(-right, -top);
         }
 
+        private static float CalculateBoardHeight(int stackCapacity)
+        {
+            const float blockHeight = 74f;
+            const float spacing = 7f;
+            const float internalPadding = 44f;
+            int capacity = Mathf.Max(1, stackCapacity);
+            return internalPadding + capacity * blockHeight + Mathf.Max(0, capacity - 1) * spacing;
+        }
+
         private static Color HexColor(string hex, float alpha = 1f)
         {
             if (!ColorUtility.TryParseHtmlString(hex, out Color color))
@@ -1362,6 +2054,11 @@ namespace StackMerge
             }
 
             return value.ToString();
+        }
+
+        private static string FormatNumber(double value)
+        {
+            return FormatNumber((long)Math.Round(value));
         }
     }
 }

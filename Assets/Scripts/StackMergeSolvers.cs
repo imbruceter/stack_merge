@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using static StackMerge.SolverScoring;
 
@@ -13,7 +14,11 @@ namespace StackMerge
         Look = 4,
         Moca = 5,
         Plan3 = 6,
-        Plan5 = 7
+        Plan5 = 7,
+        MocaPlus = 8,
+        Mcts = 9,
+        AntiStall = 10,
+        Combo = 11
     }
 
     public readonly struct SolverDefinition
@@ -49,7 +54,11 @@ namespace StackMerge
             new(SolverId.Look, "LOOK", 700, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
             new(SolverId.Moca, "MOCA", 1400, "Runs simulations.", "Monte Carlo solver: rolls out multiple futures and picks the best average result."),
             new(SolverId.Plan3, "PLAN-3", 950, "Reads the visible queue.", "Queue planner: searches lines through up to 3 visible next blocks before choosing."),
-            new(SolverId.Plan5, "PLAN-5", 2400, "Uses the extended queue.", "Deep queue planner: searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked.")
+            new(SolverId.Plan5, "PLAN-5", 2400, "Uses the extended queue.", "Deep queue planner: searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked."),
+            new(SolverId.MocaPlus, "MOCA+", 3600, "Smarter Monte Carlo rollouts.", "Enhanced Monte Carlo: each rollout uses short queue planning and an anti-stall board score."),
+            new(SolverId.Mcts, "MCTS", 6200, "Builds a search tree.", "Monte Carlo Tree Search: balances exploring new lines with exploiting lines that already score well."),
+            new(SolverId.AntiStall, "STALL", 1250, "Avoids dead boards.", "Anti-stall solver: heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges."),
+            new(SolverId.Combo, "COMBO", 1800, "Sets up chain merges.", "Combo-focused solver: reads the queue and rewards positions that can cascade over the next 2-3 turns.")
         };
 
         public static SolverDefinition GetDefinition(SolverId id)
@@ -78,13 +87,61 @@ namespace StackMerge
         SolverDecision ChooseMove(StackMergeGameState state, SolverContext context);
     }
 
+    public static class StackMergeSolverFactory
+    {
+        public static IStackMergeSolver[] CreateAll()
+        {
+            return new IStackMergeSolver[]
+            {
+                new RandomStackMergeSolver(),
+                new MergeFirstStackMergeSolver(),
+                new BalancedStackMergeSolver(),
+                new HeuristicStackMergeSolver(),
+                new LookaheadStackMergeSolver(),
+                new MonteCarloStackMergeSolver(),
+                new Plan3StackMergeSolver(),
+                new Plan5StackMergeSolver(),
+                new EnhancedMonteCarloStackMergeSolver(),
+                new MctsStackMergeSolver(),
+                new AntiStallStackMergeSolver(),
+                new ComboFocusedStackMergeSolver()
+            };
+        }
+
+        public static IStackMergeSolver Create(SolverId solverId)
+        {
+            return solverId switch
+            {
+                SolverId.Merge => new MergeFirstStackMergeSolver(),
+                SolverId.Balance => new BalancedStackMergeSolver(),
+                SolverId.Heur => new HeuristicStackMergeSolver(),
+                SolverId.Look => new LookaheadStackMergeSolver(),
+                SolverId.Moca => new MonteCarloStackMergeSolver(),
+                SolverId.Plan3 => new Plan3StackMergeSolver(),
+                SolverId.Plan5 => new Plan5StackMergeSolver(),
+                SolverId.MocaPlus => new EnhancedMonteCarloStackMergeSolver(),
+                SolverId.Mcts => new MctsStackMergeSolver(),
+                SolverId.AntiStall => new AntiStallStackMergeSolver(),
+                SolverId.Combo => new ComboFocusedStackMergeSolver(),
+                _ => new RandomStackMergeSolver()
+            };
+        }
+    }
+
     public readonly struct SolverContext
     {
-        public SolverContext(Random random, int monteCarloSimulations, int monteCarloRolloutDepth)
+        public SolverContext(
+            Random random,
+            int monteCarloSimulations,
+            int monteCarloRolloutDepth,
+            bool lightweightMode = false,
+            int planningDepthLimit = int.MaxValue)
         {
             Random = random ?? new Random();
             MonteCarloSimulations = Math.Max(1, monteCarloSimulations);
             MonteCarloRolloutDepth = Math.Max(1, monteCarloRolloutDepth);
+            LightweightMode = lightweightMode;
+            PlanningDepthLimit = Math.Max(1, planningDepthLimit);
         }
 
         public Random Random { get; }
@@ -92,6 +149,15 @@ namespace StackMerge
         public int MonteCarloSimulations { get; }
 
         public int MonteCarloRolloutDepth { get; }
+
+        public bool LightweightMode { get; }
+
+        public int PlanningDepthLimit { get; }
+
+        public int LimitPlanningDepth(int requestedDepth)
+        {
+            return Math.Min(Math.Max(1, requestedDepth), PlanningDepthLimit);
+        }
     }
 
     public readonly struct SolverDecision
@@ -305,6 +371,12 @@ namespace StackMerge
 
         public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
         {
+            int activeDepth = context.LimitPlanningDepth(planningDepth);
+            return ChooseQueuePlan(state, context, activeDepth, $"Plans {activeDepth} blocks");
+        }
+
+        internal static SolverDecision ChooseQueuePlan(StackMergeGameState state, SolverContext context, int planningDepth, string reason)
+        {
             int[] legalMoves = state.GetLegalMoveIndices();
             if (legalMoves.Length == 0)
             {
@@ -312,7 +384,7 @@ namespace StackMerge
             }
 
             SolverDecision best = SolverDecision.NoMove;
-            int depth = Math.Min(planningDepth, state.NextBlocks.Count);
+            int depth = Math.Min(context.LimitPlanningDepth(planningDepth), state.NextBlocks.Count);
             foreach (int firstMove in legalMoves)
             {
                 StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
@@ -329,14 +401,14 @@ namespace StackMerge
 
                 if (!best.HasMove || score > best.Score)
                 {
-                    best = new SolverDecision(true, firstMove, score, $"Plans {depth} blocks");
+                    best = new SolverDecision(true, firstMove, score, reason);
                 }
             }
 
             return best;
         }
 
-        private static double Search(StackMergeGameState state, SolverContext context, int depth)
+        internal static double Search(StackMergeGameState state, SolverContext context, int depth)
         {
             if (depth <= 0 || state.IsGameOver)
             {
@@ -371,7 +443,7 @@ namespace StackMerge
             return double.IsNegativeInfinity(best) ? EvaluateBoard(state) - 5000 : best;
         }
 
-        private static double EvaluateBoard(StackMergeGameState state)
+        internal static double EvaluateBoard(StackMergeGameState state)
         {
             int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
             int topMatches = state.Stacks.Count(stack => stack.Count > 0 && state.NextBlocks.Contains(stack[^1]));
@@ -395,6 +467,120 @@ namespace StackMerge
     {
         public Plan5StackMergeSolver() : base(SolverId.Plan5, "PLAN-5", 5)
         {
+        }
+    }
+
+    public sealed class AntiStallStackMergeSolver : IStackMergeSolver
+    {
+        public SolverId Id => SolverId.AntiStall;
+
+        public string DisplayName => "STALL";
+
+        public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
+        {
+            return ChooseBestByScore(state, context, "Avoiding stall", ScoreAntiStall);
+        }
+
+        internal static double ScoreAntiStall(StackMergeGameState state, MoveResult result, long scoreDelta)
+        {
+            int legalMoves = state.GetLegalMoveIndices().Length;
+            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
+            int emptyStacks = state.Stacks.Count(stack => stack.Count == 0);
+            int breathingStacks = state.Stacks.Count(stack => stack.Count <= Math.Max(1, state.StackCapacity - 3));
+            int maxHeight = MaxHeight(state);
+            int minHeight = state.Stacks.Min(stack => stack.Count);
+
+            double score = 0;
+            score += legalMoves * 260;
+            score += FreeSlots(state) * 34;
+            score += emptyStacks * 210;
+            score += breathingStacks * 120;
+            score += result.MergeCount * 120;
+            score += scoreDelta * 0.25;
+            score -= dangerStacks * 520;
+            score -= maxHeight * maxHeight * 18;
+            score -= (maxHeight - minHeight) * 80;
+
+            if (legalMoves <= 1)
+            {
+                score -= 1800;
+            }
+            else if (legalMoves == 2)
+            {
+                score -= 500;
+            }
+
+            if (state.IsGameOver)
+            {
+                score -= 10000;
+            }
+
+            return score;
+        }
+    }
+
+    public sealed class ComboFocusedStackMergeSolver : IStackMergeSolver
+    {
+        public SolverId Id => SolverId.Combo;
+
+        public string DisplayName => "COMBO";
+
+        public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
+        {
+            int futureDepth = context.LightweightMode ? 1 : 3;
+            return ChooseBestByScore(state, context, "Combo setup", (copy, result, scoreDelta) => ScoreComboMove(copy, result, scoreDelta, futureDepth));
+        }
+
+        internal static double ScoreComboMove(StackMergeGameState state, MoveResult result, long scoreDelta)
+        {
+            return ScoreComboMove(state, result, scoreDelta, 3);
+        }
+
+        private static double ScoreComboMove(StackMergeGameState state, MoveResult result, long scoreDelta, int futureDepth)
+        {
+            double score = 0;
+            score += result.MergeCount * 260;
+            score += FloorLog2(Math.Max(1, result.ResultingTopValue)) * 52;
+            score += scoreDelta * 0.35;
+            score += CountAdjacentEqualPairs(state) * 90;
+            score += CountQueueTopMatches(state) * 80;
+            score += EstimateComboFuture(state, futureDepth) * 0.82;
+            score += FreeSlots(state) * 8;
+            score -= MaxHeight(state) * 6;
+            return score;
+        }
+
+        private static double EstimateComboFuture(StackMergeGameState state, int depth)
+        {
+            if (depth <= 0 || state.IsGameOver)
+            {
+                return CountAdjacentEqualPairs(state) * 40 + CountQueueTopMatches(state) * 36;
+            }
+
+            double best = double.NegativeInfinity;
+            foreach (int move in state.GetLegalMoveIndices())
+            {
+                StackMergeGameState copy = state.CreateSimulationCopy(move + depth * 97);
+                long beforeScore = copy.Score;
+                MoveResult result = copy.PlaceNext(move);
+                if (!result.Accepted)
+                {
+                    continue;
+                }
+
+                double score = result.MergeCount * 380;
+                score += FloorLog2(Math.Max(1, result.ResultingTopValue)) * 45;
+                score += (copy.Score - beforeScore) * 0.2;
+                score += CountAdjacentEqualPairs(copy) * 70;
+                score += CountQueueTopMatches(copy) * 55;
+                score += EstimateComboFuture(copy, depth - 1) * 0.58;
+                if (score > best)
+                {
+                    best = score;
+                }
+            }
+
+            return double.IsNegativeInfinity(best) ? -1000 : best;
         }
     }
 
@@ -462,6 +648,217 @@ namespace StackMerge
         }
     }
 
+    public sealed class EnhancedMonteCarloStackMergeSolver : IStackMergeSolver
+    {
+        public SolverId Id => SolverId.MocaPlus;
+
+        public string DisplayName => "MOCA+";
+
+        public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
+        {
+            int[] legalMoves = state.GetLegalMoveIndices();
+            if (legalMoves.Length == 0)
+            {
+                return SolverDecision.NoMove;
+            }
+
+            SolverDecision best = SolverDecision.NoMove;
+            int simulations = context.LightweightMode ? context.MonteCarloSimulations : Math.Max(4, context.MonteCarloSimulations);
+            int rolloutDepth = context.LightweightMode ? context.MonteCarloRolloutDepth : Math.Max(3, context.MonteCarloRolloutDepth + 2);
+            int smartPlanningDepth = context.LightweightMode ? 1 : context.LimitPlanningDepth(3);
+
+            foreach (int firstMove in legalMoves)
+            {
+                double totalScore = 0;
+                int successfulRuns = 0;
+
+                for (int i = 0; i < simulations; i++)
+                {
+                    StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
+                    long startScore = copy.Score;
+                    MoveResult firstResult = copy.PlaceNext(firstMove);
+                    if (!firstResult.Accepted)
+                    {
+                        continue;
+                    }
+
+                    for (int depth = 0; depth < rolloutDepth && !copy.IsGameOver; depth++)
+                    {
+                        SolverDecision rolloutMove = QueuePlannerStackMergeSolver.ChooseQueuePlan(copy, context, smartPlanningDepth, "Smart rollout");
+                        if (!rolloutMove.HasMove)
+                        {
+                            break;
+                        }
+
+                        copy.PlaceNext(rolloutMove.StackIndex);
+                    }
+
+                    double runScore = copy.Score - startScore;
+                    runScore += QueuePlannerStackMergeSolver.EvaluateBoard(copy) * 0.20;
+                    runScore += AntiStallStackMergeSolver.ScoreAntiStall(copy, firstResult, copy.Score - startScore) * 0.18;
+                    totalScore += runScore;
+                    successfulRuns++;
+                }
+
+                if (successfulRuns == 0)
+                {
+                    continue;
+                }
+
+                double average = totalScore / successfulRuns;
+                average += context.Random.NextDouble() * 0.001;
+                if (!best.HasMove || average > best.Score)
+                {
+                    best = new SolverDecision(true, firstMove, average, $"{simulations} smart simulations");
+                }
+            }
+
+            return best;
+        }
+    }
+
+    public sealed class MctsStackMergeSolver : IStackMergeSolver
+    {
+        public SolverId Id => SolverId.Mcts;
+
+        public string DisplayName => "MCTS";
+
+        public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
+        {
+            int[] legalMoves = state.GetLegalMoveIndices();
+            if (legalMoves.Length == 0)
+            {
+                return SolverDecision.NoMove;
+            }
+
+            var root = new SearchNode(null, state.CreateSnapshot(), legalMoves);
+            int iterations = context.LightweightMode
+                ? Math.Max(4, context.MonteCarloSimulations * 2)
+                : Math.Max(16, context.MonteCarloSimulations * 4);
+
+            for (int i = 0; i < iterations; i++)
+            {
+                SearchNode node = root;
+                StackMergeGameState working = state.CreateSimulationCopy(context.Random.Next());
+
+                while (node.UntriedMoves.Count == 0 && node.Children.Count > 0)
+                {
+                    node = SelectChild(node, context);
+                    working.RestoreSnapshot(node.Snapshot);
+                }
+
+                if (node.UntriedMoves.Count > 0)
+                {
+                    int moveIndex = context.Random.Next(node.UntriedMoves.Count);
+                    int move = node.UntriedMoves[moveIndex];
+                    node.UntriedMoves.RemoveAt(moveIndex);
+
+                    MoveResult result = working.PlaceNext(move);
+                    if (result.Accepted)
+                    {
+                        var child = new SearchNode(node, working.CreateSnapshot(), working.GetLegalMoveIndices())
+                        {
+                            MoveFromParent = move
+                        };
+                        node.Children.Add(child);
+                        node = child;
+                    }
+                }
+
+                int rolloutDepth = context.LightweightMode ? Math.Min(3, context.MonteCarloRolloutDepth) : context.MonteCarloRolloutDepth;
+                double reward = Rollout(working, context, rolloutDepth);
+                while (node != null)
+                {
+                    node.Visits++;
+                    node.Value += reward;
+                    node = node.Parent;
+                }
+            }
+
+            SearchNode bestChild = root.Children
+                .OrderByDescending(child => child.Visits)
+                .ThenByDescending(child => child.AverageValue)
+                .FirstOrDefault();
+
+            if (bestChild == null)
+            {
+                return SolverDecision.NoMove;
+            }
+
+            return new SolverDecision(true, bestChild.MoveFromParent, bestChild.AverageValue, $"{iterations} tree visits");
+        }
+
+        private static SearchNode SelectChild(SearchNode node, SolverContext context)
+        {
+            double parentVisits = Math.Max(1, node.Visits);
+            return node.Children
+                .OrderByDescending(child =>
+                {
+                    double exploit = child.AverageValue;
+                    double explore = Math.Sqrt(Math.Log(parentVisits + 1) / Math.Max(1, child.Visits));
+                    return exploit + 1.42 * explore + context.Random.NextDouble() * 0.0001;
+                })
+                .First();
+        }
+
+        private static double Rollout(StackMergeGameState state, SolverContext context, int depth)
+        {
+            long startScore = state.Score;
+            for (int i = 0; i < depth && !state.IsGameOver; i++)
+            {
+                SolverDecision decision;
+                if (context.LightweightMode)
+                {
+                    decision = i % 2 == 0
+                        ? HeuristicStackMergeSolver.ChooseHeuristicMove(state, context, "MCTS fast rollout")
+                        : ChooseBestByScore(state, context, "MCTS anti-stall rollout", AntiStallStackMergeSolver.ScoreAntiStall);
+                }
+                else
+                {
+                    decision = i % 2 == 0
+                        ? QueuePlannerStackMergeSolver.ChooseQueuePlan(state, context, 2, "MCTS rollout")
+                        : HeuristicStackMergeSolver.ChooseHeuristicMove(state, context, "MCTS heuristic");
+                }
+                if (!decision.HasMove)
+                {
+                    break;
+                }
+
+                state.PlaceNext(decision.StackIndex);
+            }
+
+            return state.Score - startScore
+                + QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.25
+                - (state.IsGameOver ? 4000 : 0);
+        }
+
+        private sealed class SearchNode
+        {
+            public SearchNode(SearchNode parent, StackMergeSnapshot snapshot, int[] legalMoves)
+            {
+                Parent = parent;
+                Snapshot = snapshot;
+                UntriedMoves = new List<int>(legalMoves);
+            }
+
+            public SearchNode Parent { get; }
+
+            public StackMergeSnapshot Snapshot { get; }
+
+            public List<int> UntriedMoves { get; }
+
+            public List<SearchNode> Children { get; } = new();
+
+            public int MoveFromParent { get; set; } = -1;
+
+            public int Visits { get; set; }
+
+            public double Value { get; set; }
+
+            public double AverageValue => Visits == 0 ? 0 : Value / Visits;
+        }
+    }
+
     internal static class SolverScoring
     {
         public static SolverDecision ChooseBestByScore(
@@ -507,6 +904,28 @@ namespace StackMerge
         public static int FreeSlots(StackMergeGameState state)
         {
             return state.StackCount * state.StackCapacity - state.Stacks.Sum(stack => stack.Count);
+        }
+
+        public static int CountQueueTopMatches(StackMergeGameState state)
+        {
+            return state.Stacks.Count(stack => stack.Count > 0 && state.NextBlocks.Contains(stack[^1]));
+        }
+
+        public static int CountAdjacentEqualPairs(StackMergeGameState state)
+        {
+            int pairs = 0;
+            foreach (var stack in state.Stacks)
+            {
+                for (int i = 1; i < stack.Count; i++)
+                {
+                    if (stack[i] == stack[i - 1])
+                    {
+                        pairs++;
+                    }
+                }
+            }
+
+            return pairs;
         }
 
         public static int FloorLog2(int value)

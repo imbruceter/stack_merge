@@ -52,9 +52,11 @@ namespace StackMerge.Editor
             RectTransform gameplayPanel;
             RectTransform algorithmsPanel;
             RectTransform upgradesPanel;
+            RectTransform historyPanel;
+            RectTransform achievementsPanel;
             RectTransform agentsPanel;
             RectTransform settingsPanel;
-            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out agentsPanel, out settingsPanel);
+            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out historyPanel, out achievementsPanel, out agentsPanel, out settingsPanel);
 
             TMP_Text scoreText;
             TMP_Text bestText;
@@ -67,11 +69,14 @@ namespace StackMerge.Editor
             TMP_Text runStatusText;
             TMP_Text agentSlotsText;
             RectTransform nextBlocksRoot;
+            RectTransform boardRoot;
             RectTransform[] stackLayers;
             Button[] stackButtons;
             TMP_Text droppedText;
             TMP_Text feedbackText;
             Button footerNewGameButton;
+            Button historyButton;
+            Button achievementsButton;
             BuildGameplayPanel(
                 gameplayPanel,
                 out scoreText,
@@ -85,11 +90,14 @@ namespace StackMerge.Editor
                 out runStatusText,
                 out agentSlotsText,
                 out nextBlocksRoot,
+                out boardRoot,
                 out stackButtons,
                 out stackLayers,
                 out droppedText,
                 out feedbackText,
-                out footerNewGameButton);
+                out footerNewGameButton,
+                out historyButton,
+                out achievementsButton);
 
             TMP_Text algorithmsChipsText;
             TMP_Text solverDetailNameText;
@@ -111,7 +119,43 @@ namespace StackMerge.Editor
             Button[] stackCapacityUpgradeButtons;
             Button[] queuePreviewUpgradeButtons;
             Button[] incomeUpgradeButtons;
-            BuildUpgradesPanel(upgradesPanel, out upgradesChipsText, out autoSolveToggle, out speedUpgradeButtons, out autoRestartButton, out stackCapacityUpgradeButtons, out queuePreviewUpgradeButtons, out incomeUpgradeButtons);
+            Button[] difficultyUpgradeButtons;
+            Button agentsMenuUnlockButton;
+            BuildUpgradesPanel(
+                upgradesPanel,
+                out upgradesChipsText,
+                out autoSolveToggle,
+                out speedUpgradeButtons,
+                out autoRestartButton,
+                out stackCapacityUpgradeButtons,
+                out queuePreviewUpgradeButtons,
+                out incomeUpgradeButtons,
+                out difficultyUpgradeButtons,
+                out agentsMenuUnlockButton);
+
+            TMP_Text historySummaryText;
+            RectTransform historyChartRoot;
+            RectTransform historySolverTableRoot;
+            RectTransform historyRecentRunsRoot;
+            TMP_Text historyInsightText;
+            Button historyBackButton;
+            BuildHistoryPanel(
+                historyPanel,
+                out historySummaryText,
+                out historyChartRoot,
+                out historySolverTableRoot,
+                out historyRecentRunsRoot,
+                out historyInsightText,
+                out historyBackButton);
+
+            TMP_Text achievementStatsText;
+            RectTransform achievementListRoot;
+            Button achievementBackButton;
+            BuildAchievementsPanel(
+                achievementsPanel,
+                out achievementStatsText,
+                out achievementListRoot,
+                out achievementBackButton);
 
             TMP_Text agentsChipsText;
             TMP_Text[] agentSlotTexts;
@@ -149,12 +193,17 @@ namespace StackMerge.Editor
                 droppedText,
                 feedbackText,
                 nextBlocksRoot,
+                boardRoot,
                 stackButtons,
                 stackLayers,
                 new[] { footerNewGameButton, modalNewGameButton },
+                historyButton,
+                achievementsButton,
                 gameplayPanel.gameObject,
                 algorithmsPanel.gameObject,
                 upgradesPanel.gameObject,
+                historyPanel.gameObject,
+                achievementsPanel.gameObject,
                 agentsPanel.gameObject,
                 settingsPanel.gameObject,
                 tabButtons,
@@ -176,6 +225,17 @@ namespace StackMerge.Editor
                 stackCapacityUpgradeButtons,
                 queuePreviewUpgradeButtons,
                 incomeUpgradeButtons,
+                difficultyUpgradeButtons,
+                agentsMenuUnlockButton,
+                historySummaryText,
+                historyChartRoot,
+                historySolverTableRoot,
+                historyRecentRunsRoot,
+                historyInsightText,
+                historyBackButton,
+                achievementStatsText,
+                achievementListRoot,
+                achievementBackButton,
                 agentButtons,
                 agentSlotTexts,
                 agentDetailNameText,
@@ -280,17 +340,23 @@ namespace StackMerge.Editor
             out RectTransform gameplayPanel,
             out RectTransform algorithmsPanel,
             out RectTransform upgradesPanel,
+            out RectTransform historyPanel,
+            out RectTransform achievementsPanel,
             out RectTransform agentsPanel,
             out RectTransform settingsPanel)
         {
             gameplayPanel = CreateTabPanel("Gameplay Panel", parent);
             algorithmsPanel = CreateTabPanel("Algorithms Panel", parent);
             upgradesPanel = CreateTabPanel("Upgrades Panel", parent);
+            historyPanel = CreateTabPanel("History Panel", parent);
+            achievementsPanel = CreateTabPanel("Achievements Panel", parent);
             agentsPanel = CreateTabPanel("Agents Panel", parent);
             settingsPanel = CreateTabPanel("Settings Panel", parent);
 
             algorithmsPanel.gameObject.SetActive(false);
             upgradesPanel.gameObject.SetActive(false);
+            historyPanel.gameObject.SetActive(false);
+            achievementsPanel.gameObject.SetActive(false);
             agentsPanel.gameObject.SetActive(false);
             settingsPanel.gameObject.SetActive(false);
         }
@@ -315,17 +381,20 @@ namespace StackMerge.Editor
             out TMP_Text runStatusText,
             out TMP_Text agentSlotsText,
             out RectTransform nextBlocksRoot,
+            out RectTransform boardRoot,
             out Button[] stackButtons,
             out RectTransform[] stackLayers,
             out TMP_Text droppedText,
             out TMP_Text feedbackText,
-            out Button newGameButton)
+            out Button newGameButton,
+            out Button historyButton,
+            out Button achievementsButton)
         {
             BuildStats(panel, out scoreText, out bestText, out highestText);
             BuildStatusBar(panel, out chipsText, out solverText, out speedText, out capacityText, out queueText, out runStatusText, out agentSlotsText);
             nextBlocksRoot = BuildNextBlocks(panel);
-            BuildBoard(panel, out stackButtons, out stackLayers);
-            BuildFooter(panel, out droppedText, out feedbackText, out newGameButton);
+            BuildBoard(panel, out boardRoot, out stackButtons, out stackLayers);
+            BuildFooter(panel, out droppedText, out feedbackText, out newGameButton, out historyButton, out achievementsButton);
         }
 
         private static void BuildStats(RectTransform parent, out TMP_Text scoreText, out TMP_Text bestText, out TMP_Text highestText)
@@ -418,10 +487,10 @@ namespace StackMerge.Editor
             return nextBlocksRoot;
         }
 
-        private static void BuildBoard(RectTransform parent, out Button[] stackButtons, out RectTransform[] stackLayers)
+        private static void BuildBoard(RectTransform parent, out RectTransform board, out Button[] stackButtons, out RectTransform[] stackLayers)
         {
-            RectTransform board = CreateRect("Board", parent);
-            SetStretch(board, 0f, 360f, 0f, 102f);
+            board = CreateRect("Board", parent);
+            SetTopStretch(board, 0f, 360f, 0f, BoardHeightForCapacity(StackMergeGameState.DefaultStackCapacity));
 
             stackButtons = new Button[StackMergeGameState.DefaultStackCount];
             stackLayers = new RectTransform[StackMergeGameState.DefaultStackCount];
@@ -445,25 +514,31 @@ namespace StackMerge.Editor
             }
         }
 
-        private static void BuildFooter(RectTransform parent, out TMP_Text droppedText, out TMP_Text feedbackText, out Button newGameButton)
+        private static void BuildFooter(RectTransform parent, out TMP_Text droppedText, out TMP_Text feedbackText, out Button newGameButton, out Button historyButton, out Button achievementsButton)
         {
             RectTransform footer = CreateRect("Footer", parent);
             SetBottomStretch(footer, 0f, 8f, 0f, 80f);
 
             RectTransform infoPanel = CreatePanel("Run Info", footer, HexColor("#1F2937"));
-            SetStretch(infoPanel, 0f, 0f, 206f, 0f);
+            SetStretch(infoPanel, 0f, 0f, 574f, 0f);
 
             droppedText = CreateText("Dobasok: 0", infoPanel, 22, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#D1D5DB"));
-            SetStretch(droppedText.rectTransform, 18f, 0f, 420f, 0f);
+            SetStretch(droppedText.rectTransform, 18f, 0f, 286f, 0f);
             droppedText.enableAutoSizing = true;
             droppedText.fontSizeMin = 13;
             droppedText.fontSizeMax = 22;
 
             feedbackText = CreateText(string.Empty, infoPanel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#5EEAD4"));
-            SetStretch(feedbackText.rectTransform, 230f, 0f, 18f, 0f);
+            SetStretch(feedbackText.rectTransform, 150f, 0f, 18f, 0f);
             feedbackText.enableAutoSizing = true;
             feedbackText.fontSizeMin = 12;
             feedbackText.fontSizeMax = 20;
+
+            historyButton = CreateButton(footer, "History", HexColor("#2563EB"), 22);
+            SetRightStretch(historyButton.GetComponent<RectTransform>(), 0f, 396f, 0f, 166f);
+
+            achievementsButton = CreateButton(footer, "Goals", HexColor("#7C3AED"), 22);
+            SetRightStretch(achievementsButton.GetComponent<RectTransform>(), 0f, 204f, 0f, 178f);
 
             newGameButton = CreateButton(footer, "Uj jatek", HexColor("#DC2626"), 22);
             SetRightStretch(newGameButton.GetComponent<RectTransform>(), 0f, 0f, 0f, 190f);
@@ -512,18 +587,28 @@ namespace StackMerge.Editor
             RectTransform basic = CreateCategoryPanel(panel, "Basic", 306f, 112f);
             buttons[(int)SolverId.Rand] = CreateSolverButton(basic, SolverId.Rand, 0, 1);
 
-            RectTransform heuristics = CreateCategoryPanel(panel, "Heuristics", 434f, 126f);
-            buttons[(int)SolverId.Merge] = CreateSolverButton(heuristics, SolverId.Merge, 0, 4);
-            buttons[(int)SolverId.Balance] = CreateSolverButton(heuristics, SolverId.Balance, 1, 4);
-            buttons[(int)SolverId.Heur] = CreateSolverButton(heuristics, SolverId.Heur, 2, 4);
-            buttons[(int)SolverId.Look] = CreateSolverButton(heuristics, SolverId.Look, 3, 4);
+            RectTransform direct = CreateCategoryPanel(panel, "Direct", 434f, 112f);
+            buttons[(int)SolverId.Merge] = CreateSolverButton(direct, SolverId.Merge, 0, 2);
+            buttons[(int)SolverId.Combo] = CreateSolverButton(direct, SolverId.Combo, 1, 2);
 
-            RectTransform planning = CreateCategoryPanel(panel, "Planning", 576f, 112f);
+            RectTransform risk = CreateCategoryPanel(panel, "Risk Control", 562f, 112f);
+            buttons[(int)SolverId.Balance] = CreateSolverButton(risk, SolverId.Balance, 0, 2);
+            buttons[(int)SolverId.AntiStall] = CreateSolverButton(risk, SolverId.AntiStall, 1, 2);
+
+            RectTransform heuristics = CreateCategoryPanel(panel, "Heuristics", 690f, 112f);
+            buttons[(int)SolverId.Heur] = CreateSolverButton(heuristics, SolverId.Heur, 0, 2);
+            buttons[(int)SolverId.Look] = CreateSolverButton(heuristics, SolverId.Look, 1, 2);
+
+            RectTransform planning = CreateCategoryPanel(panel, "Planning", 818f, 112f);
             buttons[(int)SolverId.Plan3] = CreateSolverButton(planning, SolverId.Plan3, 0, 2);
             buttons[(int)SolverId.Plan5] = CreateSolverButton(planning, SolverId.Plan5, 1, 2);
 
-            RectTransform monteCarlo = CreateCategoryPanel(panel, "Monte Carlo", 704f, 112f);
-            buttons[(int)SolverId.Moca] = CreateSolverButton(monteCarlo, SolverId.Moca, 0, 1);
+            RectTransform monteCarlo = CreateCategoryPanel(panel, "Monte Carlo", 946f, 112f);
+            buttons[(int)SolverId.Moca] = CreateSolverButton(monteCarlo, SolverId.Moca, 0, 2);
+            buttons[(int)SolverId.MocaPlus] = CreateSolverButton(monteCarlo, SolverId.MocaPlus, 1, 2);
+
+            RectTransform treeSearch = CreateCategoryPanel(panel, "Tree Search", 1074f, 112f);
+            buttons[(int)SolverId.Mcts] = CreateSolverButton(treeSearch, SolverId.Mcts, 0, 1);
 
             return buttons;
         }
@@ -544,11 +629,13 @@ namespace StackMerge.Editor
             out Button autoRestartButton,
             out Button[] stackCapacityUpgradeButtons,
             out Button[] queuePreviewUpgradeButtons,
-            out Button[] incomeUpgradeButtons)
+            out Button[] incomeUpgradeButtons,
+            out Button[] difficultyUpgradeButtons,
+            out Button agentsMenuUnlockButton)
         {
             BuildMenuHeader(panel, "Fejlesztesek", out chipsText);
 
-            TMP_Text subtitle = CreateText("Unlock each row from left to right. Speed and stack upgrades have five steps; next preview has two.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            TMP_Text subtitle = CreateText("Unlock each row from left to right. Risk increases starting block pressure for higher scores.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
             SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 46f);
             subtitle.enableAutoSizing = true;
             subtitle.fontSizeMin = 12;
@@ -556,9 +643,11 @@ namespace StackMerge.Editor
 
             RectTransform automation = CreateCategoryPanel(panel, "Automatization", 150f, 128f);
             autoSolveToggle = CreateToggle(automation, "Auto solve", HexColor("#0F766E"));
-            SetGridCell(autoSolveToggle.GetComponent<RectTransform>(), 0, 2, 0, 1, 14f);
+            SetGridCell(autoSolveToggle.GetComponent<RectTransform>(), 0, 3, 0, 1, 14f);
             autoRestartButton = CreateButton(automation, "Auto restart\n180", HexColor("#C2410C"), 22);
-            SetGridCell(autoRestartButton.GetComponent<RectTransform>(), 1, 2, 0, 1, 14f);
+            SetGridCell(autoRestartButton.GetComponent<RectTransform>(), 1, 3, 0, 1, 14f);
+            agentsMenuUnlockButton = CreateButton(automation, "Unlock Agents\n650", HexColor("#9333EA"), 22);
+            SetGridCell(agentsMenuUnlockButton.GetComponent<RectTransform>(), 2, 3, 0, 1, 14f);
 
             RectTransform speed = CreateCategoryPanel(panel, "Solver Speed", 294f, 126f);
             speedUpgradeButtons = CreateUpgradeRow(speed, "Speed", HexColor("#0891B2"));
@@ -566,10 +655,13 @@ namespace StackMerge.Editor
             RectTransform stack = CreateCategoryPanel(panel, "Stack Capacity", 436f, 126f);
             stackCapacityUpgradeButtons = CreateUpgradeRow(stack, "Cap", HexColor("#4F46E5"));
 
-            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 578f, 126f);
+            RectTransform difficulty = CreateCategoryPanel(panel, "Difficulty Scaling", 578f, 126f);
+            difficultyUpgradeButtons = CreateUpgradeRow(difficulty, "Risk", HexColor("#DB2777"), 3);
+
+            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 720f, 126f);
             queuePreviewUpgradeButtons = CreateUpgradeRow(queue, "Next", HexColor("#7C3AED"), 2);
 
-            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 720f, 126f);
+            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 862f, 126f);
             incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
         }
 
@@ -583,6 +675,80 @@ namespace StackMerge.Editor
             }
 
             return buttons;
+        }
+
+        private static void BuildHistoryPanel(
+            RectTransform panel,
+            out TMP_Text summaryText,
+            out RectTransform chartRoot,
+            out RectTransform solverTableRoot,
+            out RectTransform recentRunsRoot,
+            out TMP_Text insightText,
+            out Button backButton)
+        {
+            TMP_Text title = CreateText("History", panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(title.rectTransform, 0f, 0f, 300f, 58f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 20;
+            title.fontSizeMax = 38;
+
+            backButton = CreateButton(panel, "Back", HexColor("#334155"), 20);
+            SetTopRight(backButton.GetComponent<RectTransform>(), 0f, 0f, 170f, 58f);
+
+            RectTransform summary = CreateCategoryPanel(panel, "Run Summary", 78f, 94f);
+            summaryText = CreateText("No completed runs yet.", summary, 19, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetStretch(summaryText.rectTransform, 0f, 0f, 0f, 0f);
+            summaryText.enableAutoSizing = true;
+            summaryText.fontSizeMin = 12;
+            summaryText.fontSizeMax = 19;
+
+            RectTransform insight = CreateCategoryPanel(panel, "Algorithm Readout", 188f, 92f);
+            insightText = CreateText("Use median and range together: high median means reliable value, narrow range means stable behavior.", insight, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#A7F3D0"));
+            SetStretch(insightText.rectTransform, 0f, 0f, 0f, 0f);
+            insightText.enableAutoSizing = true;
+            insightText.fontSizeMin = 11;
+            insightText.fontSizeMax = 18;
+
+            RectTransform solverTable = CreateCategoryPanel(panel, "Algorithm Comparison", 296f, 282f);
+            solverTableRoot = CreateRect("Algorithm Table", solverTable);
+            Stretch(solverTableRoot);
+
+            RectTransform chart = CreateCategoryPanel(panel, "Median Score Chart", 594f, 220f);
+            chartRoot = CreateRect("History Chart", chart);
+            Stretch(chartRoot);
+            Image chartBackground = chartRoot.gameObject.AddComponent<Image>();
+            chartBackground.color = HexColor("#111827", 0.58f);
+
+            RectTransform recent = CreateCategoryPanel(panel, "Recent Runs", 830f, 276f);
+            recentRunsRoot = CreateRect("Recent Runs Table", recent);
+            Stretch(recentRunsRoot);
+        }
+
+        private static void BuildAchievementsPanel(
+            RectTransform panel,
+            out TMP_Text statsText,
+            out RectTransform listRoot,
+            out Button backButton)
+        {
+            TMP_Text title = CreateText("Achievements", panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(title.rectTransform, 0f, 0f, 300f, 58f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 20;
+            title.fontSizeMax = 38;
+
+            backButton = CreateButton(panel, "Back", HexColor("#334155"), 20);
+            SetTopRight(backButton.GetComponent<RectTransform>(), 0f, 0f, 170f, 58f);
+
+            RectTransform stats = CreateCategoryPanel(panel, "Lifetime Stats", 78f, 126f);
+            statsText = CreateText("Runs: 0 | Merges: 0 | Highest: 2 | Earned: 0 | Spent: 0", stats, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetStretch(statsText.rectTransform, 0f, 0f, 0f, 0f);
+            statsText.enableAutoSizing = true;
+            statsText.fontSizeMin = 11;
+            statsText.fontSizeMax = 18;
+
+            RectTransform goals = CreateCategoryPanel(panel, "Goals", 220f, 730f);
+            listRoot = CreateRect("Achievement Goals Table", goals);
+            Stretch(listRoot);
         }
 
         private static Button[] BuildAgentsPanel(
@@ -893,6 +1059,15 @@ namespace StackMerge.Editor
             rectTransform.pivot = new Vector2(0.5f, 0f);
             rectTransform.anchoredPosition = new Vector2(0f, bottom);
             rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static float BoardHeightForCapacity(int stackCapacity)
+        {
+            const float blockHeight = 74f;
+            const float spacing = 7f;
+            const float internalPadding = 44f;
+            int capacity = Mathf.Max(1, stackCapacity);
+            return internalPadding + capacity * blockHeight + Mathf.Max(0, capacity - 1) * spacing;
         }
 
         private static void SetGridCell(RectTransform rectTransform, int column, int columns, int row, int rows, float gap)

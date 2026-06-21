@@ -19,6 +19,7 @@ namespace StackMerge
             int stackCount = DefaultStackCount,
             int stackCapacity = DefaultStackCapacity,
             int queueLength = DefaultQueueLength,
+            int difficultyLevel = 0,
             int? seed = null)
         {
             if (stackCount <= 0)
@@ -38,6 +39,7 @@ namespace StackMerge
 
             StackCapacity = stackCapacity;
             QueueLength = queueLength;
+            DifficultyLevel = Math.Max(0, difficultyLevel);
             stacks = Enumerable.Range(0, stackCount).Select(_ => new List<int>(stackCapacity)).ToArray();
             random = seed.HasValue ? new Random(seed.Value) : new Random();
             NewGame(seed);
@@ -49,11 +51,17 @@ namespace StackMerge
 
         public int QueueLength { get; }
 
+        public int DifficultyLevel { get; }
+
         public long Score { get; private set; }
 
         public int BlocksDropped { get; private set; }
 
+        public int TotalMerges { get; private set; }
+
         public int HighestBlock { get; private set; }
+
+        public int HighestMergedBlock { get; private set; }
 
         public bool IsGameOver { get; private set; }
 
@@ -75,7 +83,9 @@ namespace StackMerge
 
             Score = 0;
             BlocksDropped = 0;
+            TotalMerges = 0;
             HighestBlock = 2;
+            HighestMergedBlock = 0;
             IsGameOver = false;
             nextBlocks.Clear();
 
@@ -164,6 +174,7 @@ namespace StackMerge
             HighestBlock = Math.Max(HighestBlock, placedValue);
 
             int mergeCount = ResolveMerges(stack);
+            TotalMerges += mergeCount;
             int resultingTop = stack.Count > 0 ? stack[^1] : placedValue;
 
             nextBlocks.RemoveAt(0);
@@ -190,13 +201,15 @@ namespace StackMerge
                 nextBlocks.ToArray(),
                 Score,
                 BlocksDropped,
+                TotalMerges,
                 HighestBlock,
+                HighestMergedBlock,
                 IsGameOver);
         }
 
         public StackMergeGameState CreateSimulationCopy(int? seed = null)
         {
-            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, seed);
+            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, seed);
             copy.RestoreSnapshot(CreateSnapshot());
             return copy;
         }
@@ -228,7 +241,9 @@ namespace StackMerge
             nextBlocks.AddRange(snapshot.NextBlocks);
             Score = snapshot.Score;
             BlocksDropped = snapshot.BlocksDropped;
+            TotalMerges = Math.Max(0, snapshot.TotalMerges);
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
+            HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
             IsGameOver = snapshot.IsGameOver || !HasLegalMove();
         }
 
@@ -252,7 +267,9 @@ namespace StackMerge
 
             Score = snapshot.Score;
             BlocksDropped = snapshot.BlocksDropped;
+            TotalMerges = Math.Max(0, snapshot.TotalMerges);
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
+            HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
 
             nextBlocks.Clear();
             int preservedBlocks = Math.Min(snapshot.NextBlocks.Length, QueueLength);
@@ -324,6 +341,7 @@ namespace StackMerge
                 stack.RemoveAt(topIndex);
                 stack[topIndex - 1] = mergedValue;
                 HighestBlock = Math.Max(HighestBlock, mergedValue);
+                HighestMergedBlock = Math.Max(HighestMergedBlock, mergedValue);
                 mergeCount++;
             }
 
@@ -332,15 +350,26 @@ namespace StackMerge
 
         private int GenerateNextBlock()
         {
-            int maxSpawnExponent = Math.Max(1, FloorLog2(HighestBlock) - 2);
-            maxSpawnExponent = Math.Min(maxSpawnExponent, 7);
+            int maxSpawnExponent = Math.Max(1, FloorLog2(HighestBlock) - 2 + DifficultyLevel);
+            if (DifficultyLevel >= 2)
+            {
+                maxSpawnExponent = Math.Max(maxSpawnExponent, 2);
+            }
+
+            if (DifficultyLevel >= 3)
+            {
+                maxSpawnExponent = Math.Max(maxSpawnExponent, 3);
+            }
+
+            maxSpawnExponent = Math.Min(maxSpawnExponent, 7 + Math.Min(2, DifficultyLevel));
 
             double totalWeight = 0;
             double[] weights = new double[maxSpawnExponent + 1];
 
             for (int exponent = 0; exponent <= maxSpawnExponent; exponent++)
             {
-                double weight = Math.Pow(0.56, exponent);
+                double pressure = 1.0 + DifficultyLevel * 0.18 * exponent;
+                double weight = Math.Pow(0.56, exponent) * pressure;
                 weights[exponent] = weight;
                 totalWeight += weight;
             }
@@ -436,14 +465,18 @@ namespace StackMerge
             int[] nextBlocks,
             long score,
             int blocksDropped,
+            int totalMerges,
             int highestBlock,
+            int highestMergedBlock,
             bool isGameOver)
         {
             Stacks = stacks;
             NextBlocks = nextBlocks;
             Score = score;
             BlocksDropped = blocksDropped;
+            TotalMerges = totalMerges;
             HighestBlock = highestBlock;
+            HighestMergedBlock = highestMergedBlock;
             IsGameOver = isGameOver;
         }
 
@@ -455,7 +488,11 @@ namespace StackMerge
 
         public int BlocksDropped { get; }
 
+        public int TotalMerges { get; }
+
         public int HighestBlock { get; }
+
+        public int HighestMergedBlock { get; }
 
         public bool IsGameOver { get; }
     }
