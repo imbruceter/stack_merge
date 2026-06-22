@@ -339,6 +339,50 @@ namespace StackMerge.Tests
         }
 
         [Test]
+        public void Progression_StoresSolverTuningPerSolver()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData());
+
+            progression.SetSolverTuningValue(SolverId.Heur, 0, 4);
+            progression.SetSolverTuningValue(SolverId.Heur, 2, -4);
+            progression.SetSolverTuningValue(SolverId.Heur, 3, 1);
+
+            SolverTuningSettings tuning = progression.GetSolverTuning(SolverId.Heur);
+            Assert.That(tuning.GetValue(SolverTuneParameterId.ScoreDelta), Is.EqualTo(SolverTuningSettings.MaxValue));
+            Assert.That(tuning.GetValue(SolverTuneParameterId.Smoothness), Is.EqualTo(SolverTuningSettings.MinValue));
+            Assert.That(tuning.GetValue(SolverTuneParameterId.QueueFit), Is.EqualTo(1));
+            Assert.That(progression.GetSolverTuning(SolverId.Rand).IsNeutral, Is.True);
+
+            progression.ResetSolverTuning(SolverId.Heur);
+            Assert.That(progression.GetSolverTuning(SolverId.Heur).IsNeutral, Is.True);
+        }
+
+        [Test]
+        public void MctsSolver_ReturnsLegalMoveWithTuning()
+        {
+            var state = new StackMergeGameState(queueLength: 5, seed: 13);
+            state.SetNextBlocksForTesting(1, 2, 1, 4, 2);
+            state.SetStacksForTesting(
+                new[] { 1, 2, 4 },
+                new[] { 2, 2 },
+                new[] { 4 },
+                new int[] { });
+
+            var context = new SolverContext(
+                new Random(13),
+                3,
+                3,
+                lightweightMode: true,
+                planningDepthLimit: 2,
+                tuning: new SolverTuningSettings(SolverId.Mcts, new[] { 2, 1, 2, 1, 1, 0 }));
+
+            SolverDecision decision = new MctsStackMergeSolver().ChooseMove(state, context);
+
+            Assert.That(decision.HasMove, Is.True);
+            Assert.That(state.CanPlace(decision.StackIndex), Is.True);
+        }
+
+        [Test]
         public void Progression_AgentsUnlockEquipAndCoordinatorAddsSlot()
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });

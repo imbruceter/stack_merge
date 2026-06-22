@@ -77,6 +77,10 @@ namespace StackMerge.Editor
             Button footerNewGameButton;
             Button historyButton;
             Button achievementsButton;
+            Button gameplayInfoButton;
+            GameObject gameplayInfoOverlay;
+            TMP_Text gameplayInfoText;
+            Button gameplayInfoCloseButton;
             BuildGameplayPanel(
                 gameplayPanel,
                 out scoreText,
@@ -97,20 +101,46 @@ namespace StackMerge.Editor
                 out feedbackText,
                 out footerNewGameButton,
                 out historyButton,
-                out achievementsButton);
+                out achievementsButton,
+                out gameplayInfoButton,
+                out gameplayInfoOverlay,
+                out gameplayInfoText,
+                out gameplayInfoCloseButton);
 
             TMP_Text algorithmsChipsText;
             TMP_Text solverDetailNameText;
             TMP_Text solverDetailInfoText;
             TMP_Text solverDetailStatusText;
             Button solverDetailActionButton;
+            Button solverDetailTuneButton;
+            GameObject solverTunePanel;
+            TMP_Text solverTuneTitleText;
+            TMP_Text solverTuneSummaryText;
+            GameObject[] solverTuneRows;
+            TMP_Text[] solverTuneNameTexts;
+            TMP_Text[] solverTuneValueTexts;
+            TMP_Text[] solverTuneDescriptionTexts;
+            Slider[] solverTuneSliders;
+            Button solverTuneBackButton;
+            Button solverTuneResetButton;
             Button[] solverButtons = BuildAlgorithmsPanel(
                 algorithmsPanel,
                 out algorithmsChipsText,
                 out solverDetailNameText,
                 out solverDetailInfoText,
                 out solverDetailStatusText,
-                out solverDetailActionButton);
+                out solverDetailActionButton,
+                out solverDetailTuneButton,
+                out solverTunePanel,
+                out solverTuneTitleText,
+                out solverTuneSummaryText,
+                out solverTuneRows,
+                out solverTuneNameTexts,
+                out solverTuneValueTexts,
+                out solverTuneDescriptionTexts,
+                out solverTuneSliders,
+                out solverTuneBackButton,
+                out solverTuneResetButton);
 
             TMP_Text upgradesChipsText;
             Toggle autoSolveToggle;
@@ -199,6 +229,10 @@ namespace StackMerge.Editor
                 new[] { footerNewGameButton, modalNewGameButton },
                 historyButton,
                 achievementsButton,
+                gameplayInfoButton,
+                gameplayInfoOverlay,
+                gameplayInfoText,
+                gameplayInfoCloseButton,
                 gameplayPanel.gameObject,
                 algorithmsPanel.gameObject,
                 upgradesPanel.gameObject,
@@ -220,6 +254,17 @@ namespace StackMerge.Editor
                 solverDetailInfoText,
                 solverDetailStatusText,
                 solverDetailActionButton,
+                solverDetailTuneButton,
+                solverTunePanel,
+                solverTuneTitleText,
+                solverTuneSummaryText,
+                solverTuneRows,
+                solverTuneNameTexts,
+                solverTuneValueTexts,
+                solverTuneDescriptionTexts,
+                solverTuneSliders,
+                solverTuneBackButton,
+                solverTuneResetButton,
                 speedUpgradeButtons,
                 autoRestartButton,
                 stackCapacityUpgradeButtons,
@@ -388,13 +433,18 @@ namespace StackMerge.Editor
             out TMP_Text feedbackText,
             out Button newGameButton,
             out Button historyButton,
-            out Button achievementsButton)
+            out Button achievementsButton,
+            out Button infoButton,
+            out GameObject infoOverlay,
+            out TMP_Text infoText,
+            out Button infoCloseButton)
         {
             BuildStats(panel, out scoreText, out bestText, out highestText);
             BuildStatusBar(panel, out chipsText, out solverText, out speedText, out capacityText, out queueText, out runStatusText, out agentSlotsText);
             nextBlocksRoot = BuildNextBlocks(panel);
             BuildBoard(panel, out boardRoot, out stackButtons, out stackLayers);
-            BuildFooter(panel, out droppedText, out feedbackText, out newGameButton, out historyButton, out achievementsButton);
+            BuildFooter(panel, out droppedText, out feedbackText, out newGameButton, out historyButton, out achievementsButton, out infoButton);
+            infoOverlay = BuildGameplayInfoOverlay(panel, out infoText, out infoCloseButton);
         }
 
         private static void BuildStats(RectTransform parent, out TMP_Text scoreText, out TMP_Text bestText, out TMP_Text highestText)
@@ -402,15 +452,15 @@ namespace StackMerge.Editor
             RectTransform stats = CreateRect("Stats", parent);
             SetTopStretch(stats, 0f, 0f, 0f, 92f);
 
-            scoreText = CreateStatBox(stats, "Score Stat", "Pont", "0", HexColor("#14B8A6"), 0);
-            bestText = CreateStatBox(stats, "Best Stat", "Rekord", "0", HexColor("#F97316"), 1);
-            highestText = CreateStatBox(stats, "Highest Stat", "Legnagyobb", "2", HexColor("#8B5CF6"), 2);
+            scoreText = CreateStatBox(stats, "Score Stat", "Pont", "0", HexColor("#14B8A6"), 0, 1);
+            bestText = null;
+            highestText = null;
         }
 
-        private static TMP_Text CreateStatBox(RectTransform parent, string name, string label, string value, Color accent, int column)
+        private static TMP_Text CreateStatBox(RectTransform parent, string name, string label, string value, Color accent, int column, int columns = 3)
         {
             RectTransform box = CreatePanel(name, parent, HexColor("#1F2937"));
-            SetGridCell(box, column, 3, 0, 1, 12f);
+            SetGridCell(box, column, columns, 0, 1, 12f);
 
             TMP_Text labelText = CreateText(label, box, 16, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#9CA3AF"));
             SetTopStretch(labelText.rectTransform, 10f, 7f, 10f, 24f);
@@ -446,10 +496,10 @@ namespace StackMerge.Editor
             RectTransform bottomRow = CreateRect("Run Status", status);
             SetTopStretch(bottomRow, 12f, 52f, 12f, 34f);
 
-            capacityText = CreateStatusPill(bottomRow, "Capacity", $"Stack cap: {StackMergeGameState.DefaultStackCapacity}/{StackMergeGameState.MaxStackCapacity}", HexColor("#C4B5FD"), 0, 4);
-            queueText = CreateStatusPill(bottomRow, "Next Queue", $"Next: {StackMergeGameState.DefaultQueueLength}", HexColor("#DDD6FE"), 1, 4);
-            agentSlotsText = CreateStatusPill(bottomRow, "Agent Slots", "Active agents: 0/2", HexColor("#F0ABFC"), 2, 4);
-            runStatusText = CreateStatusPill(bottomRow, "Run State", "Auto solving", HexColor("#D1D5DB"), 3, 4);
+            runStatusText = CreateStatusPill(bottomRow, "Run State", "Auto solving", HexColor("#D1D5DB"), 0, 1);
+            capacityText = null;
+            queueText = null;
+            agentSlotsText = null;
         }
 
         private static TMP_Text CreateStatusPill(RectTransform parent, string name, string value, Color color, int column, int columns)
@@ -514,13 +564,13 @@ namespace StackMerge.Editor
             }
         }
 
-        private static void BuildFooter(RectTransform parent, out TMP_Text droppedText, out TMP_Text feedbackText, out Button newGameButton, out Button historyButton, out Button achievementsButton)
+        private static void BuildFooter(RectTransform parent, out TMP_Text droppedText, out TMP_Text feedbackText, out Button newGameButton, out Button historyButton, out Button achievementsButton, out Button infoButton)
         {
             RectTransform footer = CreateRect("Footer", parent);
             SetBottomStretch(footer, 0f, 8f, 0f, 80f);
 
             RectTransform infoPanel = CreatePanel("Run Info", footer, HexColor("#1F2937"));
-            SetStretch(infoPanel, 0f, 0f, 574f, 0f);
+            SetStretch(infoPanel, 0f, 0f, 660f, 0f);
 
             droppedText = CreateText("Dobasok: 0", infoPanel, 22, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#D1D5DB"));
             SetStretch(droppedText.rectTransform, 18f, 0f, 286f, 0f);
@@ -534,6 +584,9 @@ namespace StackMerge.Editor
             feedbackText.fontSizeMin = 12;
             feedbackText.fontSizeMax = 20;
 
+            infoButton = CreateButton(footer, "i", HexColor("#334155"), 26);
+            SetRightStretch(infoButton.GetComponent<RectTransform>(), 0f, 576f, 0f, 70f);
+
             historyButton = CreateButton(footer, "History", HexColor("#2563EB"), 22);
             SetRightStretch(historyButton.GetComponent<RectTransform>(), 0f, 396f, 0f, 166f);
 
@@ -544,13 +597,51 @@ namespace StackMerge.Editor
             SetRightStretch(newGameButton.GetComponent<RectTransform>(), 0f, 0f, 0f, 190f);
         }
 
+        private static GameObject BuildGameplayInfoOverlay(RectTransform parent, out TMP_Text infoText, out Button closeButton)
+        {
+            RectTransform overlay = CreatePanel("Gameplay Info Overlay", parent, HexColor("#020617", 0.74f));
+            Stretch(overlay);
+
+            RectTransform modal = CreatePanel("Gameplay Info Modal", overlay, HexColor("#1F2937"));
+            SetCenter(modal, 760f, 560f);
+
+            TMP_Text title = CreateText("Run Info", modal, 34, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(title.rectTransform, 32f, 26f, 180f, 48f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 18;
+            title.fontSizeMax = 34;
+
+            closeButton = CreateButton(modal, "Close", HexColor("#334155"), 20);
+            SetTopRight(closeButton.GetComponent<RectTransform>(), 24f, 28f, 138f, 48f);
+
+            infoText = CreateText("Stack cap: 5", modal, 22, FontStyles.Bold, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(infoText.rectTransform, 34f, 98f, 34f, 34f);
+            infoText.enableAutoSizing = true;
+            infoText.fontSizeMin = 14;
+            infoText.fontSizeMax = 22;
+
+            overlay.gameObject.SetActive(false);
+            return overlay.gameObject;
+        }
+
         private static Button[] BuildAlgorithmsPanel(
             RectTransform panel,
             out TMP_Text chipsText,
             out TMP_Text detailNameText,
             out TMP_Text detailInfoText,
             out TMP_Text detailStatusText,
-            out Button detailActionButton)
+            out Button detailActionButton,
+            out Button detailTuneButton,
+            out GameObject tunePanel,
+            out TMP_Text tuneTitleText,
+            out TMP_Text tuneSummaryText,
+            out GameObject[] tuneRows,
+            out TMP_Text[] tuneNameTexts,
+            out TMP_Text[] tuneValueTexts,
+            out TMP_Text[] tuneDescriptionTexts,
+            out Slider[] tuneSliders,
+            out Button tuneBackButton,
+            out Button tuneResetButton)
         {
             BuildMenuHeader(panel, "Algoritmusok", out chipsText);
 
@@ -580,7 +671,10 @@ namespace StackMerge.Editor
             detailInfoText.fontSizeMax = 20;
 
             detailActionButton = CreateButton(details, "Selected", HexColor("#0F766E"), 22);
-            SetRightStretch(detailActionButton.GetComponent<RectTransform>(), 44f, 0f, 0f, 190f);
+            SetTopRight(detailActionButton.GetComponent<RectTransform>(), 44f, 0f, 190f, 44f);
+
+            detailTuneButton = CreateButton(details, "Tune", HexColor("#7C3AED"), 20);
+            SetTopRight(detailTuneButton.GetComponent<RectTransform>(), 96f, 0f, 190f, 44f);
 
             Button[] buttons = new Button[StackMergeSolverCatalog.Definitions.Length];
 
@@ -610,7 +704,109 @@ namespace StackMerge.Editor
             RectTransform treeSearch = CreateCategoryPanel(panel, "Tree Search", 1074f, 112f);
             buttons[(int)SolverId.Mcts] = CreateSolverButton(treeSearch, SolverId.Mcts, 0, 1);
 
+            tunePanel = BuildSolverTunePanel(
+                panel,
+                out tuneTitleText,
+                out tuneSummaryText,
+                out tuneRows,
+                out tuneNameTexts,
+                out tuneValueTexts,
+                out tuneDescriptionTexts,
+                out tuneSliders,
+                out tuneBackButton,
+                out tuneResetButton);
+
             return buttons;
+        }
+
+        private static GameObject BuildSolverTunePanel(
+            RectTransform parent,
+            out TMP_Text titleText,
+            out TMP_Text summaryText,
+            out GameObject[] rows,
+            out TMP_Text[] nameTexts,
+            out TMP_Text[] valueTexts,
+            out TMP_Text[] descriptionTexts,
+            out Slider[] sliders,
+            out Button backButton,
+            out Button resetButton)
+        {
+            RectTransform panel = CreatePanel("Solver Tune Panel", parent, HexColor("#111827"));
+            Stretch(panel);
+
+            titleText = CreateText("HEUR tuning", panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(titleText.rectTransform, 0f, 0f, 340f, 58f);
+            titleText.enableAutoSizing = true;
+            titleText.fontSizeMin = 20;
+            titleText.fontSizeMax = 38;
+
+            backButton = CreateButton(panel, "Back", HexColor("#334155"), 20);
+            SetTopRight(backButton.GetComponent<RectTransform>(), 0f, 0f, 146f, 58f);
+
+            resetButton = CreateButton(panel, "Reset", HexColor("#7C2D12"), 20);
+            SetTopRight(resetButton.GetComponent<RectTransform>(), 0f, 160f, 146f, 58f);
+
+            RectTransform summary = CreateCategoryPanel(panel, "Tuning Notes", 78f, 120f);
+            summaryText = CreateText("Tune this solver after unlocking it.", summary, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetStretch(summaryText.rectTransform, 0f, 0f, 0f, 0f);
+            summaryText.enableAutoSizing = true;
+            summaryText.fontSizeMin = 11;
+            summaryText.fontSizeMax = 18;
+
+            RectTransform options = CreateCategoryPanel(panel, "Parameters", 214f, 724f);
+            rows = new GameObject[SolverTuningSettings.MaxSlots];
+            nameTexts = new TMP_Text[SolverTuningSettings.MaxSlots];
+            valueTexts = new TMP_Text[SolverTuningSettings.MaxSlots];
+            descriptionTexts = new TMP_Text[SolverTuningSettings.MaxSlots];
+            sliders = new Slider[SolverTuningSettings.MaxSlots];
+
+            for (int i = 0; i < SolverTuningSettings.MaxSlots; i++)
+            {
+                CreateTuneRow(options, i, rows, nameTexts, valueTexts, descriptionTexts, sliders);
+            }
+
+            panel.gameObject.SetActive(false);
+            return panel.gameObject;
+        }
+
+        private static void CreateTuneRow(
+            RectTransform parent,
+            int rowIndex,
+            GameObject[] rows,
+            TMP_Text[] nameTexts,
+            TMP_Text[] valueTexts,
+            TMP_Text[] descriptionTexts,
+            Slider[] sliders)
+        {
+            RectTransform row = CreatePanel($"Tune Parameter {rowIndex + 1}", parent, rowIndex % 2 == 0 ? HexColor("#172033") : HexColor("#111827", 0.86f));
+            SetTopStretch(row, 0f, rowIndex * 106f, 0f, 92f);
+
+            TMP_Text nameText = CreateText("Parameter", row, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(nameText.rectTransform, 18f, 8f, 190f, 26f);
+            nameText.enableAutoSizing = true;
+            nameText.fontSizeMin = 12;
+            nameText.fontSizeMax = 20;
+
+            TMP_Text valueText = CreateText("0", row, 18, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#FDE68A"));
+            SetTopStretch(valueText.rectTransform, 640f, 8f, 18f, 24f);
+            valueText.enableAutoSizing = true;
+            valueText.fontSizeMin = 11;
+            valueText.fontSizeMax = 18;
+
+            TMP_Text descriptionText = CreateText("Description", row, 15, FontStyles.Bold, TextAlignmentOptions.TopLeft, HexColor("#94A3B8"));
+            SetTopStretch(descriptionText.rectTransform, 18f, 38f, 330f, 42f);
+            descriptionText.enableAutoSizing = true;
+            descriptionText.fontSizeMin = 9;
+            descriptionText.fontSizeMax = 15;
+
+            Slider slider = CreateSlider(row, HexColor("#60A5FA"));
+            SetRightStretch(slider.GetComponent<RectTransform>(), 40f, 18f, 26f, 286f);
+
+            rows[rowIndex] = row.gameObject;
+            nameTexts[rowIndex] = nameText;
+            valueTexts[rowIndex] = valueText;
+            descriptionTexts[rowIndex] = descriptionText;
+            sliders[rowIndex] = slider;
         }
 
         private static Button CreateSolverButton(RectTransform category, SolverId solverId, int column, int columns)
@@ -966,6 +1162,37 @@ namespace StackMerge.Editor
             return toggle;
         }
 
+        private static Slider CreateSlider(Transform parent, Color color)
+        {
+            RectTransform root = CreateRect("Slider", parent);
+            Slider slider = root.gameObject.AddComponent<Slider>();
+            slider.minValue = SolverTuningSettings.MinValue;
+            slider.maxValue = SolverTuningSettings.MaxValue;
+            slider.wholeNumbers = true;
+            slider.value = 0;
+
+            RectTransform background = CreatePanel("Background", root, HexColor("#0F172A"));
+            SetStretch(background, 0f, 7f, 0f, 7f);
+
+            RectTransform fillArea = CreateRect("Fill Area", root);
+            SetStretch(fillArea, 7f, 7f, 7f, 7f);
+
+            RectTransform fill = CreatePanel("Fill", fillArea, color);
+            SetStretch(fill, 0f, 0f, 0f, 0f);
+
+            RectTransform handleArea = CreateRect("Handle Slide Area", root);
+            SetStretch(handleArea, 9f, 0f, 9f, 0f);
+
+            RectTransform handle = CreatePanel("Handle", handleArea, HexColor("#F8FAFC"));
+            handle.sizeDelta = new Vector2(22f, 22f);
+
+            slider.fillRect = fill;
+            slider.handleRect = handle;
+            slider.targetGraphic = handle.GetComponent<Image>();
+            slider.colors = ButtonColors(HexColor("#F8FAFC"), HexColor("#FFFFFF"), HexColor("#64748B"));
+            return slider;
+        }
+
         private static RectTransform CreatePanel(string name, Transform parent, Color color)
         {
             RectTransform panel = CreateRect(name, parent);
@@ -1085,6 +1312,20 @@ namespace StackMerge.Editor
             rectTransform.anchorMin = new Vector2(xMin, yMin);
             rectTransform.anchorMax = new Vector2(xMax, yMax);
             rectTransform.offsetMin = new Vector2(left, bottom);
+            rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetGridCellTop(RectTransform rectTransform, int column, int columns, float top, float height, float gap)
+        {
+            float xMin = column / (float)columns;
+            float xMax = (column + 1) / (float)columns;
+            float left = column == 0 ? 0f : gap * 0.5f;
+            float right = column == columns - 1 ? 0f : gap * 0.5f;
+
+            rectTransform.anchorMin = new Vector2(xMin, 1f);
+            rectTransform.anchorMax = new Vector2(xMax, 1f);
+            rectTransform.pivot = new Vector2(0.5f, 1f);
+            rectTransform.offsetMin = new Vector2(left, -top - height);
             rectTransform.offsetMax = new Vector2(-right, -top);
         }
 

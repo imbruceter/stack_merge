@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -32,6 +33,10 @@ namespace StackMerge
         [SerializeField] private Button[] newGameButtons = Array.Empty<Button>();
         [SerializeField] private Button historyButton;
         [SerializeField] private Button achievementsButton;
+        [SerializeField] private Button gameplayInfoButton;
+        [SerializeField] private GameObject gameplayInfoOverlay;
+        [SerializeField] private TMP_Text gameplayInfoText;
+        [SerializeField] private Button gameplayInfoCloseButton;
 
         [Header("Tabs")]
         [SerializeField] private GameObject gameplayPanel;
@@ -57,6 +62,17 @@ namespace StackMerge
         [SerializeField] private TMP_Text solverDetailInfoText;
         [SerializeField] private TMP_Text solverDetailStatusText;
         [SerializeField] private Button solverDetailActionButton;
+        [SerializeField] private Button solverDetailTuneButton;
+        [SerializeField] private GameObject solverTunePanel;
+        [SerializeField] private TMP_Text solverTuneTitleText;
+        [SerializeField] private TMP_Text solverTuneSummaryText;
+        [SerializeField] private GameObject[] solverTuneRows = Array.Empty<GameObject>();
+        [SerializeField] private TMP_Text[] solverTuneNameTexts = Array.Empty<TMP_Text>();
+        [SerializeField] private TMP_Text[] solverTuneValueTexts = Array.Empty<TMP_Text>();
+        [SerializeField] private TMP_Text[] solverTuneDescriptionTexts = Array.Empty<TMP_Text>();
+        [SerializeField] private Slider[] solverTuneSliders = Array.Empty<Slider>();
+        [SerializeField] private Button solverTuneBackButton;
+        [SerializeField] private Button solverTuneResetButton;
         [SerializeField] private Button[] speedUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button autoRestartButton;
         [SerializeField] private Button[] stackCapacityUpgradeButtons = Array.Empty<Button>();
@@ -100,6 +116,8 @@ namespace StackMerge
         private int selectedTabIndex;
         private bool historyOpen;
         private bool achievementsOpen;
+        private bool solverTuneOpen;
+        private bool gameplayInfoOpen;
         private bool currentRunUsedAutoSolve;
         private int currentRunManualMoves;
         private SolverId selectedSolverId = SolverId.Rand;
@@ -150,6 +168,10 @@ namespace StackMerge
             Button[] resetButtons,
             Button openHistoryButton,
             Button openAchievementsButton,
+            Button openGameplayInfoButton,
+            GameObject gameplayInfo,
+            TMP_Text gameplayInfoDetails,
+            Button closeGameplayInfoButton,
             GameObject gameplay,
             GameObject algorithms,
             GameObject upgrades,
@@ -171,6 +193,17 @@ namespace StackMerge
             TMP_Text selectedSolverInfo,
             TMP_Text selectedSolverStatus,
             Button selectedSolverAction,
+            Button selectedSolverTune,
+            GameObject tunePanel,
+            TMP_Text tuneTitle,
+            TMP_Text tuneSummary,
+            GameObject[] tuneRows,
+            TMP_Text[] tuneNames,
+            TMP_Text[] tuneValues,
+            TMP_Text[] tuneDescriptions,
+            Slider[] tuneSliders,
+            Button tuneBack,
+            Button tuneReset,
             Button[] speedButtons,
             Button restartButton,
             Button[] capacityButtons,
@@ -212,6 +245,10 @@ namespace StackMerge
             newGameButtons = resetButtons;
             historyButton = openHistoryButton;
             achievementsButton = openAchievementsButton;
+            gameplayInfoButton = openGameplayInfoButton;
+            gameplayInfoOverlay = gameplayInfo;
+            gameplayInfoText = gameplayInfoDetails;
+            gameplayInfoCloseButton = closeGameplayInfoButton;
             gameplayPanel = gameplay;
             algorithmsPanel = algorithms;
             upgradesPanel = upgrades;
@@ -233,6 +270,17 @@ namespace StackMerge
             solverDetailInfoText = selectedSolverInfo;
             solverDetailStatusText = selectedSolverStatus;
             solverDetailActionButton = selectedSolverAction;
+            solverDetailTuneButton = selectedSolverTune;
+            solverTunePanel = tunePanel;
+            solverTuneTitleText = tuneTitle;
+            solverTuneSummaryText = tuneSummary;
+            solverTuneRows = tuneRows;
+            solverTuneNameTexts = tuneNames;
+            solverTuneValueTexts = tuneValues;
+            solverTuneDescriptionTexts = tuneDescriptions;
+            solverTuneSliders = tuneSliders;
+            solverTuneBackButton = tuneBack;
+            solverTuneResetButton = tuneReset;
             speedUpgradeButtons = speedButtons;
             autoRestartButton = restartButton;
             stackCapacityUpgradeButtons = capacityButtons;
@@ -331,6 +379,18 @@ namespace StackMerge
             {
                 achievementsButton.onClick.RemoveAllListeners();
                 achievementsButton.onClick.AddListener(OpenAchievementsPanel);
+            }
+
+            if (gameplayInfoButton != null)
+            {
+                gameplayInfoButton.onClick.RemoveAllListeners();
+                gameplayInfoButton.onClick.AddListener(OpenGameplayInfo);
+            }
+
+            if (gameplayInfoCloseButton != null)
+            {
+                gameplayInfoCloseButton.onClick.RemoveAllListeners();
+                gameplayInfoCloseButton.onClick.AddListener(CloseGameplayInfo);
             }
 
             if (achievementBackButton != null)
@@ -459,6 +519,37 @@ namespace StackMerge
                 solverDetailActionButton.onClick.AddListener(HandleSelectedSolverAction);
             }
 
+            if (solverDetailTuneButton != null)
+            {
+                solverDetailTuneButton.onClick.RemoveAllListeners();
+                solverDetailTuneButton.onClick.AddListener(OpenSolverTunePanel);
+            }
+
+            for (int i = 0; i < solverTuneSliders.Length; i++)
+            {
+                int slotIndex = i;
+                Slider slider = solverTuneSliders[i];
+                if (slider == null)
+                {
+                    continue;
+                }
+
+                slider.onValueChanged.RemoveAllListeners();
+                slider.onValueChanged.AddListener(value => SetSelectedSolverTuning(slotIndex, Mathf.RoundToInt(value)));
+            }
+
+            if (solverTuneBackButton != null)
+            {
+                solverTuneBackButton.onClick.RemoveAllListeners();
+                solverTuneBackButton.onClick.AddListener(CloseSolverTunePanel);
+            }
+
+            if (solverTuneResetButton != null)
+            {
+                solverTuneResetButton.onClick.RemoveAllListeners();
+                solverTuneResetButton.onClick.AddListener(ResetSelectedSolverTuning);
+            }
+
             if (agentDetailActionButton != null)
             {
                 agentDetailActionButton.onClick.RemoveAllListeners();
@@ -470,6 +561,8 @@ namespace StackMerge
         {
             historyOpen = false;
             achievementsOpen = false;
+            solverTuneOpen = false;
+            gameplayInfoOpen = false;
             int requestedTab = Mathf.Clamp(tabIndex, 0, 4);
             if (requestedTab == 3 && progression != null && !progression.AgentsMenuUnlocked)
             {
@@ -485,6 +578,8 @@ namespace StackMerge
             SetActive(achievementsPanel, false);
             SetActive(agentsPanel, selectedTabIndex == 3);
             SetActive(settingsPanel, selectedTabIndex == 4);
+            SetActive(solverTunePanel, false);
+            SetActive(gameplayInfoOverlay, false);
             RefreshTabButtons();
 
             if (gameState != null)
@@ -497,6 +592,8 @@ namespace StackMerge
         {
             historyOpen = true;
             achievementsOpen = false;
+            solverTuneOpen = false;
+            gameplayInfoOpen = false;
             SetActive(gameplayPanel, false);
             SetActive(algorithmsPanel, false);
             SetActive(upgradesPanel, false);
@@ -504,6 +601,8 @@ namespace StackMerge
             SetActive(agentsPanel, false);
             SetActive(settingsPanel, false);
             SetActive(historyPanel, true);
+            SetActive(solverTunePanel, false);
+            SetActive(gameplayInfoOverlay, false);
             RefreshHistory();
             RefreshTabButtons();
             RefreshGameOver();
@@ -518,6 +617,8 @@ namespace StackMerge
         {
             achievementsOpen = true;
             historyOpen = false;
+            solverTuneOpen = false;
+            gameplayInfoOpen = false;
             SetActive(gameplayPanel, false);
             SetActive(algorithmsPanel, false);
             SetActive(upgradesPanel, false);
@@ -525,6 +626,8 @@ namespace StackMerge
             SetActive(agentsPanel, false);
             SetActive(settingsPanel, false);
             SetActive(achievementsPanel, true);
+            SetActive(solverTunePanel, false);
+            SetActive(gameplayInfoOverlay, false);
             RefreshAchievements();
             RefreshTabButtons();
             RefreshGameOver();
@@ -533,6 +636,44 @@ namespace StackMerge
         private void CloseAchievementsPanel()
         {
             SelectTab(0);
+        }
+
+        private void OpenGameplayInfo()
+        {
+            gameplayInfoOpen = true;
+            RefreshGameplayInfo();
+            SetActive(gameplayInfoOverlay, true);
+        }
+
+        private void CloseGameplayInfo()
+        {
+            gameplayInfoOpen = false;
+            SetActive(gameplayInfoOverlay, false);
+        }
+
+        private void OpenSolverTunePanel()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            if (!progression.IsSolverUnlocked(selectedSolverId) || !tuningDefinition.HasParameters)
+            {
+                return;
+            }
+
+            solverTuneOpen = true;
+            SetActive(solverTunePanel, true);
+            RefreshSolverTunePanel();
+        }
+
+        private void CloseSolverTunePanel()
+        {
+            solverTuneOpen = false;
+            SetActive(solverTunePanel, false);
+            RefreshSolverDetails();
         }
 
         private void RefreshTabButtons()
@@ -611,7 +752,11 @@ namespace StackMerge
             autoSolveTimer = 0f;
             SolverDecision decision = GetSelectedSolver().ChooseMove(
                 gameState,
-                new SolverContext(solverRandom, progression.MonteCarloSimulationCount, progression.MonteCarloRolloutDepth));
+                new SolverContext(
+                    solverRandom,
+                    progression.MonteCarloSimulationCount,
+                    progression.MonteCarloRolloutDepth,
+                    tuning: progression.GetSolverTuning(progression.SelectedSolver)));
 
             if (decision.HasMove)
             {
@@ -711,6 +856,8 @@ namespace StackMerge
         private void SelectSolver(SolverId solverId)
         {
             selectedSolverId = solverId;
+            solverTuneOpen = false;
+            SetActive(solverTunePanel, false);
             RefreshSolverButtons();
             RefreshSolverDetails();
         }
@@ -727,6 +874,41 @@ namespace StackMerge
             SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
             progression.Save();
             RefreshEverything();
+        }
+
+        private void SetSelectedSolverTuning(int slotIndex, int value)
+        {
+            if (progression == null || !progression.IsSolverUnlocked(selectedSolverId))
+            {
+                RefreshSolverTunePanel();
+                return;
+            }
+
+            progression.SetSolverTuningValue(selectedSolverId, slotIndex, value);
+            progression.Save();
+
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+            SetText(feedbackText, $"{definition.DisplayName} tuning updated");
+            RefreshSolverTunePanel();
+            RefreshSolverDetails();
+            RefreshGameplayInfo();
+        }
+
+        private void ResetSelectedSolverTuning()
+        {
+            if (progression == null || !progression.IsSolverUnlocked(selectedSolverId))
+            {
+                return;
+            }
+
+            progression.ResetSolverTuning(selectedSolverId);
+            progression.Save();
+
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+            SetText(feedbackText, $"{definition.DisplayName} tuning reset");
+            RefreshSolverTunePanel();
+            RefreshSolverDetails();
+            RefreshGameplayInfo();
         }
 
         private void BuySpeedUpgrade(int upgradeIndex)
@@ -918,8 +1100,6 @@ namespace StackMerge
             }
 
             SetText(scoreText, FormatNumber(gameState.Score));
-            SetText(bestText, FormatNumber(highScore));
-            SetText(highestText, FormatNumber(gameState.HighestBlock));
             SetText(droppedText, $"Dobasok: {FormatNumber(gameState.BlocksDropped)}");
 
             RefreshNextBlocks();
@@ -938,11 +1118,6 @@ namespace StackMerge
             SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)}");
             SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
             SetText(speedText, $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
-            SetText(capacityText, $"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity} | Risk L{progression.DifficultyLevel}");
-            SetText(queueText, $"Next: {progression.QueueLength}");
-            SetText(agentSlotsText, progression.AgentsMenuUnlocked
-                ? $"Active agents: {progression.ActiveAgentCount}/{progression.ActiveAgentSlots}"
-                : "Agents: locked");
 
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -956,6 +1131,10 @@ namespace StackMerge
 
             RefreshSolverButtons();
             RefreshSolverDetails();
+            if (solverTuneOpen)
+            {
+                RefreshSolverTunePanel();
+            }
             RefreshAgentButtons();
             RefreshAgentSlots();
             RefreshAgentDetails();
@@ -963,6 +1142,7 @@ namespace StackMerge
             RefreshHistory();
             RefreshAchievements();
             RefreshTabButtons();
+            RefreshGameplayInfo();
         }
 
         private void RefreshSolverButtons()
@@ -1001,9 +1181,16 @@ namespace StackMerge
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
             bool unlocked = progression.IsSolverUnlocked(definition.Id);
             bool active = progression.SelectedSolver == definition.Id;
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            bool canTune = unlocked && tuningDefinition.HasParameters;
 
             SetText(solverDetailNameText, definition.DisplayName);
             SetText(solverDetailInfoText, unlocked ? definition.Description : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips");
+            SetButtonText(solverDetailTuneButton, !unlocked ? "Tune\nLocked" : canTune ? "Tune" : "No tuning");
+            if (solverDetailTuneButton != null)
+            {
+                solverDetailTuneButton.interactable = canTune;
+            }
 
             if (!unlocked)
             {
@@ -1022,6 +1209,99 @@ namespace StackMerge
             {
                 solverDetailActionButton.interactable = !active;
             }
+        }
+
+        private void RefreshSolverTunePanel()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            SolverTuningSettings tuning = progression.GetSolverTuning(selectedSolverId);
+
+            SetText(solverTuneTitleText, $"{solverDefinition.DisplayName} tuning");
+            SetText(solverTuneSummaryText, tuningDefinition.Summary);
+
+            for (int i = 0; i < solverTuneRows.Length; i++)
+            {
+                bool visible = i < tuningDefinition.Parameters.Length;
+                SetActive(solverTuneRows[i], visible);
+                if (!visible)
+                {
+                    continue;
+                }
+
+                SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
+                int value = tuning.GetSlotValue(i);
+
+                if (i < solverTuneNameTexts.Length)
+                {
+                    SetText(solverTuneNameTexts[i], parameter.DisplayName);
+                }
+
+                if (i < solverTuneDescriptionTexts.Length)
+                {
+                    SetText(solverTuneDescriptionTexts[i], parameter.Description);
+                }
+
+                if (i < solverTuneValueTexts.Length)
+                {
+                    SetText(solverTuneValueTexts[i], FormatSigned(value));
+                }
+
+                if (i < solverTuneSliders.Length && solverTuneSliders[i] != null)
+                {
+                    solverTuneSliders[i].minValue = SolverTuningSettings.MinValue;
+                    solverTuneSliders[i].maxValue = SolverTuningSettings.MaxValue;
+                    solverTuneSliders[i].wholeNumbers = true;
+                    solverTuneSliders[i].SetValueWithoutNotify(value);
+                }
+            }
+
+            if (solverTuneResetButton != null)
+            {
+                solverTuneResetButton.interactable = !tuning.IsNeutral;
+            }
+        }
+
+        private void RefreshGameplayInfo()
+        {
+            if (!gameplayInfoOpen || progression == null)
+            {
+                return;
+            }
+
+            SolverId solverId = progression.SelectedSolver;
+            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(solverId);
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
+            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
+
+            var builder = new StringBuilder();
+            builder.AppendLine($"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
+            builder.AppendLine($"Risk: L{progression.DifficultyLevel}");
+            builder.AppendLine($"Speed: L{progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
+            builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
+            builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
+            builder.AppendLine();
+            builder.AppendLine("Solver tuning");
+
+            if (!tuningDefinition.HasParameters)
+            {
+                builder.AppendLine("No tuning available for this solver.");
+            }
+            else
+            {
+                for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
+                {
+                    SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
+                    builder.AppendLine($"{parameter.DisplayName}: {FormatSigned(tuning.GetSlotValue(i))}");
+                }
+            }
+
+            SetText(gameplayInfoText, builder.ToString());
         }
 
         private void RefreshAgentButtons()
@@ -2059,6 +2339,11 @@ namespace StackMerge
         private static string FormatNumber(double value)
         {
             return FormatNumber((long)Math.Round(value));
+        }
+
+        private static string FormatSigned(int value)
+        {
+            return value > 0 ? $"+{value}" : value.ToString();
         }
     }
 }

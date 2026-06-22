@@ -21,6 +21,7 @@ namespace StackMerge.Editor
         private int monteCarloSimulations = 2;
         private int rolloutDepth = 2;
         private int planningDepthLimit = 2;
+        private int[] benchmarkTuningSlots = new int[SolverTuningSettings.MaxSlots];
         private int maxMovesPerRun = 700;
         private int maxSecondsPerRun = 3;
         private int maxSecondsPerSolver = 30;
@@ -61,6 +62,29 @@ namespace StackMerge.Editor
                 using (new EditorGUI.DisabledScope(!fastBenchmarkMode))
                 {
                     planningDepthLimit = EditorGUILayout.IntSlider("Planning depth cap", planningDepthLimit, 1, 5);
+                }
+
+                EditorGUILayout.Space(4f);
+                EditorGUILayout.LabelField("Solver tuning", EditorStyles.boldLabel);
+                if (runAllSolvers)
+                {
+                    EditorGUILayout.HelpBox("Tuning sliders are available when benchmarking one selected solver.", MessageType.None);
+                }
+                else
+                {
+                    SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolver);
+                    if (!tuningDefinition.HasParameters)
+                    {
+                        EditorGUILayout.HelpBox("This solver has no tuning parameters.", MessageType.None);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
+                        {
+                            SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
+                            benchmarkTuningSlots[i] = EditorGUILayout.IntSlider(parameter.DisplayName, benchmarkTuningSlots[i], SolverTuningSettings.MinValue, SolverTuningSettings.MaxValue);
+                        }
+                    }
                 }
 
                 maxMovesPerRun = EditorGUILayout.IntSlider("Max moves per run", maxMovesPerRun, 100, 10000);
@@ -171,7 +195,8 @@ namespace StackMerge.Editor
                 monteCarloSimulations,
                 rolloutDepth,
                 fastBenchmarkMode,
-                fastBenchmarkMode ? planningDepthLimit : int.MaxValue);
+                fastBenchmarkMode ? planningDepthLimit : int.MaxValue,
+                BuildBenchmarkTuning(solver.Id));
 
             Stopwatch runStopwatch = Stopwatch.StartNew();
             int moves = 0;
@@ -219,12 +244,13 @@ namespace StackMerge.Editor
                 solverTimedOut);
         }
 
-        private static string BuildOutput(IReadOnlyList<BenchmarkSummary> rows, TimeSpan elapsed, bool canceled)
+        private string BuildOutput(IReadOnlyList<BenchmarkSummary> rows, TimeSpan elapsed, bool canceled)
         {
             var builder = new StringBuilder();
             builder.AppendLine("Stack Merge Solver Benchmark");
             builder.AppendLine($"Completed: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             builder.AppendLine($"Total time: {elapsed.TotalSeconds:0.00}s");
+            builder.AppendLine($"Tuning: {BuildTuningSummary()}");
             if (canceled)
             {
                 builder.AppendLine("Status: canceled by user");
@@ -249,6 +275,34 @@ namespace StackMerge.Editor
             }
 
             return builder.ToString();
+        }
+
+        private static string FormatSigned(int value)
+        {
+            return value > 0 ? $"+{value}" : value.ToString();
+        }
+
+        private SolverTuningSettings BuildBenchmarkTuning(SolverId solverId)
+        {
+            return runAllSolvers
+                ? SolverTuningSettings.Neutral(solverId)
+                : new SolverTuningSettings(solverId, benchmarkTuningSlots);
+        }
+
+        private string BuildTuningSummary()
+        {
+            if (runAllSolvers)
+            {
+                return "neutral for all solvers";
+            }
+
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolver);
+            if (!tuningDefinition.HasParameters)
+            {
+                return "no tuning";
+            }
+
+            return string.Join(", ", tuningDefinition.Parameters.Select((parameter, index) => $"{parameter.DisplayName} {FormatSigned(benchmarkTuningSlots[index])}"));
         }
 
         private readonly struct BenchmarkRunResult

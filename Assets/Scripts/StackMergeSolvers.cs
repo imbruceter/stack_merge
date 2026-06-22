@@ -21,6 +21,146 @@ namespace StackMerge
         Combo = 11
     }
 
+    public enum SolverTuneParameterId
+    {
+        ScoreDelta,
+        MergeReward,
+        HighBlockValue,
+        FreeSpace,
+        Smoothness,
+        DangerPenalty,
+        QueueFit,
+        PairSetup,
+        FollowUpWeight,
+        PlanningDepth,
+        SimulationRounds,
+        RolloutMoves,
+        RolloutPlanning,
+        BoardEvaluation,
+        AntiStallPressure,
+        ComboSetup,
+        Exploration,
+        PriorBias,
+        TreeVisits,
+        SafetyCushion,
+        FutureDepth
+    }
+
+    public readonly struct SolverTuningParameterDefinition
+    {
+        public SolverTuningParameterDefinition(SolverTuneParameterId id, string displayName, string description)
+        {
+            Id = id;
+            DisplayName = displayName;
+            Description = description;
+        }
+
+        public SolverTuneParameterId Id { get; }
+
+        public string DisplayName { get; }
+
+        public string Description { get; }
+    }
+
+    public readonly struct SolverTuningDefinition
+    {
+        public SolverTuningDefinition(SolverId solverId, string summary, params SolverTuningParameterDefinition[] parameters)
+        {
+            SolverId = solverId;
+            Summary = summary;
+            Parameters = parameters ?? Array.Empty<SolverTuningParameterDefinition>();
+        }
+
+        public SolverId SolverId { get; }
+
+        public string Summary { get; }
+
+        public SolverTuningParameterDefinition[] Parameters { get; }
+
+        public bool HasParameters => Parameters.Length > 0;
+    }
+
+    public readonly struct SolverTuningSettings
+    {
+        public const int MinValue = -3;
+        public const int MaxValue = 3;
+        public const int MaxSlots = 6;
+
+        private readonly int[] values;
+
+        public SolverTuningSettings(SolverId solverId, IReadOnlyList<int> values)
+        {
+            SolverId = solverId;
+            this.values = new int[MaxSlots];
+            if (values == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < values.Count && i < MaxSlots; i++)
+            {
+                this.values[i] = ClampValue(values[i]);
+            }
+        }
+
+        public SolverId SolverId { get; }
+
+        public bool IsNeutral
+        {
+            get
+            {
+                for (int i = 0; i < MaxSlots; i++)
+                {
+                    if (GetSlotValue(i) != 0)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        public static SolverTuningSettings Neutral(SolverId solverId) => new(solverId, null);
+
+        public static int ClampValue(int value)
+        {
+            return Math.Min(MaxValue, Math.Max(MinValue, value));
+        }
+
+        public int GetSlotValue(int slotIndex)
+        {
+            return values != null && slotIndex >= 0 && slotIndex < values.Length ? values[slotIndex] : 0;
+        }
+
+        public int GetValue(SolverTuneParameterId parameterId)
+        {
+            int slotIndex = StackMergeSolverCatalog.GetTuningParameterIndex(SolverId, parameterId);
+            return slotIndex >= 0 ? GetSlotValue(slotIndex) : 0;
+        }
+
+        public double Factor(SolverTuneParameterId parameterId, double step = 0.12)
+        {
+            return Math.Max(0.15, 1.0 + GetValue(parameterId) * step);
+        }
+
+        public int Additive(SolverTuneParameterId parameterId, int step = 1)
+        {
+            return GetValue(parameterId) * step;
+        }
+
+        public int[] ToArray()
+        {
+            int[] copy = new int[MaxSlots];
+            for (int i = 0; i < copy.Length; i++)
+            {
+                copy[i] = GetSlotValue(i);
+            }
+
+            return copy;
+        }
+    }
+
     public readonly struct SolverDefinition
     {
         public SolverDefinition(SolverId id, string displayName, long cost, string lockedHint, string description)
@@ -61,6 +201,78 @@ namespace StackMerge
             new(SolverId.Combo, "COMBO", 1800, "Sets up chain merges.", "Combo-focused solver: reads the queue and rewards positions that can cascade over the next 2-3 turns.")
         };
 
+        public static readonly SolverTuningDefinition[] TuningDefinitions =
+        {
+            new(SolverId.Rand, "RAND has no tuning. Its identity is pure randomness."),
+            new(SolverId.Merge, "MERG stays greedy, but these sliders decide how hard it chases immediate value.",
+                Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Raises or lowers the reward for immediate merges and cascade size."),
+                Tune(SolverTuneParameterId.ScoreDelta, "Score delta", "Changes how much raw score gained by the move matters."),
+                Tune(SolverTuneParameterId.HighBlockValue, "High block", "Pushes the solver toward producing larger top blocks."),
+                Tune(SolverTuneParameterId.Smoothness, "Height penalty", "Positive values avoid tall uneven stacks more strongly.")),
+            new(SolverId.Balance, "BAL remains a board stabilizer. Tune how defensive or merge-friendly it should be.",
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards boards with more open cells after the move."),
+                Tune(SolverTuneParameterId.Smoothness, "Smoothness", "Rewards similar stack heights and penalizes lopsided boards."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Penalizes stacks near capacity more strongly."),
+                Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Lets BAL accept more merge value before spreading out.")),
+            new(SolverId.Heur, "HEUR is a weighted score formula. These are the clearest direct knobs.",
+                Tune(SolverTuneParameterId.ScoreDelta, "Score delta", "Changes how strongly immediate score gain affects the move score."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards free stack cells after the move."),
+                Tune(SolverTuneParameterId.Smoothness, "Smoothness", "Rewards smoother stack heights and fewer awkward bottlenecks."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards top blocks that match upcoming queue values."),
+                Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Raises or lowers the value of immediate merge chains."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Makes near-full stacks scarier to the heuristic.")),
+            new(SolverId.Look, "LOOK uses HEUR plus a follow-up estimate. Tune its greed and its second-step trust.",
+                Tune(SolverTuneParameterId.ScoreDelta, "Score delta", "Changes how much the first move's score gain matters."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards keeping more room open after the first move."),
+                Tune(SolverTuneParameterId.FollowUpWeight, "Follow-up trust", "Changes how much the simulated next move influences the choice."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards stack tops that line up with visible upcoming blocks."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Punishes positions that are close to stalling.")),
+            new(SolverId.Moca, "MOCA samples futures. Its tuning can spend a little more thinking on rollout depth or sample count.",
+                Tune(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many futures are sampled for each legal move."),
+                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how many moves each future is played forward."),
+                Tune(SolverTuneParameterId.ScoreDelta, "Score delta", "Changes the immediate score bias inside rollout evaluation."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards futures that leave more cells open."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Makes dangerous simulated boards less attractive."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards rollouts that keep useful top blocks for the visible queue.")),
+            new(SolverId.Plan3, "PLAN-3 searches the visible queue. Tune how much it trusts short plans over current safety.",
+                Tune(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many visible queued blocks the search tries to use."),
+                Tune(SolverTuneParameterId.FollowUpWeight, "Future weight", "Changes how strongly future planned moves affect the first move."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards stack tops that match upcoming values."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards planned lines that keep space available."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Penalizes plans that leave near-full stacks.")),
+            new(SolverId.Plan5, "PLAN-5 searches deeper queue lines. Tuning lets you decide whether it should be patient or practical.",
+                Tune(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many queued blocks the search tries to use."),
+                Tune(SolverTuneParameterId.FollowUpWeight, "Future weight", "Changes how strongly deeper planned scores affect the first move."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards preserving useful stack tops for upcoming blocks."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards plans that leave more board room."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Penalizes risky deep plans more strongly.")),
+            new(SolverId.MocaPlus, "MOCA+ uses smarter rollouts. Tuning affects both how much it samples and how it values rollout boards.",
+                Tune(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many smart futures are sampled for each move."),
+                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far smart futures are played forward."),
+                Tune(SolverTuneParameterId.RolloutPlanning, "Rollout planning", "Adjusts how much queue planning each rollout uses."),
+                Tune(SolverTuneParameterId.BoardEvaluation, "Board eval", "Changes how much the final simulated board shape matters."),
+                Tune(SolverTuneParameterId.AntiStallPressure, "Anti-stall", "Rewards futures that preserve legal moves and escape routes.")),
+            new(SolverId.Mcts, "MCTS builds a tree. These sliders tune search behavior without replacing the tree search identity.",
+                Tune(SolverTuneParameterId.TreeVisits, "Tree visits", "Adjusts how many tree iterations are spent per decision."),
+                Tune(SolverTuneParameterId.Exploration, "Exploration", "Higher values try less-proven branches more often."),
+                Tune(SolverTuneParameterId.PriorBias, "Prior bias", "Changes how strongly heuristic prior scores guide the tree."),
+                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far rollouts play from a tree node."),
+                Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Rewards tree lines that leave room and legal moves."),
+                Tune(SolverTuneParameterId.ComboSetup, "Combo setup", "Rewards lines that create potential chain merges.")),
+            new(SolverId.AntiStall, "STALL is defensive. Tune how much it sacrifices score to keep the board alive.",
+                Tune(SolverTuneParameterId.AntiStallPressure, "Legal moves", "Rewards positions with multiple available stacks."),
+                Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards spare capacity after each move."),
+                Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Punishes near-full stacks more strongly."),
+                Tune(SolverTuneParameterId.Smoothness, "Height spread", "Penalizes uneven stack heights."),
+                Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Lets STALL take more immediate merge value.")),
+            new(SolverId.Combo, "COMBO looks for chain setups. Tune how patient it should be while preparing cascades.",
+                Tune(SolverTuneParameterId.ComboSetup, "Combo setup", "Rewards adjacent equal values and future cascade potential."),
+                Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards top blocks that match upcoming queue values."),
+                Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Changes how much immediate merging competes with setup."),
+                Tune(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through."),
+                Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Keeps some space open while building combos."))
+        };
+
         public static SolverDefinition GetDefinition(SolverId id)
         {
             int index = (int)id;
@@ -75,6 +287,41 @@ namespace StackMerge
             }
 
             return Definitions[index];
+        }
+
+        public static SolverTuningDefinition GetTuningDefinition(SolverId id)
+        {
+            int index = (int)id;
+            if (index < 0)
+            {
+                index = 0;
+            }
+
+            if (index >= TuningDefinitions.Length)
+            {
+                index = TuningDefinitions.Length - 1;
+            }
+
+            return TuningDefinitions[index];
+        }
+
+        public static int GetTuningParameterIndex(SolverId solverId, SolverTuneParameterId parameterId)
+        {
+            SolverTuningParameterDefinition[] parameters = GetTuningDefinition(solverId).Parameters;
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].Id == parameterId)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static SolverTuningParameterDefinition Tune(SolverTuneParameterId id, string displayName, string description)
+        {
+            return new SolverTuningParameterDefinition(id, displayName, description);
         }
     }
 
@@ -135,13 +382,15 @@ namespace StackMerge
             int monteCarloSimulations,
             int monteCarloRolloutDepth,
             bool lightweightMode = false,
-            int planningDepthLimit = int.MaxValue)
+            int planningDepthLimit = int.MaxValue,
+            SolverTuningSettings? tuning = null)
         {
             Random = random ?? new Random();
             MonteCarloSimulations = Math.Max(1, monteCarloSimulations);
             MonteCarloRolloutDepth = Math.Max(1, monteCarloRolloutDepth);
             LightweightMode = lightweightMode;
             PlanningDepthLimit = Math.Max(1, planningDepthLimit);
+            Tuning = tuning ?? SolverTuningSettings.Neutral(SolverId.Rand);
         }
 
         public Random Random { get; }
@@ -154,9 +403,41 @@ namespace StackMerge
 
         public int PlanningDepthLimit { get; }
 
+        public SolverTuningSettings Tuning { get; }
+
         public int LimitPlanningDepth(int requestedDepth)
         {
             return Math.Min(Math.Max(1, requestedDepth), PlanningDepthLimit);
+        }
+
+        public int TunedSimulationCount()
+        {
+            return Math.Max(1, MonteCarloSimulations + Tuning.Additive(SolverTuneParameterId.SimulationRounds, 2));
+        }
+
+        public int TunedRolloutDepth()
+        {
+            return Math.Max(1, MonteCarloRolloutDepth + Tuning.Additive(SolverTuneParameterId.RolloutMoves, 2));
+        }
+
+        public int TunedPlanningDepth(int requestedDepth)
+        {
+            return LimitPlanningDepth(requestedDepth + Tuning.Additive(SolverTuneParameterId.PlanningDepth));
+        }
+
+        public int TunedRolloutPlanningDepth(int requestedDepth)
+        {
+            return LimitPlanningDepth(requestedDepth + Tuning.Additive(SolverTuneParameterId.RolloutPlanning));
+        }
+
+        public int TunedFutureDepth(int requestedDepth)
+        {
+            return Math.Max(1, requestedDepth + Tuning.Additive(SolverTuneParameterId.FutureDepth));
+        }
+
+        public int TunedTreeIterations(int baseIterations)
+        {
+            return Math.Max(1, baseIterations + Tuning.Additive(SolverTuneParameterId.TreeVisits, 8));
         }
     }
 
@@ -329,6 +610,7 @@ namespace StackMerge
                 }
 
                 double score = HeuristicStackMergeSolver.ScoreMove(copy, firstResult, copy.Score - beforeScore);
+                score += TuningScore(copy, firstResult, copy.Score - beforeScore, context);
                 SolverDecision next = HeuristicStackMergeSolver.ChooseHeuristicMove(copy, context, "Follow-up");
                 if (next.HasMove)
                 {
@@ -337,7 +619,9 @@ namespace StackMerge
                     MoveResult second = secondCopy.PlaceNext(next.StackIndex);
                     if (second.Accepted)
                     {
-                        score += HeuristicStackMergeSolver.ScoreMove(secondCopy, second, secondCopy.Score - secondBefore) * 0.72;
+                        double secondScore = HeuristicStackMergeSolver.ScoreMove(secondCopy, second, secondCopy.Score - secondBefore);
+                        secondScore += TuningScore(secondCopy, second, secondCopy.Score - secondBefore, context);
+                        score += secondScore * 0.72 * context.Tuning.Factor(SolverTuneParameterId.FollowUpWeight, 0.10);
                     }
                 }
 
@@ -371,7 +655,7 @@ namespace StackMerge
 
         public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
         {
-            int activeDepth = context.LimitPlanningDepth(planningDepth);
+            int activeDepth = context.TunedPlanningDepth(planningDepth);
             return ChooseQueuePlan(state, context, activeDepth, $"Plans {activeDepth} blocks");
         }
 
@@ -396,7 +680,8 @@ namespace StackMerge
                 }
 
                 double score = HeuristicStackMergeSolver.ScoreMove(copy, result, copy.Score - beforeScore);
-                score += Search(copy, context, depth - 1) * 0.78;
+                score += TuningScore(copy, result, copy.Score - beforeScore, context);
+                score += Search(copy, context, depth - 1) * 0.78 * context.Tuning.Factor(SolverTuneParameterId.FollowUpWeight, 0.10);
                 score += context.Random.NextDouble() * 0.001;
 
                 if (!best.HasMove || score > best.Score)
@@ -433,7 +718,8 @@ namespace StackMerge
                 }
 
                 double score = HeuristicStackMergeSolver.ScoreMove(copy, result, copy.Score - beforeScore);
-                score += Search(copy, context, depth - 1) * 0.70;
+                score += TuningScore(copy, result, copy.Score - beforeScore, context);
+                score += Search(copy, context, depth - 1) * 0.70 * context.Tuning.Factor(SolverTuneParameterId.FollowUpWeight, 0.10);
                 if (score > best)
                 {
                     best = score;
@@ -527,7 +813,7 @@ namespace StackMerge
 
         public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
         {
-            int futureDepth = context.LightweightMode ? 1 : 3;
+            int futureDepth = context.LightweightMode ? 1 : context.TunedFutureDepth(3);
             return ChooseBestByScore(state, context, "Combo setup", (copy, result, scoreDelta) => ScoreComboMove(copy, result, scoreDelta, futureDepth));
         }
 
@@ -599,12 +885,14 @@ namespace StackMerge
             }
 
             SolverDecision best = SolverDecision.NoMove;
+            int simulations = context.TunedSimulationCount();
+            int rolloutDepth = context.TunedRolloutDepth();
             foreach (int firstMove in legalMoves)
             {
                 double totalScore = 0;
                 int successfulRuns = 0;
 
-                for (int i = 0; i < context.MonteCarloSimulations; i++)
+                for (int i = 0; i < simulations; i++)
                 {
                     StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
                     long startScore = copy.Score;
@@ -614,7 +902,7 @@ namespace StackMerge
                         continue;
                     }
 
-                    for (int depth = 0; depth < context.MonteCarloRolloutDepth && !copy.IsGameOver; depth++)
+                    for (int depth = 0; depth < rolloutDepth && !copy.IsGameOver; depth++)
                     {
                         SolverDecision rolloutMove = HeuristicStackMergeSolver.ChooseHeuristicMove(copy, context, "Rollout");
                         if (!rolloutMove.HasMove)
@@ -626,7 +914,9 @@ namespace StackMerge
                     }
 
                     double runScore = copy.Score - startScore;
-                    runScore += HeuristicStackMergeSolver.ScoreMove(copy, firstResult, copy.Score - startScore) * 0.35;
+                    double firstMoveScore = HeuristicStackMergeSolver.ScoreMove(copy, firstResult, copy.Score - startScore);
+                    firstMoveScore += TuningScore(copy, firstResult, copy.Score - startScore, context);
+                    runScore += firstMoveScore * 0.35;
                     totalScore += runScore;
                     successfulRuns++;
                 }
@@ -640,7 +930,7 @@ namespace StackMerge
                 average += context.Random.NextDouble() * 0.001;
                 if (!best.HasMove || average > best.Score)
                 {
-                    best = new SolverDecision(true, firstMove, average, $"{context.MonteCarloSimulations} simulations");
+                    best = new SolverDecision(true, firstMove, average, $"{simulations} simulations");
                 }
             }
 
@@ -663,9 +953,9 @@ namespace StackMerge
             }
 
             SolverDecision best = SolverDecision.NoMove;
-            int simulations = context.LightweightMode ? context.MonteCarloSimulations : Math.Max(4, context.MonteCarloSimulations);
-            int rolloutDepth = context.LightweightMode ? context.MonteCarloRolloutDepth : Math.Max(3, context.MonteCarloRolloutDepth + 2);
-            int smartPlanningDepth = context.LightweightMode ? 1 : context.LimitPlanningDepth(3);
+            int simulations = context.LightweightMode ? context.TunedSimulationCount() : Math.Max(4, context.TunedSimulationCount());
+            int rolloutDepth = context.LightweightMode ? context.TunedRolloutDepth() : Math.Max(3, context.TunedRolloutDepth() + 2);
+            int smartPlanningDepth = context.LightweightMode ? 1 : context.TunedRolloutPlanningDepth(3);
 
             foreach (int firstMove in legalMoves)
             {
@@ -694,8 +984,9 @@ namespace StackMerge
                     }
 
                     double runScore = copy.Score - startScore;
-                    runScore += QueuePlannerStackMergeSolver.EvaluateBoard(copy) * 0.20;
-                    runScore += AntiStallStackMergeSolver.ScoreAntiStall(copy, firstResult, copy.Score - startScore) * 0.18;
+                    runScore += QueuePlannerStackMergeSolver.EvaluateBoard(copy) * 0.20 * context.Tuning.Factor(SolverTuneParameterId.BoardEvaluation, 0.12);
+                    runScore += AntiStallStackMergeSolver.ScoreAntiStall(copy, firstResult, copy.Score - startScore) * 0.18 * context.Tuning.Factor(SolverTuneParameterId.AntiStallPressure, 0.12);
+                    runScore += TuningScore(copy, firstResult, copy.Score - startScore, context) * 0.35;
                     totalScore += runScore;
                     successfulRuns++;
                 }
@@ -731,10 +1022,11 @@ namespace StackMerge
                 return SolverDecision.NoMove;
             }
 
-            var root = new SearchNode(null, state.CreateSnapshot(), legalMoves);
-            int iterations = context.LightweightMode
+            var root = new SearchNode(null, state.CreateSnapshot(), legalMoves, -1, 0);
+            int baseIterations = context.LightweightMode
                 ? Math.Max(4, context.MonteCarloSimulations * 2)
-                : Math.Max(16, context.MonteCarloSimulations * 4);
+                : Math.Max(18, context.MonteCarloSimulations * 4);
+            int iterations = context.TunedTreeIterations(baseIterations);
 
             for (int i = 0; i < iterations; i++)
             {
@@ -749,23 +1041,21 @@ namespace StackMerge
 
                 if (node.UntriedMoves.Count > 0)
                 {
-                    int moveIndex = context.Random.Next(node.UntriedMoves.Count);
-                    int move = node.UntriedMoves[moveIndex];
-                    node.UntriedMoves.RemoveAt(moveIndex);
+                    int move = SelectExpansionMove(node, working, context);
+                    node.UntriedMoves.Remove(move);
 
+                    long beforeScore = working.Score;
                     MoveResult result = working.PlaceNext(move);
                     if (result.Accepted)
                     {
-                        var child = new SearchNode(node, working.CreateSnapshot(), working.GetLegalMoveIndices())
-                        {
-                            MoveFromParent = move
-                        };
+                        double priorScore = ImmediateTreeScore(working, result, working.Score - beforeScore, context);
+                        var child = new SearchNode(node, working.CreateSnapshot(), working.GetLegalMoveIndices(), move, priorScore);
                         node.Children.Add(child);
                         node = child;
                     }
                 }
 
-                int rolloutDepth = context.LightweightMode ? Math.Min(3, context.MonteCarloRolloutDepth) : context.MonteCarloRolloutDepth;
+                int rolloutDepth = context.LightweightMode ? Math.Min(3, context.TunedRolloutDepth()) : context.TunedRolloutDepth();
                 double reward = Rollout(working, context, rolloutDepth);
                 while (node != null)
                 {
@@ -776,8 +1066,8 @@ namespace StackMerge
             }
 
             SearchNode bestChild = root.Children
-                .OrderByDescending(child => child.Visits)
-                .ThenByDescending(child => child.AverageValue)
+                .OrderByDescending(child => child.AverageValue + child.PriorScore * 0.08)
+                .ThenByDescending(child => child.Visits)
                 .FirstOrDefault();
 
             if (bestChild == null)
@@ -796,9 +1086,49 @@ namespace StackMerge
                 {
                     double exploit = child.AverageValue;
                     double explore = Math.Sqrt(Math.Log(parentVisits + 1) / Math.Max(1, child.Visits));
-                    return exploit + 1.42 * explore + context.Random.NextDouble() * 0.0001;
+                    double prior = child.PriorScore / (1.0 + child.Visits * 0.35);
+                    double priorWeight = 0.10 * context.Tuning.Factor(SolverTuneParameterId.PriorBias, 0.16);
+                    double explorationWeight = 1.10 * context.Tuning.Factor(SolverTuneParameterId.Exploration, 0.10);
+                    return exploit + prior * priorWeight + explorationWeight * explore + context.Random.NextDouble() * 0.0001;
                 })
                 .First();
+        }
+
+        private static int SelectExpansionMove(SearchNode node, StackMergeGameState state, SolverContext context)
+        {
+            int selectedMove = node.UntriedMoves[0];
+            double bestScore = double.NegativeInfinity;
+
+            foreach (int move in node.UntriedMoves)
+            {
+                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
+                long beforeScore = copy.Score;
+                MoveResult result = copy.PlaceNext(move);
+                if (!result.Accepted)
+                {
+                    continue;
+                }
+
+                double score = ImmediateTreeScore(copy, result, copy.Score - beforeScore, context);
+                score += context.Random.NextDouble() * 0.001;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    selectedMove = move;
+                }
+            }
+
+            return selectedMove;
+        }
+
+        private static double ImmediateTreeScore(StackMergeGameState state, MoveResult result, long scoreDelta, SolverContext context)
+        {
+            double score = HeuristicStackMergeSolver.ScoreMove(state, result, scoreDelta) * 0.48;
+            score += QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.22 * context.Tuning.Factor(SolverTuneParameterId.BoardEvaluation, 0.12);
+            score += AntiStallStackMergeSolver.ScoreAntiStall(state, result, scoreDelta) * 0.18 * context.Tuning.Factor(SolverTuneParameterId.SafetyCushion, 0.12);
+            score += ComboFocusedStackMergeSolver.ScoreComboMove(state, result, scoreDelta) * 0.12 * context.Tuning.Factor(SolverTuneParameterId.ComboSetup, 0.12);
+            score += TuningScore(state, result, scoreDelta, context);
+            return score;
         }
 
         private static double Rollout(StackMergeGameState state, SolverContext context, int depth)
@@ -816,7 +1146,7 @@ namespace StackMerge
                 else
                 {
                     decision = i % 2 == 0
-                        ? QueuePlannerStackMergeSolver.ChooseQueuePlan(state, context, 2, "MCTS rollout")
+                        ? QueuePlannerStackMergeSolver.ChooseQueuePlan(state, context, context.TunedRolloutPlanningDepth(2), "MCTS rollout")
                         : HeuristicStackMergeSolver.ChooseHeuristicMove(state, context, "MCTS heuristic");
                 }
                 if (!decision.HasMove)
@@ -828,17 +1158,22 @@ namespace StackMerge
             }
 
             return state.Score - startScore
-                + QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.25
+                + QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.30
+                + TuningBoardScore(state, context) * 0.45
+                + CountQueueTopMatches(state) * 28
+                + CountAdjacentEqualPairs(state) * 18
                 - (state.IsGameOver ? 4000 : 0);
         }
 
         private sealed class SearchNode
         {
-            public SearchNode(SearchNode parent, StackMergeSnapshot snapshot, int[] legalMoves)
+            public SearchNode(SearchNode parent, StackMergeSnapshot snapshot, int[] legalMoves, int moveFromParent, double priorScore)
             {
                 Parent = parent;
                 Snapshot = snapshot;
                 UntriedMoves = new List<int>(legalMoves);
+                MoveFromParent = moveFromParent;
+                PriorScore = priorScore;
             }
 
             public SearchNode Parent { get; }
@@ -849,7 +1184,9 @@ namespace StackMerge
 
             public List<SearchNode> Children { get; } = new();
 
-            public int MoveFromParent { get; set; } = -1;
+            public int MoveFromParent { get; }
+
+            public double PriorScore { get; }
 
             public int Visits { get; set; }
 
@@ -884,7 +1221,9 @@ namespace StackMerge
                     continue;
                 }
 
-                double score = scoreFunction(copy, result, copy.Score - beforeScore);
+                long scoreDelta = copy.Score - beforeScore;
+                double score = scoreFunction(copy, result, scoreDelta);
+                score += TuningScore(copy, result, scoreDelta, context);
                 score += context.Random.NextDouble() * 0.001;
                 if (!best.HasMove || score > best.Score)
                 {
@@ -894,6 +1233,72 @@ namespace StackMerge
             }
 
             return best;
+        }
+
+        public static double TuningScore(StackMergeGameState state, MoveResult result, long scoreDelta, SolverContext context)
+        {
+            SolverTuningSettings tuning = context.Tuning;
+            if (tuning.IsNeutral)
+            {
+                return 0;
+            }
+
+            int topLog = FloorLog2(Math.Max(1, result.ResultingTopValue));
+            int maxHeight = MaxHeight(state);
+            int minHeight = state.Stacks.Min(stack => stack.Count);
+            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
+            int legalMoves = state.GetLegalMoveIndices().Length;
+            int emptyStacks = state.Stacks.Count(stack => stack.Count == 0);
+
+            double score = 0;
+            score += tuning.GetValue(SolverTuneParameterId.ScoreDelta) * scoreDelta * 0.07;
+            score += tuning.GetValue(SolverTuneParameterId.MergeReward) * (result.MergeCount * 62 + topLog * 10);
+            score += tuning.GetValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 18;
+            score += tuning.GetValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 9 + emptyStacks * 26);
+            score -= tuning.GetValue(SolverTuneParameterId.Smoothness) * ((maxHeight - minHeight) * 24 + maxHeight * 4);
+            score -= tuning.GetValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 100 + (state.IsGameOver ? 1600 : 0));
+            score += tuning.GetValue(SolverTuneParameterId.QueueFit) * (CountQueueTopMatches(state) * 48 + CountVisibleQueueContinuity(state) * 22);
+            score += tuning.GetValue(SolverTuneParameterId.PairSetup) * CountAdjacentEqualPairs(state) * 40;
+            score += tuning.GetValue(SolverTuneParameterId.AntiStallPressure) * (
+                legalMoves * 42 + FreeSlots(state) * 5 - dangerStacks * 70 - (state.IsGameOver ? 1400 : 0));
+            score += tuning.GetValue(SolverTuneParameterId.ComboSetup) * (
+                CountAdjacentEqualPairs(state) * 48 + CountQueueTopMatches(state) * 28 + result.MergeCount * 24);
+            score += tuning.GetValue(SolverTuneParameterId.SafetyCushion) * (
+                FreeSlots(state) * 7 + legalMoves * 28 - dangerStacks * 86 - maxHeight * 5);
+            score += tuning.GetValue(SolverTuneParameterId.BoardEvaluation) * QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.04;
+            return score;
+        }
+
+        public static double TuningBoardScore(StackMergeGameState state, SolverContext context)
+        {
+            SolverTuningSettings tuning = context.Tuning;
+            if (tuning.IsNeutral)
+            {
+                return 0;
+            }
+
+            int maxHeight = MaxHeight(state);
+            int minHeight = state.Stacks.Min(stack => stack.Count);
+            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
+            int legalMoves = state.GetLegalMoveIndices().Length;
+
+            double score = 0;
+            score += tuning.GetValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 12);
+            score += tuning.GetValue(SolverTuneParameterId.SafetyCushion) * (
+                FreeSlots(state) * 12
+                + legalMoves * 42
+                - dangerStacks * 120
+                - (maxHeight - minHeight) * 18
+                - maxHeight * maxHeight * 3);
+            score -= tuning.GetValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 130 + maxHeight * 5);
+            score += tuning.GetValue(SolverTuneParameterId.QueueFit) * (
+                CountQueueTopMatches(state) * 55
+                + CountAdjacentEqualPairs(state) * 40
+                + CountVisibleQueueContinuity(state) * 28);
+            score += tuning.GetValue(SolverTuneParameterId.ComboSetup) * (
+                CountAdjacentEqualPairs(state) * 44 + CountQueueTopMatches(state) * 24);
+            score += tuning.GetValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 16;
+            return score;
         }
 
         public static int MaxHeight(StackMergeGameState state)
@@ -926,6 +1331,20 @@ namespace StackMerge
             }
 
             return pairs;
+        }
+
+        private static int CountVisibleQueueContinuity(StackMergeGameState state)
+        {
+            int continuity = 0;
+            for (int i = 1; i < state.NextBlocks.Count; i++)
+            {
+                if (state.NextBlocks[i] == state.NextBlocks[i - 1])
+                {
+                    continuity++;
+                }
+            }
+
+            return continuity;
         }
 
         public static int FloorLog2(int value)

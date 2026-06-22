@@ -11,6 +11,10 @@ namespace StackMerge
         public int selectedSolver;
         public int highestUnlockedSolver;
         public bool[] solverUnlocked;
+        public int[] solverMergeTuning;
+        public int[] solverSafetyTuning;
+        public int[] solverLookaheadTuning;
+        public int[] solverTuningValues;
         public int speedLevel;
         public bool autoSolveEnabled = true;
         public bool autoRestartUnlocked;
@@ -269,6 +273,57 @@ namespace StackMerge
         {
             int index = (int)solverId;
             return index >= 0 && index < data.solverUnlocked.Length && data.solverUnlocked[index];
+        }
+
+        public SolverTuningSettings GetSolverTuning(SolverId solverId)
+        {
+            int index = ClampSolverIndex(solverId);
+            int[] values = new int[SolverTuningSettings.MaxSlots];
+            int offset = index * SolverTuningSettings.MaxSlots;
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = data.solverTuningValues[offset + i];
+            }
+
+            return new SolverTuningSettings((SolverId)index, values);
+        }
+
+        public int GetSolverTuningValue(SolverId solverId, int slotIndex)
+        {
+            if (slotIndex < 0 || slotIndex >= SolverTuningSettings.MaxSlots)
+            {
+                return 0;
+            }
+
+            int index = ClampSolverIndex(solverId);
+            return data.solverTuningValues[index * SolverTuningSettings.MaxSlots + slotIndex];
+        }
+
+        public int GetSolverTuningValue(SolverId solverId, SolverTuneParameterId parameterId)
+        {
+            int slotIndex = StackMergeSolverCatalog.GetTuningParameterIndex(solverId, parameterId);
+            return slotIndex >= 0 ? GetSolverTuningValue(solverId, slotIndex) : 0;
+        }
+
+        public void SetSolverTuningValue(SolverId solverId, int slotIndex, int value)
+        {
+            if (slotIndex < 0 || slotIndex >= SolverTuningSettings.MaxSlots)
+            {
+                return;
+            }
+
+            int index = ClampSolverIndex(solverId);
+            data.solverTuningValues[index * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue(value);
+        }
+
+        public void ResetSolverTuning(SolverId solverId)
+        {
+            int index = ClampSolverIndex(solverId);
+            int offset = index * SolverTuningSettings.MaxSlots;
+            for (int i = 0; i < SolverTuningSettings.MaxSlots; i++)
+            {
+                data.solverTuningValues[offset + i] = 0;
+            }
         }
 
         public long GetSolverUnlockCost(SolverId solverId)
@@ -796,6 +851,11 @@ namespace StackMerge
             }
 
             data.solverUnlocked[0] = true;
+            data.solverMergeTuning = NormalizeSolverTuningArray(data.solverMergeTuning, solverCount);
+            data.solverSafetyTuning = NormalizeSolverTuningArray(data.solverSafetyTuning, solverCount);
+            data.solverLookaheadTuning = NormalizeSolverTuningArray(data.solverLookaheadTuning, solverCount);
+            data.solverTuningValues = NormalizeSolverTuningValues(data.solverTuningValues, solverCount);
+            MigrateLegacySolverTunings();
             data.selectedSolver = Mathf.Clamp(data.selectedSolver, 0, solverCount - 1);
             if (!data.solverUnlocked[data.selectedSolver])
             {
@@ -879,6 +939,94 @@ namespace StackMerge
                 data.highestBlockEver = Math.Max(data.highestBlockEver, data.runHistory.Max(entry => Math.Max(0, entry.highestMergedBlock)));
                 data.bestRunScore = Math.Max(data.bestRunScore, data.runHistory.Max(entry => Math.Max(0, entry.score)));
             }
+        }
+
+        private int ClampSolverIndex(SolverId solverId)
+        {
+            int solverCount = StackMergeSolverCatalog.Definitions.Length;
+            return Mathf.Clamp((int)solverId, 0, solverCount - 1);
+        }
+
+        private static int[] NormalizeSolverTuningArray(int[] source, int solverCount)
+        {
+            int[] normalized = new int[solverCount];
+            if (source == null)
+            {
+                return normalized;
+            }
+
+            for (int i = 0; i < source.Length && i < normalized.Length; i++)
+            {
+                normalized[i] = SolverTuningSettings.ClampValue(source[i]);
+            }
+
+            return normalized;
+        }
+
+        private static int[] NormalizeSolverTuningValues(int[] source, int solverCount)
+        {
+            int[] normalized = new int[solverCount * SolverTuningSettings.MaxSlots];
+            if (source == null)
+            {
+                return normalized;
+            }
+
+            for (int i = 0; i < source.Length && i < normalized.Length; i++)
+            {
+                normalized[i] = SolverTuningSettings.ClampValue(source[i]);
+            }
+
+            return normalized;
+        }
+
+        private void MigrateLegacySolverTunings()
+        {
+            if (data.solverMergeTuning == null || data.solverSafetyTuning == null || data.solverLookaheadTuning == null)
+            {
+                return;
+            }
+
+            for (int solverIndex = 0; solverIndex < StackMergeSolverCatalog.Definitions.Length; solverIndex++)
+            {
+                int offset = solverIndex * SolverTuningSettings.MaxSlots;
+                bool hasNewValues = false;
+                for (int slot = 0; slot < SolverTuningSettings.MaxSlots; slot++)
+                {
+                    if (data.solverTuningValues[offset + slot] != 0)
+                    {
+                        hasNewValues = true;
+                        break;
+                    }
+                }
+
+                if (hasNewValues)
+                {
+                    continue;
+                }
+
+                SolverId solverId = (SolverId)solverIndex;
+                ApplyLegacyTuning(solverId, SolverTuneParameterId.MergeReward, data.solverMergeTuning[solverIndex]);
+                ApplyLegacyTuning(solverId, SolverTuneParameterId.FreeSpace, data.solverSafetyTuning[solverIndex]);
+                ApplyLegacyTuning(solverId, SolverTuneParameterId.SafetyCushion, data.solverSafetyTuning[solverIndex]);
+                ApplyLegacyTuning(solverId, SolverTuneParameterId.QueueFit, data.solverLookaheadTuning[solverIndex]);
+                ApplyLegacyTuning(solverId, SolverTuneParameterId.FollowUpWeight, data.solverLookaheadTuning[solverIndex]);
+            }
+
+            Array.Clear(data.solverMergeTuning, 0, data.solverMergeTuning.Length);
+            Array.Clear(data.solverSafetyTuning, 0, data.solverSafetyTuning.Length);
+            Array.Clear(data.solverLookaheadTuning, 0, data.solverLookaheadTuning.Length);
+        }
+
+        private void ApplyLegacyTuning(SolverId solverId, SolverTuneParameterId parameterId, int value)
+        {
+            int slotIndex = StackMergeSolverCatalog.GetTuningParameterIndex(solverId, parameterId);
+            if (slotIndex < 0)
+            {
+                return;
+            }
+
+            int solverIndex = ClampSolverIndex(solverId);
+            data.solverTuningValues[solverIndex * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue(value);
         }
 
         private static int FloorLog2(int value)
