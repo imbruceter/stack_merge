@@ -48,11 +48,14 @@ namespace StackMerge
 
     public readonly struct SolverTuningParameterDefinition
     {
-        public SolverTuningParameterDefinition(SolverTuneParameterId id, string displayName, string description)
+        public SolverTuningParameterDefinition(SolverTuneParameterId id, string displayName, string description, int minValue, int maxValue, float displayStep)
         {
             Id = id;
             DisplayName = displayName;
             Description = description;
+            MinValue = minValue;
+            MaxValue = maxValue;
+            DisplayStep = Math.Max(0.001f, displayStep);
         }
 
         public SolverTuneParameterId Id { get; }
@@ -60,6 +63,42 @@ namespace StackMerge
         public string DisplayName { get; }
 
         public string Description { get; }
+
+        public int MinValue { get; }
+
+        public int MaxValue { get; }
+
+        public float DisplayStep { get; }
+
+        public bool WholeNumbers => DisplayStep >= 0.999f;
+
+        public float MinDisplayValue => MinValue * DisplayStep;
+
+        public float MaxDisplayValue => MaxValue * DisplayStep;
+
+        public float ToDisplayValue(int rawValue)
+        {
+            return rawValue * DisplayStep;
+        }
+
+        public int FromDisplayValue(float displayValue)
+        {
+            int rawValue = (int)Math.Round(displayValue / DisplayStep, MidpointRounding.AwayFromZero);
+            return Math.Min(MaxValue, Math.Max(MinValue, rawValue));
+        }
+
+        public string FormatValue(int rawValue)
+        {
+            if (rawValue == 0)
+            {
+                return "Default";
+            }
+
+            float displayValue = ToDisplayValue(rawValue);
+            return WholeNumbers
+                ? (displayValue > 0 ? $"+{displayValue:0}" : $"{displayValue:0}")
+                : (displayValue > 0 ? $"+{displayValue:0.0}" : $"{displayValue:0.0}");
+        }
     }
 
     public readonly struct SolverTuningDefinition
@@ -82,8 +121,8 @@ namespace StackMerge
 
     public readonly struct SolverTuningSettings
     {
-        public const int MinValue = -3;
-        public const int MaxValue = 3;
+        public const int MinValue = -15;
+        public const int MaxValue = 15;
         public const int MaxSlots = 6;
 
         private readonly int[] values;
@@ -99,7 +138,7 @@ namespace StackMerge
 
             for (int i = 0; i < values.Count && i < MaxSlots; i++)
             {
-                this.values[i] = ClampValue(values[i]);
+                this.values[i] = ClampValue(solverId, i, values[i]);
             }
         }
 
@@ -128,6 +167,18 @@ namespace StackMerge
             return Math.Min(MaxValue, Math.Max(MinValue, value));
         }
 
+        public static int ClampValue(SolverId solverId, int slotIndex, int value)
+        {
+            SolverTuningDefinition definition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
+            if (slotIndex < 0 || slotIndex >= definition.Parameters.Length)
+            {
+                return ClampValue(value);
+            }
+
+            SolverTuningParameterDefinition parameter = definition.Parameters[slotIndex];
+            return Math.Min(parameter.MaxValue, Math.Max(parameter.MinValue, value));
+        }
+
         public int GetSlotValue(int slotIndex)
         {
             return values != null && slotIndex >= 0 && slotIndex < values.Length ? values[slotIndex] : 0;
@@ -139,9 +190,21 @@ namespace StackMerge
             return slotIndex >= 0 ? GetSlotValue(slotIndex) : 0;
         }
 
+        public double GetTunedValue(SolverTuneParameterId parameterId)
+        {
+            int slotIndex = StackMergeSolverCatalog.GetTuningParameterIndex(SolverId, parameterId);
+            if (slotIndex < 0)
+            {
+                return 0;
+            }
+
+            SolverTuningParameterDefinition parameter = StackMergeSolverCatalog.GetTuningDefinition(SolverId).Parameters[slotIndex];
+            return parameter.ToDisplayValue(GetSlotValue(slotIndex));
+        }
+
         public double Factor(SolverTuneParameterId parameterId, double step = 0.12)
         {
-            return Math.Max(0.15, 1.0 + GetValue(parameterId) * step);
+            return Math.Max(0.15, 1.0 + GetTunedValue(parameterId) * step);
         }
 
         public int Additive(SolverTuneParameterId parameterId, int step = 1)
@@ -228,35 +291,35 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards stack tops that line up with visible upcoming blocks."),
                 Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Punishes positions that are close to stalling.")),
             new(SolverId.Moca, "MOCA samples futures. Its tuning can spend a little more thinking on rollout depth or sample count.",
-                Tune(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many futures are sampled for each legal move."),
-                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how many moves each future is played forward."),
+                TuneWhole(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many futures are sampled for each legal move.", -1, 1),
+                TuneWhole(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how many moves each future is played forward.", -1, 1),
                 Tune(SolverTuneParameterId.ScoreDelta, "Score delta", "Changes the immediate score bias inside rollout evaluation."),
                 Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards futures that leave more cells open."),
                 Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Makes dangerous simulated boards less attractive."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards rollouts that keep useful top blocks for the visible queue.")),
             new(SolverId.Plan3, "PLAN-3 searches the visible queue. Tune how much it trusts short plans over current safety.",
-                Tune(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many visible queued blocks the search tries to use."),
+                TuneWhole(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many visible queued blocks the search tries to use.", -1, 1),
                 Tune(SolverTuneParameterId.FollowUpWeight, "Future weight", "Changes how strongly future planned moves affect the first move."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards stack tops that match upcoming values."),
                 Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards planned lines that keep space available."),
                 Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Penalizes plans that leave near-full stacks.")),
             new(SolverId.Plan5, "PLAN-5 searches deeper queue lines. Tuning lets you decide whether it should be patient or practical.",
-                Tune(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many queued blocks the search tries to use."),
+                TuneWhole(SolverTuneParameterId.PlanningDepth, "Planning depth", "Slightly shifts how many queued blocks the search tries to use.", -1, 1),
                 Tune(SolverTuneParameterId.FollowUpWeight, "Future weight", "Changes how strongly deeper planned scores affect the first move."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards preserving useful stack tops for upcoming blocks."),
                 Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards plans that leave more board room."),
                 Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Penalizes risky deep plans more strongly.")),
             new(SolverId.MocaPlus, "MOCA+ uses smarter rollouts. Tuning affects both how much it samples and how it values rollout boards.",
-                Tune(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many smart futures are sampled for each move."),
-                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far smart futures are played forward."),
-                Tune(SolverTuneParameterId.RolloutPlanning, "Rollout planning", "Adjusts how much queue planning each rollout uses."),
+                TuneWhole(SolverTuneParameterId.SimulationRounds, "Simulation rounds", "Adjusts how many smart futures are sampled for each move.", -1, 1),
+                TuneWhole(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far smart futures are played forward.", -1, 1),
+                TuneWhole(SolverTuneParameterId.RolloutPlanning, "Rollout planning", "Adjusts how much queue planning each rollout uses.", -1, 1),
                 Tune(SolverTuneParameterId.BoardEvaluation, "Board eval", "Changes how much the final simulated board shape matters."),
                 Tune(SolverTuneParameterId.AntiStallPressure, "Anti-stall", "Rewards futures that preserve legal moves and escape routes.")),
             new(SolverId.Mcts, "MCTS builds a tree. These sliders tune search behavior without replacing the tree search identity.",
-                Tune(SolverTuneParameterId.TreeVisits, "Tree visits", "Adjusts how many tree iterations are spent per decision."),
+                TuneWhole(SolverTuneParameterId.TreeVisits, "Tree visits", "Adjusts how many tree iterations are spent per decision.", -1, 1),
                 Tune(SolverTuneParameterId.Exploration, "Exploration", "Higher values try less-proven branches more often."),
                 Tune(SolverTuneParameterId.PriorBias, "Prior bias", "Changes how strongly heuristic prior scores guide the tree."),
-                Tune(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far rollouts play from a tree node."),
+                TuneWhole(SolverTuneParameterId.RolloutMoves, "Rollout moves", "Adjusts how far rollouts play from a tree node.", -1, 1),
                 Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Rewards tree lines that leave room and legal moves."),
                 Tune(SolverTuneParameterId.ComboSetup, "Combo setup", "Rewards lines that create potential chain merges.")),
             new(SolverId.AntiStall, "STALL is defensive. Tune how much it sacrifices score to keep the board alive.",
@@ -269,7 +332,7 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.ComboSetup, "Combo setup", "Rewards adjacent equal values and future cascade potential."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards top blocks that match upcoming queue values."),
                 Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Changes how much immediate merging competes with setup."),
-                Tune(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through."),
+                TuneWhole(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through.", -1, 1),
                 Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Keeps some space open while building combos."))
         };
 
@@ -319,9 +382,14 @@ namespace StackMerge
             return -1;
         }
 
-        private static SolverTuningParameterDefinition Tune(SolverTuneParameterId id, string displayName, string description)
+        private static SolverTuningParameterDefinition Tune(SolverTuneParameterId id, string displayName, string description, int minValue = SolverTuningSettings.MinValue, int maxValue = SolverTuningSettings.MaxValue)
         {
-            return new SolverTuningParameterDefinition(id, displayName, description);
+            return new SolverTuningParameterDefinition(id, displayName, description, minValue, maxValue, 0.1f);
+        }
+
+        private static SolverTuningParameterDefinition TuneWhole(SolverTuneParameterId id, string displayName, string description, int minValue, int maxValue)
+        {
+            return new SolverTuningParameterDefinition(id, displayName, description, minValue, maxValue, 1f);
         }
     }
 
@@ -1251,21 +1319,21 @@ namespace StackMerge
             int emptyStacks = state.Stacks.Count(stack => stack.Count == 0);
 
             double score = 0;
-            score += tuning.GetValue(SolverTuneParameterId.ScoreDelta) * scoreDelta * 0.07;
-            score += tuning.GetValue(SolverTuneParameterId.MergeReward) * (result.MergeCount * 62 + topLog * 10);
-            score += tuning.GetValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 18;
-            score += tuning.GetValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 9 + emptyStacks * 26);
-            score -= tuning.GetValue(SolverTuneParameterId.Smoothness) * ((maxHeight - minHeight) * 24 + maxHeight * 4);
-            score -= tuning.GetValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 100 + (state.IsGameOver ? 1600 : 0));
-            score += tuning.GetValue(SolverTuneParameterId.QueueFit) * (CountQueueTopMatches(state) * 48 + CountVisibleQueueContinuity(state) * 22);
-            score += tuning.GetValue(SolverTuneParameterId.PairSetup) * CountAdjacentEqualPairs(state) * 40;
-            score += tuning.GetValue(SolverTuneParameterId.AntiStallPressure) * (
+            score += tuning.GetTunedValue(SolverTuneParameterId.ScoreDelta) * scoreDelta * 0.16;
+            score += tuning.GetTunedValue(SolverTuneParameterId.MergeReward) * (result.MergeCount * 140 + topLog * 22);
+            score += tuning.GetTunedValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 42;
+            score += tuning.GetTunedValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 22 + emptyStacks * 64);
+            score -= tuning.GetTunedValue(SolverTuneParameterId.Smoothness) * ((maxHeight - minHeight) * 56 + maxHeight * 9);
+            score -= tuning.GetTunedValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 220 + (state.IsGameOver ? 3200 : 0));
+            score += tuning.GetTunedValue(SolverTuneParameterId.QueueFit) * (CountQueueTopMatches(state) * 112 + CountVisibleQueueContinuity(state) * 52);
+            score += tuning.GetTunedValue(SolverTuneParameterId.PairSetup) * CountAdjacentEqualPairs(state) * 94;
+            score += tuning.GetTunedValue(SolverTuneParameterId.AntiStallPressure) * (
                 legalMoves * 42 + FreeSlots(state) * 5 - dangerStacks * 70 - (state.IsGameOver ? 1400 : 0));
-            score += tuning.GetValue(SolverTuneParameterId.ComboSetup) * (
+            score += tuning.GetTunedValue(SolverTuneParameterId.ComboSetup) * (
                 CountAdjacentEqualPairs(state) * 48 + CountQueueTopMatches(state) * 28 + result.MergeCount * 24);
-            score += tuning.GetValue(SolverTuneParameterId.SafetyCushion) * (
+            score += tuning.GetTunedValue(SolverTuneParameterId.SafetyCushion) * (
                 FreeSlots(state) * 7 + legalMoves * 28 - dangerStacks * 86 - maxHeight * 5);
-            score += tuning.GetValue(SolverTuneParameterId.BoardEvaluation) * QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.04;
+            score += tuning.GetTunedValue(SolverTuneParameterId.BoardEvaluation) * QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.09;
             return score;
         }
 
@@ -1283,21 +1351,21 @@ namespace StackMerge
             int legalMoves = state.GetLegalMoveIndices().Length;
 
             double score = 0;
-            score += tuning.GetValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 12);
-            score += tuning.GetValue(SolverTuneParameterId.SafetyCushion) * (
+            score += tuning.GetTunedValue(SolverTuneParameterId.FreeSpace) * (FreeSlots(state) * 28);
+            score += tuning.GetTunedValue(SolverTuneParameterId.SafetyCushion) * (
                 FreeSlots(state) * 12
                 + legalMoves * 42
                 - dangerStacks * 120
                 - (maxHeight - minHeight) * 18
                 - maxHeight * maxHeight * 3);
-            score -= tuning.GetValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 130 + maxHeight * 5);
-            score += tuning.GetValue(SolverTuneParameterId.QueueFit) * (
+            score -= tuning.GetTunedValue(SolverTuneParameterId.DangerPenalty) * (dangerStacks * 300 + maxHeight * 12);
+            score += tuning.GetTunedValue(SolverTuneParameterId.QueueFit) * (
                 CountQueueTopMatches(state) * 55
                 + CountAdjacentEqualPairs(state) * 40
                 + CountVisibleQueueContinuity(state) * 28);
-            score += tuning.GetValue(SolverTuneParameterId.ComboSetup) * (
+            score += tuning.GetTunedValue(SolverTuneParameterId.ComboSetup) * (
                 CountAdjacentEqualPairs(state) * 44 + CountQueueTopMatches(state) * 24);
-            score += tuning.GetValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 16;
+            score += tuning.GetTunedValue(SolverTuneParameterId.HighBlockValue) * FloorLog2(Math.Max(1, state.HighestBlock)) * 38;
             return score;
         }
 

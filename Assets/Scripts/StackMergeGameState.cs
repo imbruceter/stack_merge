@@ -4,8 +4,36 @@ using System.Linq;
 
 namespace StackMerge
 {
+    public readonly struct StackMergeRunModifiers
+    {
+        public StackMergeRunModifiers(
+            int unstableSaves,
+            bool mirrorStack,
+            bool jokerBlocks,
+            int pickaxeUses,
+            int queueSkips)
+        {
+            UnstableSaves = Math.Max(0, unstableSaves);
+            MirrorStack = mirrorStack;
+            JokerBlocks = jokerBlocks;
+            PickaxeUses = Math.Max(0, pickaxeUses);
+            QueueSkips = Math.Max(0, queueSkips);
+        }
+
+        public int UnstableSaves { get; }
+
+        public bool MirrorStack { get; }
+
+        public bool JokerBlocks { get; }
+
+        public int PickaxeUses { get; }
+
+        public int QueueSkips { get; }
+    }
+
     public sealed class StackMergeGameState
     {
+        public const int JokerBlockValue = 0;
         public const int DefaultStackCount = 4;
         public const int DefaultStackCapacity = 5;
         public const int MaxStackCapacity = 10;
@@ -13,13 +41,20 @@ namespace StackMerge
 
         private readonly List<int>[] stacks;
         private readonly List<int> nextBlocks = new();
+        private readonly StackMergeRunModifiers startingModifiers;
         private Random random;
+        private int unstableSavesRemaining;
+        private int pickaxeUsesRemaining;
+        private int queueSkipsRemaining;
+        private bool mirrorStackEnabled;
+        private bool jokerBlocksEnabled;
 
         public StackMergeGameState(
             int stackCount = DefaultStackCount,
             int stackCapacity = DefaultStackCapacity,
             int queueLength = DefaultQueueLength,
             int difficultyLevel = 0,
+            StackMergeRunModifiers modifiers = default,
             int? seed = null)
         {
             if (stackCount <= 0)
@@ -40,6 +75,7 @@ namespace StackMerge
             StackCapacity = stackCapacity;
             QueueLength = queueLength;
             DifficultyLevel = Math.Max(0, difficultyLevel);
+            startingModifiers = modifiers;
             stacks = Enumerable.Range(0, stackCount).Select(_ => new List<int>(stackCapacity)).ToArray();
             random = seed.HasValue ? new Random(seed.Value) : new Random();
             NewGame(seed);
@@ -69,6 +105,23 @@ namespace StackMerge
 
         public IReadOnlyList<int> NextBlocks => nextBlocks;
 
+        public int UnstableSavesRemaining => unstableSavesRemaining;
+
+        public int PickaxeUsesRemaining => pickaxeUsesRemaining;
+
+        public int QueueSkipsRemaining => queueSkipsRemaining;
+
+        public bool MirrorStackEnabled => mirrorStackEnabled;
+
+        public bool JokerBlocksEnabled => jokerBlocksEnabled;
+
+        public StackMergeRunModifiers ActiveModifiers => new(
+            unstableSavesRemaining,
+            mirrorStackEnabled,
+            jokerBlocksEnabled,
+            pickaxeUsesRemaining,
+            queueSkipsRemaining);
+
         public void NewGame(int? seed = null)
         {
             if (seed.HasValue)
@@ -87,6 +140,11 @@ namespace StackMerge
             HighestBlock = 2;
             HighestMergedBlock = 0;
             IsGameOver = false;
+            unstableSavesRemaining = startingModifiers.UnstableSaves;
+            pickaxeUsesRemaining = startingModifiers.PickaxeUses;
+            queueSkipsRemaining = startingModifiers.QueueSkips;
+            mirrorStackEnabled = startingModifiers.MirrorStack;
+            jokerBlocksEnabled = startingModifiers.JokerBlocks;
             nextBlocks.Clear();
 
             for (int i = 0; i < QueueLength; i++)
@@ -147,7 +205,18 @@ namespace StackMerge
                 return true;
             }
 
-            return stack.Count > 0 && stack[^1] == nextBlocks[0];
+            if (stack.Count <= 0)
+            {
+                return false;
+            }
+
+            int next = nextBlocks[0];
+            if (CanMergeWithTop(next, stack[^1]))
+            {
+                return true;
+            }
+
+            return unstableSavesRemaining > 0;
         }
 
         public MoveResult PlaceNext(int stackIndex)
@@ -167,31 +236,42 @@ namespace StackMerge
 
             int placedValue = nextBlocks[0];
             List<int> stack = stacks[stackIndex];
-            stack.Add(placedValue);
+            bool usedUnstableSave = false;
+            if (stack.Count >= StackCapacity && stack.Count > 0 && !CanMergeWithTop(placedValue, stack[^1]) && unstableSavesRemaining > 0)
+            {
+                stack.RemoveAt(0);
+                unstableSavesRemaining--;
+                usedUnstableSave = true;
+            }
 
-            Score += placedValue;
+            int blockValue = placedValue == JokerBlockValue && stack.Count == 0 ? 1 : placedValue;
+            stack.Add(blockValue);
+
+            Score += Math.Max(0, blockValue);
             BlocksDropped++;
-            HighestBlock = Math.Max(HighestBlock, placedValue);
+            HighestBlock = Math.Max(HighestBlock, Math.Max(1, blockValue));
 
             int mergeCount = ResolveMerges(stack);
             TotalMerges += mergeCount;
-            int resultingTop = stack.Count > 0 ? stack[^1] : placedValue;
+            int resultingTop = stack.Count > 0 ? stack[^1] : blockValue;
 
             nextBlocks.RemoveAt(0);
             nextBlocks.Add(GenerateNextBlock());
 
+            StabilizeWithRunModifiers();
             IsGameOver = !HasLegalMove();
 
             return new MoveResult(
                 accepted: true,
                 stackIndex: stackIndex,
-                placedValue: placedValue,
+                placedValue: blockValue,
                 resultingTopValue: resultingTop,
                 mergeCount: mergeCount,
                 score: Score,
                 highestBlock: HighestBlock,
                 isGameOver: IsGameOver,
-                reason: string.Empty);
+                reason: usedUnstableSave ? "Unstable stack saved the move" : string.Empty,
+                unstableSaveUsed: usedUnstableSave);
         }
 
         public StackMergeSnapshot CreateSnapshot()
@@ -204,12 +284,13 @@ namespace StackMerge
                 TotalMerges,
                 HighestBlock,
                 HighestMergedBlock,
-                IsGameOver);
+                IsGameOver,
+                ActiveModifiers);
         }
 
         public StackMergeGameState CreateSimulationCopy(int? seed = null)
         {
-            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, seed);
+            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, ActiveModifiers, seed);
             copy.RestoreSnapshot(CreateSnapshot());
             return copy;
         }
@@ -244,6 +325,7 @@ namespace StackMerge
             TotalMerges = Math.Max(0, snapshot.TotalMerges);
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
             HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
+            RestoreModifierState(snapshot.Modifiers);
             IsGameOver = snapshot.IsGameOver || !HasLegalMove();
         }
 
@@ -270,6 +352,7 @@ namespace StackMerge
             TotalMerges = Math.Max(0, snapshot.TotalMerges);
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
             HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
+            RestoreModifierState(snapshot.Modifiers);
 
             nextBlocks.Clear();
             int preservedBlocks = Math.Min(snapshot.NextBlocks.Length, QueueLength);
@@ -295,7 +378,7 @@ namespace StackMerge
 
             nextBlocks.Clear();
             nextBlocks.AddRange(blocks);
-            HighestBlock = Math.Max(HighestBlock, blocks.Max());
+            HighestBlock = Math.Max(HighestBlock, blocks.Where(block => block > 0).DefaultIfEmpty(1).Max());
             IsGameOver = !HasLegalMove();
         }
 
@@ -322,34 +405,140 @@ namespace StackMerge
             IsGameOver = !HasLegalMove();
         }
 
+        private void RestoreModifierState(StackMergeRunModifiers modifiers)
+        {
+            unstableSavesRemaining = Math.Max(0, modifiers.UnstableSaves);
+            pickaxeUsesRemaining = Math.Max(0, modifiers.PickaxeUses);
+            queueSkipsRemaining = Math.Max(0, modifiers.QueueSkips);
+            mirrorStackEnabled = modifiers.MirrorStack;
+            jokerBlocksEnabled = modifiers.JokerBlocks;
+        }
+
+        private bool CanMergeWithTop(int placedValue, int topValue)
+        {
+            if (placedValue == topValue)
+            {
+                return true;
+            }
+
+            return jokerBlocksEnabled && placedValue == JokerBlockValue && topValue > 0;
+        }
+
         private int ResolveMerges(List<int> stack)
         {
             int mergeCount = 0;
 
-            while (stack.Count >= 2)
+            while (true)
             {
-                int topIndex = stack.Count - 1;
-                int top = stack[topIndex];
-                int below = stack[topIndex - 1];
+                bool merged = false;
+                while (stack.Count >= 2)
+                {
+                    int topIndex = stack.Count - 1;
+                    int top = stack[topIndex];
+                    int below = stack[topIndex - 1];
 
-                if (top != below)
+                    bool jokerMerge = jokerBlocksEnabled && top == JokerBlockValue && below > 0;
+                    if (!jokerMerge && top != below)
+                    {
+                        break;
+                    }
+
+                    int mergedValue = below * 2;
+                    stack.RemoveAt(topIndex);
+                    stack[topIndex - 1] = mergedValue;
+                    Score += mergedValue;
+                    HighestBlock = Math.Max(HighestBlock, mergedValue);
+                    HighestMergedBlock = Math.Max(HighestMergedBlock, mergedValue);
+                    mergeCount++;
+                    merged = true;
+                }
+
+                if (mirrorStackEnabled && stack.Count >= 2 && stack[0] > 0 && stack[0] == stack[^1])
+                {
+                    int mergedValue = stack[0] * 2;
+                    stack.RemoveAt(stack.Count - 1);
+                    stack[0] = mergedValue;
+                    Score += mergedValue;
+                    HighestBlock = Math.Max(HighestBlock, mergedValue);
+                    HighestMergedBlock = Math.Max(HighestMergedBlock, mergedValue);
+                    mergeCount++;
+                    merged = true;
+                }
+
+                if (!merged)
                 {
                     break;
                 }
-
-                int mergedValue = top * 2;
-                stack.RemoveAt(topIndex);
-                stack[topIndex - 1] = mergedValue;
-                HighestBlock = Math.Max(HighestBlock, mergedValue);
-                HighestMergedBlock = Math.Max(HighestMergedBlock, mergedValue);
-                mergeCount++;
             }
 
             return mergeCount;
         }
 
+        private void StabilizeWithRunModifiers()
+        {
+            while (!HasLegalMove())
+            {
+                if (queueSkipsRemaining > 0)
+                {
+                    queueSkipsRemaining--;
+                    nextBlocks.RemoveAt(0);
+                    nextBlocks.Add(GenerateNextBlock());
+                    continue;
+                }
+
+                if (pickaxeUsesRemaining > 0 && RemoveBestPickaxeTarget())
+                {
+                    pickaxeUsesRemaining--;
+                    continue;
+                }
+
+                break;
+            }
+        }
+
+        private bool RemoveBestPickaxeTarget()
+        {
+            int bestStack = -1;
+            int bestIndex = -1;
+            int bestHeight = -1;
+            int bestValue = int.MaxValue;
+
+            for (int stackIndex = 0; stackIndex < stacks.Length; stackIndex++)
+            {
+                List<int> stack = stacks[stackIndex];
+                for (int blockIndex = 0; blockIndex < stack.Count; blockIndex++)
+                {
+                    int value = stack[blockIndex];
+                    if (stack.Count > bestHeight || (stack.Count == bestHeight && value < bestValue))
+                    {
+                        bestStack = stackIndex;
+                        bestIndex = blockIndex;
+                        bestHeight = stack.Count;
+                        bestValue = value;
+                    }
+                }
+            }
+
+            if (bestStack < 0)
+            {
+                return false;
+            }
+
+            stacks[bestStack].RemoveAt(bestIndex);
+            return true;
+        }
+
         private int GenerateNextBlock()
         {
+            if (jokerBlocksEnabled)
+            {
+                double jokerChance = 0.055 + Math.Min(0.035, DifficultyLevel * 0.01);
+                if (random.NextDouble() < jokerChance)
+                {
+                    return JokerBlockValue;
+                }
+            }
+
             int maxSpawnExponent = Math.Max(1, FloorLog2(HighestBlock) - 2 + DifficultyLevel);
             if (DifficultyLevel >= 2)
             {
@@ -421,7 +610,8 @@ namespace StackMerge
             long score,
             int highestBlock,
             bool isGameOver,
-            string reason)
+            string reason,
+            bool unstableSaveUsed = false)
         {
             Accepted = accepted;
             StackIndex = stackIndex;
@@ -432,6 +622,7 @@ namespace StackMerge
             HighestBlock = highestBlock;
             IsGameOver = isGameOver;
             Reason = reason;
+            UnstableSaveUsed = unstableSaveUsed;
         }
 
         public bool Accepted { get; }
@@ -452,6 +643,8 @@ namespace StackMerge
 
         public string Reason { get; }
 
+        public bool UnstableSaveUsed { get; }
+
         public static MoveResult Rejected(int stackIndex, string reason)
         {
             return new MoveResult(false, stackIndex, 0, 0, 0, 0, 0, false, reason);
@@ -468,7 +661,8 @@ namespace StackMerge
             int totalMerges,
             int highestBlock,
             int highestMergedBlock,
-            bool isGameOver)
+            bool isGameOver,
+            StackMergeRunModifiers modifiers = default)
         {
             Stacks = stacks;
             NextBlocks = nextBlocks;
@@ -478,6 +672,7 @@ namespace StackMerge
             HighestBlock = highestBlock;
             HighestMergedBlock = highestMergedBlock;
             IsGameOver = isGameOver;
+            Modifiers = modifiers;
         }
 
         public int[][] Stacks { get; }
@@ -495,5 +690,7 @@ namespace StackMerge
         public int HighestMergedBlock { get; }
 
         public bool IsGameOver { get; }
+
+        public StackMergeRunModifiers Modifiers { get; }
     }
 }

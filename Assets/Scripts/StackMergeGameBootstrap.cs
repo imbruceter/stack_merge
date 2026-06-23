@@ -42,6 +42,7 @@ namespace StackMerge
         [SerializeField] private GameObject gameplayPanel;
         [SerializeField] private GameObject algorithmsPanel;
         [SerializeField] private GameObject upgradesPanel;
+        [SerializeField] private GameObject modifiersPanel;
         [SerializeField] private GameObject historyPanel;
         [SerializeField] private GameObject achievementsPanel;
         [SerializeField] private GameObject agentsPanel;
@@ -56,7 +57,7 @@ namespace StackMerge
         [SerializeField] private TMP_Text queueText;
         [SerializeField] private TMP_Text runStatusText;
         [SerializeField] private TMP_Text agentSlotsText;
-        [SerializeField] private Toggle autoSolveToggle;
+        [SerializeField] private Button autoSolveButton;
         [SerializeField] private Button[] solverButtons = Array.Empty<Button>();
         [SerializeField] private TMP_Text solverDetailNameText;
         [SerializeField] private TMP_Text solverDetailInfoText;
@@ -75,11 +76,22 @@ namespace StackMerge
         [SerializeField] private Button solverTuneResetButton;
         [SerializeField] private Button[] speedUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button autoRestartButton;
+        [SerializeField] private Button tokenPackButton;
+        [SerializeField] private Button solverTuningUnlockButton;
+        [SerializeField] private Button extraAgentSlotUpgradeButton;
         [SerializeField] private Button[] stackCapacityUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button[] queuePreviewUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button[] incomeUpgradeButtons = Array.Empty<Button>();
         [SerializeField] private Button[] difficultyUpgradeButtons = Array.Empty<Button>();
+        [SerializeField] private TMP_Text progressionStageText;
+        [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
+        [SerializeField] private Button[] modifierButtons = Array.Empty<Button>();
+        [SerializeField] private TMP_Text modifierSummaryText;
+        [SerializeField] private TMP_Text modifierDetailNameText;
+        [SerializeField] private TMP_Text modifierDetailInfoText;
+        [SerializeField] private TMP_Text modifierDetailStatusText;
+        [SerializeField] private Button modifierDetailActionButton;
         [SerializeField] private TMP_Text historySummaryText;
         [SerializeField] private RectTransform historyChartRoot;
         [SerializeField] private RectTransform historySolverTableRoot;
@@ -120,8 +132,10 @@ namespace StackMerge
         private bool gameplayInfoOpen;
         private bool currentRunUsedAutoSolve;
         private int currentRunManualMoves;
+        private float currentRunElapsed;
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
+        private ModifierId selectedModifierId = ModifierId.UnstableStack;
 
         private void Awake()
         {
@@ -151,6 +165,10 @@ namespace StackMerge
             }
 
             TickAutomation();
+            if (gameState != null && !gameState.IsGameOver)
+            {
+                currentRunElapsed += Time.deltaTime;
+            }
         }
 
         public void ConfigureSceneReferences(
@@ -175,6 +193,7 @@ namespace StackMerge
             GameObject gameplay,
             GameObject algorithms,
             GameObject upgrades,
+            GameObject modifiers,
             GameObject history,
             GameObject achievements,
             GameObject agents,
@@ -187,7 +206,7 @@ namespace StackMerge
             TMP_Text queue,
             TMP_Text runStatus,
             TMP_Text agentSlots,
-            Toggle autoSolve,
+            Button autoSolve,
             Button[] solverSelectionButtons,
             TMP_Text selectedSolverName,
             TMP_Text selectedSolverInfo,
@@ -206,11 +225,22 @@ namespace StackMerge
             Button tuneReset,
             Button[] speedButtons,
             Button restartButton,
+            Button buyTokensButton,
+            Button unlockSolverTuningButton,
+            Button unlockExtraAgentSlotButton,
             Button[] capacityButtons,
             Button[] queueButtons,
             Button[] incomeButtons,
             Button[] difficultyButtons,
+            TMP_Text stageText,
+            Button unlockModifiersButton,
             Button unlockAgentsButton,
+            Button[] modifierSelectionButtons,
+            TMP_Text modifiersSummary,
+            TMP_Text selectedModifierName,
+            TMP_Text selectedModifierInfo,
+            TMP_Text selectedModifierStatus,
+            Button selectedModifierAction,
             TMP_Text historySummary,
             RectTransform historyChart,
             RectTransform historySolverTable,
@@ -252,6 +282,7 @@ namespace StackMerge
             gameplayPanel = gameplay;
             algorithmsPanel = algorithms;
             upgradesPanel = upgrades;
+            modifiersPanel = modifiers;
             historyPanel = history;
             achievementsPanel = achievements;
             agentsPanel = agents;
@@ -264,7 +295,7 @@ namespace StackMerge
             queueText = queue;
             runStatusText = runStatus;
             agentSlotsText = agentSlots;
-            autoSolveToggle = autoSolve;
+            autoSolveButton = autoSolve;
             solverButtons = solverSelectionButtons;
             solverDetailNameText = selectedSolverName;
             solverDetailInfoText = selectedSolverInfo;
@@ -283,11 +314,22 @@ namespace StackMerge
             solverTuneResetButton = tuneReset;
             speedUpgradeButtons = speedButtons;
             autoRestartButton = restartButton;
+            tokenPackButton = buyTokensButton;
+            solverTuningUnlockButton = unlockSolverTuningButton;
+            extraAgentSlotUpgradeButton = unlockExtraAgentSlotButton;
             stackCapacityUpgradeButtons = capacityButtons;
             queuePreviewUpgradeButtons = queueButtons;
             incomeUpgradeButtons = incomeButtons;
             difficultyUpgradeButtons = difficultyButtons;
+            progressionStageText = stageText;
+            modifiersMenuUnlockButton = unlockModifiersButton;
             agentsMenuUnlockButton = unlockAgentsButton;
+            modifierButtons = modifierSelectionButtons;
+            modifierSummaryText = modifiersSummary;
+            modifierDetailNameText = selectedModifierName;
+            modifierDetailInfoText = selectedModifierInfo;
+            modifierDetailStatusText = selectedModifierStatus;
+            modifierDetailActionButton = selectedModifierAction;
             historySummaryText = historySummary;
             historyChartRoot = historyChart;
             historySolverTableRoot = historySolverTable;
@@ -453,6 +495,30 @@ namespace StackMerge
                 autoRestartButton.onClick.AddListener(ToggleOrBuyAutoRestart);
             }
 
+            if (autoSolveButton != null)
+            {
+                autoSolveButton.onClick.RemoveAllListeners();
+                autoSolveButton.onClick.AddListener(ToggleOrBuyAutoSolve);
+            }
+
+            if (tokenPackButton != null)
+            {
+                tokenPackButton.onClick.RemoveAllListeners();
+                tokenPackButton.onClick.AddListener(BuyTokenPack);
+            }
+
+            if (solverTuningUnlockButton != null)
+            {
+                solverTuningUnlockButton.onClick.RemoveAllListeners();
+                solverTuningUnlockButton.onClick.AddListener(BuySolverTuningUnlock);
+            }
+
+            if (extraAgentSlotUpgradeButton != null)
+            {
+                extraAgentSlotUpgradeButton.onClick.RemoveAllListeners();
+                extraAgentSlotUpgradeButton.onClick.AddListener(BuyExtraAgentSlotUpgrade);
+            }
+
             for (int i = 0; i < stackCapacityUpgradeButtons.Length; i++)
             {
                 int upgradeIndex = i;
@@ -501,16 +567,28 @@ namespace StackMerge
                 difficultyUpgradeButtons[i].onClick.AddListener(() => BuyDifficultyUpgrade(upgradeIndex));
             }
 
+            if (modifiersMenuUnlockButton != null)
+            {
+                modifiersMenuUnlockButton.onClick.RemoveAllListeners();
+                modifiersMenuUnlockButton.onClick.AddListener(BuyModifiersMenuUnlock);
+            }
+
+            for (int i = 0; i < modifierButtons.Length; i++)
+            {
+                int modifierIndex = i;
+                if (modifierButtons[i] == null)
+                {
+                    continue;
+                }
+
+                modifierButtons[i].onClick.RemoveAllListeners();
+                modifierButtons[i].onClick.AddListener(() => SelectModifier((ModifierId)modifierIndex));
+            }
+
             if (agentsMenuUnlockButton != null)
             {
                 agentsMenuUnlockButton.onClick.RemoveAllListeners();
                 agentsMenuUnlockButton.onClick.AddListener(BuyAgentsMenuUnlock);
-            }
-
-            if (autoSolveToggle != null)
-            {
-                autoSolveToggle.onValueChanged.RemoveAllListeners();
-                autoSolveToggle.onValueChanged.AddListener(SetAutoSolveEnabled);
             }
 
             if (solverDetailActionButton != null)
@@ -535,7 +613,7 @@ namespace StackMerge
                 }
 
                 slider.onValueChanged.RemoveAllListeners();
-                slider.onValueChanged.AddListener(value => SetSelectedSolverTuning(slotIndex, Mathf.RoundToInt(value)));
+                slider.onValueChanged.AddListener(value => SetSelectedSolverTuningFromDisplay(slotIndex, value));
             }
 
             if (solverTuneBackButton != null)
@@ -555,6 +633,12 @@ namespace StackMerge
                 agentDetailActionButton.onClick.RemoveAllListeners();
                 agentDetailActionButton.onClick.AddListener(HandleSelectedAgentAction);
             }
+
+            if (modifierDetailActionButton != null)
+            {
+                modifierDetailActionButton.onClick.RemoveAllListeners();
+                modifierDetailActionButton.onClick.AddListener(BuySelectedModifierUpgrade);
+            }
         }
 
         private void SelectTab(int tabIndex)
@@ -563,8 +647,14 @@ namespace StackMerge
             achievementsOpen = false;
             solverTuneOpen = false;
             gameplayInfoOpen = false;
-            int requestedTab = Mathf.Clamp(tabIndex, 0, 4);
-            if (requestedTab == 3 && progression != null && !progression.AgentsMenuUnlocked)
+            int requestedTab = Mathf.Clamp(tabIndex, 0, 5);
+            if (requestedTab == 3 && progression != null && !progression.ModifiersMenuUnlocked)
+            {
+                SetText(feedbackText, "Unlock Modifier Lab in Upgrades first");
+                requestedTab = selectedTabIndex;
+            }
+
+            if (requestedTab == 4 && progression != null && !progression.AgentsMenuUnlocked)
             {
                 SetText(feedbackText, "Unlock Agents in Upgrades first");
                 requestedTab = selectedTabIndex;
@@ -574,10 +664,11 @@ namespace StackMerge
             SetActive(gameplayPanel, selectedTabIndex == 0);
             SetActive(algorithmsPanel, selectedTabIndex == 1);
             SetActive(upgradesPanel, selectedTabIndex == 2);
+            SetActive(modifiersPanel, selectedTabIndex == 3);
             SetActive(historyPanel, false);
             SetActive(achievementsPanel, false);
-            SetActive(agentsPanel, selectedTabIndex == 3);
-            SetActive(settingsPanel, selectedTabIndex == 4);
+            SetActive(agentsPanel, selectedTabIndex == 4);
+            SetActive(settingsPanel, selectedTabIndex == 5);
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
             RefreshTabButtons();
@@ -597,6 +688,7 @@ namespace StackMerge
             SetActive(gameplayPanel, false);
             SetActive(algorithmsPanel, false);
             SetActive(upgradesPanel, false);
+            SetActive(modifiersPanel, false);
             SetActive(achievementsPanel, false);
             SetActive(agentsPanel, false);
             SetActive(settingsPanel, false);
@@ -623,6 +715,7 @@ namespace StackMerge
             SetActive(algorithmsPanel, false);
             SetActive(upgradesPanel, false);
             SetActive(historyPanel, false);
+            SetActive(modifiersPanel, false);
             SetActive(agentsPanel, false);
             SetActive(settingsPanel, false);
             SetActive(achievementsPanel, true);
@@ -659,7 +752,7 @@ namespace StackMerge
             }
 
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
-            if (!progression.IsSolverUnlocked(selectedSolverId) || !tuningDefinition.HasParameters)
+            if (!progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId) || !tuningDefinition.HasParameters)
             {
                 return;
             }
@@ -678,7 +771,7 @@ namespace StackMerge
 
         private void RefreshTabButtons()
         {
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Agent", "Settings" };
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Settings" };
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 Button button = tabButtons[i];
@@ -690,20 +783,22 @@ namespace StackMerge
                 TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
                 Image background = button.GetComponent<Image>();
                 bool selected = !historyOpen && !achievementsOpen && i == selectedTabIndex;
-                bool lockedAgentTab = i == 3 && progression != null && !progression.AgentsMenuUnlocked;
+                bool lockedModifierTab = i == 3 && progression != null && !progression.ModifiersMenuUnlocked;
+                bool lockedAgentTab = i == 4 && progression != null && !progression.AgentsMenuUnlocked;
+                bool locked = lockedModifierTab || lockedAgentTab;
 
                 if (label != null)
                 {
-                    label.text = lockedAgentTab ? "Agent\nLocked" : i < labels.Length ? labels[i] : label.text;
-                    label.color = lockedAgentTab ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
+                    label.text = lockedModifierTab ? "Modifiers\nLocked" : lockedAgentTab ? "Agent\nLocked" : i < labels.Length ? labels[i] : label.text;
+                    label.color = locked ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
                 }
 
                 if (background != null)
                 {
-                    background.color = lockedAgentTab ? HexColor("#111827") : selected ? HexColor("#1D4ED8") : HexColor("#1F2937");
+                    background.color = locked ? HexColor("#111827") : selected ? HexColor("#1D4ED8") : HexColor("#1F2937");
                 }
 
-                button.interactable = !lockedAgentTab;
+                button.interactable = !locked;
             }
         }
 
@@ -730,7 +825,17 @@ namespace StackMerge
                     SetText(runStatusText, $"Restart in {Mathf.Max(0f, AutoRestartDelay - autoRestartTimer):0.0}s");
                     if (autoRestartTimer >= AutoRestartDelay)
                     {
-                        StartNewGame();
+                        if (progression.TryConsumeAutoRestartToken())
+                        {
+                            progression.Save();
+                            StartNewGame();
+                        }
+                        else
+                        {
+                            autoRestartTimer = 0f;
+                            SetText(runStatusText, "Auto restart needs token");
+                            RefreshProgressionUi();
+                        }
                     }
                 }
 
@@ -756,7 +861,9 @@ namespace StackMerge
                     solverRandom,
                     progression.MonteCarloSimulationCount,
                     progression.MonteCarloRolloutDepth,
-                    tuning: progression.GetSolverTuning(progression.SelectedSolver)));
+                    tuning: progression.SolverTuningUnlocked
+                        ? progression.GetSolverTuning(progression.SelectedSolver)
+                        : SolverTuningSettings.Neutral(progression.SelectedSolver)));
 
             if (decision.HasMove)
             {
@@ -806,7 +913,8 @@ namespace StackMerge
                     gameState.BlocksDropped,
                     gameState.TotalMerges,
                     gameState.HighestMergedBlock,
-                    manualRun);
+                    manualRun,
+                    currentRunElapsed);
             }
 
             progression.Save();
@@ -816,7 +924,12 @@ namespace StackMerge
             string moveText = result.MergeCount > 0
                 ? $"Merge x{result.MergeCount}: {FormatNumber(result.ResultingTopValue)}"
                 : $"+{FormatNumber(result.PlacedValue)}";
-            SetText(feedbackText, $"{moveText} | {chipText} | {reason}");
+            string resultReason = string.IsNullOrWhiteSpace(result.Reason)
+                ? reason
+                : string.IsNullOrWhiteSpace(reason)
+                    ? result.Reason
+                    : $"{reason}; {result.Reason}";
+            SetText(feedbackText, $"{moveText} | {chipText} | {resultReason}");
 
             RefreshEverything();
         }
@@ -833,11 +946,13 @@ namespace StackMerge
             int capacity = progression != null ? progression.StackCapacity : StackMergeGameState.DefaultStackCapacity;
             int queueLength = progression != null ? progression.QueueLength : StackMergeGameState.DefaultQueueLength;
             int difficulty = progression != null ? progression.DifficultyLevel : 0;
-            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, seed: Environment.TickCount);
+            StackMergeRunModifiers modifiers = progression != null ? progression.BuildRunModifiers() : default;
+            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, modifiers: modifiers, seed: Environment.TickCount);
             autoSolveTimer = 0f;
             autoRestartTimer = 0f;
             currentRunUsedAutoSolve = false;
             currentRunManualMoves = 0;
+            currentRunElapsed = 0f;
         }
 
         private void UpdateHighScore()
@@ -876,14 +991,22 @@ namespace StackMerge
             RefreshEverything();
         }
 
-        private void SetSelectedSolverTuning(int slotIndex, int value)
+        private void SetSelectedSolverTuningFromDisplay(int slotIndex, float displayValue)
         {
-            if (progression == null || !progression.IsSolverUnlocked(selectedSolverId))
+            if (progression == null || !progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId))
             {
                 RefreshSolverTunePanel();
                 return;
             }
 
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            if (slotIndex < 0 || slotIndex >= tuningDefinition.Parameters.Length)
+            {
+                RefreshSolverTunePanel();
+                return;
+            }
+
+            int value = tuningDefinition.Parameters[slotIndex].FromDisplayValue(displayValue);
             progression.SetSolverTuningValue(selectedSolverId, slotIndex, value);
             progression.Save();
 
@@ -896,7 +1019,7 @@ namespace StackMerge
 
         private void ResetSelectedSolverTuning()
         {
-            if (progression == null || !progression.IsSolverUnlocked(selectedSolverId))
+            if (progression == null || !progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId))
             {
                 return;
             }
@@ -932,7 +1055,72 @@ namespace StackMerge
             }
 
             bool changed = progression.ToggleOrBuyAutoRestart();
-            SetText(feedbackText, changed ? "Auto restart updated" : "Not enough chips");
+            SetText(feedbackText, changed ? "Auto restart updated" : progression.HasPurchasedSolver ? "Not enough chips" : "Buy an algorithm first");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void ToggleOrBuyAutoSolve()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool changed = progression.ToggleOrBuyAutoSolve();
+            SetText(feedbackText, changed ? "Auto solve updated" : progression.HasPurchasedSolver ? "Not enough chips" : "Buy an algorithm first");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyTokenPack()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyTokenPack();
+            SetText(feedbackText, bought ? $"+{progression.GetTokenPackSize()} tokens" : "Not enough chips");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuySolverTuningUnlock()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuySolverTuningUnlock();
+            SetText(feedbackText, bought ? "Solver tuning unlocked" : "Not enough chips");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyExtraAgentSlotUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyExtraAgentSlotUpgrade();
+            SetText(feedbackText, bought ? "+1 agent slot unlocked" : "Not enough chips");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyModifiersMenuUnlock()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyModifiersMenuUnlock();
+            SetText(feedbackText, bought ? "Modifier Lab unlocked" : progression.CanUnlockModifiersMenu ? "Not enough chips" : "Modifier Lab requirements not met");
             progression.Save();
             RefreshEverything();
         }
@@ -1002,6 +1190,32 @@ namespace StackMerge
 
             progression.Save();
             RefreshEverything();
+        }
+
+        private void BuyModifierUpgrade(ModifierId modifierId)
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            ModifierDefinition definition = progression.GetModifierDefinition(modifierId);
+            bool bought = progression.BuyModifierUpgrade(modifierId);
+            SetText(feedbackText, bought ? $"{definition.DisplayName} level {progression.GetModifierLevel(modifierId)}" : "Modifier upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void SelectModifier(ModifierId modifierId)
+        {
+            selectedModifierId = modifierId;
+            RefreshModifierButtons();
+            RefreshModifierDetails();
+        }
+
+        private void BuySelectedModifierUpgrade()
+        {
+            BuyModifierUpgrade(selectedModifierId);
         }
 
         private void BuyAgentsMenuUnlock()
@@ -1075,21 +1289,10 @@ namespace StackMerge
                 stackCapacity: progression.StackCapacity,
                 queueLength: progression.QueueLength,
                 difficultyLevel: progression.DifficultyLevel,
+                modifiers: snapshot.Modifiers,
                 seed: Environment.TickCount);
             resizedGame.RestoreSnapshotResized(snapshot);
             gameState = resizedGame;
-        }
-
-        private void SetAutoSolveEnabled(bool enabled)
-        {
-            if (progression == null)
-            {
-                return;
-            }
-
-            progression.AutoSolveEnabled = enabled;
-            progression.Save();
-            RefreshProgressionUi();
         }
 
         private void RefreshEverything()
@@ -1115,18 +1318,13 @@ namespace StackMerge
                 return;
             }
 
-            SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)}");
+            SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)}");
             SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
             SetText(speedText, $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
 
             if (gameState != null && !gameState.IsGameOver)
             {
                 SetText(runStatusText, progression.AutoSolveEnabled ? "Auto solving" : "Manual mode");
-            }
-
-            if (autoSolveToggle != null)
-            {
-                autoSolveToggle.SetIsOnWithoutNotify(progression.AutoSolveEnabled);
             }
 
             RefreshSolverButtons();
@@ -1138,6 +1336,8 @@ namespace StackMerge
             RefreshAgentButtons();
             RefreshAgentSlots();
             RefreshAgentDetails();
+            RefreshModifierButtons();
+            RefreshModifierDetails();
             RefreshUpgradeButtons();
             RefreshHistory();
             RefreshAchievements();
@@ -1182,11 +1382,11 @@ namespace StackMerge
             bool unlocked = progression.IsSolverUnlocked(definition.Id);
             bool active = progression.SelectedSolver == definition.Id;
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
-            bool canTune = unlocked && tuningDefinition.HasParameters;
+            bool canTune = unlocked && progression.SolverTuningUnlocked && tuningDefinition.HasParameters;
 
             SetText(solverDetailNameText, definition.DisplayName);
             SetText(solverDetailInfoText, unlocked ? definition.Description : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips");
-            SetButtonText(solverDetailTuneButton, !unlocked ? "Tune\nLocked" : canTune ? "Tune" : "No tuning");
+            SetButtonText(solverDetailTuneButton, !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
             if (solverDetailTuneButton != null)
             {
                 solverDetailTuneButton.interactable = canTune;
@@ -1249,15 +1449,15 @@ namespace StackMerge
 
                 if (i < solverTuneValueTexts.Length)
                 {
-                    SetText(solverTuneValueTexts[i], FormatSigned(value));
+                    SetText(solverTuneValueTexts[i], parameter.FormatValue(value));
                 }
 
                 if (i < solverTuneSliders.Length && solverTuneSliders[i] != null)
                 {
-                    solverTuneSliders[i].minValue = SolverTuningSettings.MinValue;
-                    solverTuneSliders[i].maxValue = SolverTuningSettings.MaxValue;
-                    solverTuneSliders[i].wholeNumbers = true;
-                    solverTuneSliders[i].SetValueWithoutNotify(value);
+                    solverTuneSliders[i].minValue = parameter.MinDisplayValue;
+                    solverTuneSliders[i].maxValue = parameter.MaxDisplayValue;
+                    solverTuneSliders[i].wholeNumbers = parameter.WholeNumbers;
+                    solverTuneSliders[i].SetValueWithoutNotify(parameter.ToDisplayValue(value));
                 }
             }
 
@@ -1284,11 +1484,21 @@ namespace StackMerge
             builder.AppendLine($"Risk: L{progression.DifficultyLevel}");
             builder.AppendLine($"Speed: L{progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
             builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
+            builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
             builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
+            if (gameState != null)
+            {
+                builder.AppendLine($"Run modifiers: Unstable {gameState.UnstableSavesRemaining}, Pickaxe {gameState.PickaxeUsesRemaining}, Queue skip {gameState.QueueSkipsRemaining}");
+                builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")} | Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
+            }
             builder.AppendLine();
             builder.AppendLine("Solver tuning");
 
-            if (!tuningDefinition.HasParameters)
+            if (!progression.SolverTuningUnlocked)
+            {
+                builder.AppendLine("Locked in Upgrades.");
+            }
+            else if (!tuningDefinition.HasParameters)
             {
                 builder.AppendLine("No tuning available for this solver.");
             }
@@ -1297,7 +1507,7 @@ namespace StackMerge
                 for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
                 {
                     SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
-                    builder.AppendLine($"{parameter.DisplayName}: {FormatSigned(tuning.GetSlotValue(i))}");
+                    builder.AppendLine($"{parameter.DisplayName}: {parameter.FormatValue(tuning.GetSlotValue(i))}");
                 }
             }
 
@@ -1369,7 +1579,7 @@ namespace StackMerge
                 }
                 else if (i >= progression.ActiveAgentSlots)
                 {
-                    SetText(text, "Bonus slot\nNeeds Coordinator");
+                    SetText(text, "Bonus slot\nNeeds upgrade");
                     text.color = HexColor("#64748B");
                 }
                 else
@@ -1434,8 +1644,126 @@ namespace StackMerge
             }
         }
 
+        private void RefreshModifierButtons()
+        {
+            for (int i = 0; i < modifierButtons.Length && i < StackMergeProgression.Modifiers.Length; i++)
+            {
+                Button button = modifierButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                ModifierDefinition definition = StackMergeProgression.Modifiers[i];
+                if (!progression.ModifiersMenuUnlocked)
+                {
+                    SetButtonText(button, $"{definition.DisplayName}\nLocked");
+                    button.interactable = false;
+                    SetButtonColor(button, HexColor("#334155"));
+                    continue;
+                }
+
+                int level = progression.GetModifierLevel(definition.Id);
+                bool selected = selectedModifierId == definition.Id;
+                bool maxed = progression.IsModifierMaxed(definition.Id);
+
+                string label = selected ? $"> {definition.DisplayName}" : definition.DisplayName;
+                label += maxed ? $"\nL{level} max" : level > 0 ? $"\nL{level}" : "\nAvailable";
+
+                SetButtonText(button, label);
+                button.interactable = true;
+                SetButtonColor(button, selected ? HexColor("#B45309") : level > 0 ? HexColor("#92400E") : HexColor("#7C2D12"));
+            }
+        }
+
+        private void RefreshModifierDetails()
+        {
+            ModifierDefinition definition = progression.GetModifierDefinition(selectedModifierId);
+            if (!progression.ModifiersMenuUnlocked)
+            {
+                SetText(modifierSummaryText, progression.GetModifiersGateStatus());
+                SetText(modifierDetailNameText, "Modifier Lab Locked");
+                SetText(modifierDetailInfoText, "Reach the stage goal in Upgrades to unlock board modifiers. They make runs richer, riskier, and much harder to play optimally by hand.");
+                SetText(modifierDetailStatusText, "Locked");
+                SetButtonText(modifierDetailActionButton, "Unlock in\nUpgrades");
+                if (modifierDetailActionButton != null)
+                {
+                    modifierDetailActionButton.interactable = false;
+                }
+
+                return;
+            }
+
+            int unlockedCount = 0;
+            int totalLevels = 0;
+            for (int i = 0; i < StackMergeProgression.Modifiers.Length; i++)
+            {
+                int level = progression.GetModifierLevel(StackMergeProgression.Modifiers[i].Id);
+                if (level > 0)
+                {
+                    unlockedCount++;
+                    totalLevels += level;
+                }
+            }
+
+            SetText(modifierSummaryText, $"Modifier Lab online. Active families: {unlockedCount}/{StackMergeProgression.Modifiers.Length} | Total levels: {totalLevels}\nModifiers apply to new runs and amplify solver differences.");
+
+            int selectedLevel = progression.GetModifierLevel(selectedModifierId);
+            bool maxed = progression.IsModifierMaxed(selectedModifierId);
+            SetText(modifierDetailNameText, definition.DisplayName);
+            SetText(modifierDetailInfoText, selectedLevel > 0 ? definition.Description : $"{definition.LockedHint}\n\n{definition.Description}");
+            SetText(modifierDetailStatusText, maxed ? $"Level {selectedLevel} max" : selectedLevel > 0 ? $"Level {selectedLevel}" : "Not active");
+
+            if (maxed)
+            {
+                SetButtonText(modifierDetailActionButton, "Maxed");
+                if (modifierDetailActionButton != null)
+                {
+                    modifierDetailActionButton.interactable = false;
+                }
+
+                return;
+            }
+
+            long cost = progression.GetModifierUpgradeCost(selectedModifierId);
+            SetButtonText(modifierDetailActionButton, selectedLevel > 0 ? $"Upgrade\n{FormatNumber(cost)}" : $"Activate\n{FormatNumber(cost)}");
+            if (modifierDetailActionButton != null)
+            {
+                modifierDetailActionButton.interactable = progression.Chips >= cost;
+            }
+        }
+
         private void RefreshUpgradeButtons()
         {
+            if (progressionStageText != null)
+            {
+                string stageName = !progression.AgentsMenuUnlocked ? "Stage 1 - Core automation"
+                    : !progression.ModifiersMenuUnlocked ? "Stage 2 - Agent acceleration"
+                    : "Stage 3 - Modifier Lab";
+                string nextGoal = progression.ModifiersMenuUnlocked
+                    ? "Modifiers are active. Next long-term layer can build on modifier milestones."
+                    : progression.GetModifiersGateStatus();
+                SetText(progressionStageText, $"{stageName}\n{nextGoal}");
+            }
+
+            if (modifiersMenuUnlockButton != null)
+            {
+                if (progression.ModifiersMenuUnlocked)
+                {
+                    SetButtonText(modifiersMenuUnlockButton, "Modifier Lab\nUnlocked");
+                    modifiersMenuUnlockButton.interactable = false;
+                    SetButtonColor(modifiersMenuUnlockButton, HexColor("#0F766E"));
+                }
+                else
+                {
+                    long cost = progression.GetModifiersMenuUnlockCost();
+                    bool gateReady = progression.CanUnlockModifiersMenu;
+                    SetButtonText(modifiersMenuUnlockButton, gateReady ? $"Modifier Lab\n{FormatNumber(cost)}" : "Modifier Lab\nStage locked");
+                    modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
+                    SetButtonColor(modifiersMenuUnlockButton, gateReady ? HexColor("#B45309") : HexColor("#334155"));
+                }
+            }
+
             for (int i = 0; i < speedUpgradeButtons.Length; i++)
             {
                 Button button = speedUpgradeButtons[i];
@@ -1465,18 +1793,80 @@ namespace StackMerge
                 }
             }
 
+            if (autoSolveButton != null)
+            {
+                if (progression.AutoSolveUnlocked)
+                {
+                    SetButtonText(autoSolveButton, progression.AutoSolveEnabled ? "Auto solve\nON" : "Auto solve\nOFF");
+                    autoSolveButton.interactable = true;
+                    SetButtonColor(autoSolveButton, progression.AutoSolveEnabled ? HexColor("#0F766E") : HexColor("#334155"));
+                }
+                else
+                {
+                    long cost = progression.GetAutoSolveCost();
+                    SetButtonText(autoSolveButton, progression.HasPurchasedSolver ? $"Auto solve\n{FormatNumber(cost)}" : "Auto solve\nNeeds algorithm");
+                    autoSolveButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
+                    SetButtonColor(autoSolveButton, HexColor("#0F766E"));
+                }
+            }
+
             if (autoRestartButton != null)
             {
                 if (progression.AutoRestartUnlocked)
                 {
-                    SetButtonText(autoRestartButton, progression.AutoRestartEnabled ? "Auto restart\nON" : "Auto restart\nOFF");
+                    string tokenMode = progression.AutoRestartIsTokenFree ? "free" : $"{FormatNumber(progression.Tokens)} token";
+                    SetButtonText(autoRestartButton, progression.AutoRestartEnabled ? $"Auto restart\nON ({tokenMode})" : "Auto restart\nOFF");
                     autoRestartButton.interactable = true;
+                    SetButtonColor(autoRestartButton, progression.AutoRestartEnabled ? HexColor("#C2410C") : HexColor("#334155"));
                 }
                 else
                 {
                     long cost = progression.GetAutoRestartCost();
-                    SetButtonText(autoRestartButton, $"Auto restart\n{FormatNumber(cost)}");
-                    autoRestartButton.interactable = progression.Chips >= cost;
+                    SetButtonText(autoRestartButton, progression.HasPurchasedSolver ? $"Auto restart\n{FormatNumber(cost)}" : "Auto restart\nNeeds algorithm");
+                    autoRestartButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
+                    SetButtonColor(autoRestartButton, HexColor("#C2410C"));
+                }
+            }
+
+            if (tokenPackButton != null)
+            {
+                long cost = progression.GetTokenPackCost();
+                SetButtonText(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens\n{FormatNumber(cost)} chips");
+                tokenPackButton.interactable = progression.Chips >= cost;
+                SetButtonColor(tokenPackButton, HexColor("#0369A1"));
+            }
+
+            if (solverTuningUnlockButton != null)
+            {
+                if (progression.SolverTuningUnlocked)
+                {
+                    SetButtonText(solverTuningUnlockButton, "Solver tuning\nUnlocked");
+                    solverTuningUnlockButton.interactable = false;
+                    SetButtonColor(solverTuningUnlockButton, HexColor("#0F766E"));
+                }
+                else
+                {
+                    long cost = progression.GetSolverTuningUnlockCost();
+                    SetButtonText(solverTuningUnlockButton, $"Solver tuning\n{FormatNumber(cost)}");
+                    solverTuningUnlockButton.interactable = progression.Chips >= cost;
+                    SetButtonColor(solverTuningUnlockButton, HexColor("#2563EB"));
+                }
+            }
+
+            if (extraAgentSlotUpgradeButton != null)
+            {
+                if (progression.ExtraAgentSlotUnlocked)
+                {
+                    SetButtonText(extraAgentSlotUpgradeButton, "+1 Agent slot\nUnlocked");
+                    extraAgentSlotUpgradeButton.interactable = false;
+                    SetButtonColor(extraAgentSlotUpgradeButton, HexColor("#0F766E"));
+                }
+                else
+                {
+                    long cost = progression.GetExtraAgentSlotUpgradeCost();
+                    SetButtonText(extraAgentSlotUpgradeButton, $"+1 Agent slot\n{FormatNumber(cost)}");
+                    extraAgentSlotUpgradeButton.interactable = progression.Chips >= cost;
+                    SetButtonColor(extraAgentSlotUpgradeButton, HexColor("#7C3AED"));
                 }
             }
 
@@ -2057,7 +2447,7 @@ namespace StackMerge
             SetText(gameOverScoreText, $"Pont: {FormatNumber(gameState.Score)}");
             SetText(gameOverBestText, $"Rekord: {FormatNumber(highScore)}");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
-                ? "Auto restart armed"
+                ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");
         }
 
@@ -2086,7 +2476,7 @@ namespace StackMerge
             TMP_Text text = block.GetComponentInChildren<TMP_Text>(true);
             if (text != null)
             {
-                text.text = FormatNumber(value);
+                text.text = value == StackMergeGameState.JokerBlockValue ? "J" : FormatNumber(value);
                 text.fontSize = fontSize;
                 text.color = GetReadableTextColor(color);
                 text.enableAutoSizing = true;
@@ -2294,6 +2684,7 @@ namespace StackMerge
         {
             return value switch
             {
+                StackMergeGameState.JokerBlockValue => HexColor("#F8FAFC"),
                 1 => HexColor("#FDE68A"),
                 2 => HexColor("#FDBA74"),
                 4 => HexColor("#5EEAD4"),

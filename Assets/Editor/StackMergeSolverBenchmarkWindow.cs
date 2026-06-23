@@ -22,6 +22,7 @@ namespace StackMerge.Editor
         private int rolloutDepth = 2;
         private int planningDepthLimit = 2;
         private int[] benchmarkTuningSlots = new int[SolverTuningSettings.MaxSlots];
+        private int[] benchmarkModifierLevels = new int[StackMergeProgression.Modifiers.Length];
         private int maxMovesPerRun = 700;
         private int maxSecondsPerRun = 3;
         private int maxSecondsPerSolver = 30;
@@ -82,9 +83,21 @@ namespace StackMerge.Editor
                         for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
                         {
                             SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
-                            benchmarkTuningSlots[i] = EditorGUILayout.IntSlider(parameter.DisplayName, benchmarkTuningSlots[i], SolverTuningSettings.MinValue, SolverTuningSettings.MaxValue);
+                            float displayValue = parameter.ToDisplayValue(SolverTuningSettings.ClampValue(selectedSolver, i, benchmarkTuningSlots[i]));
+                            displayValue = parameter.WholeNumbers
+                                ? EditorGUILayout.IntSlider(parameter.DisplayName, Mathf.RoundToInt(displayValue), Mathf.RoundToInt(parameter.MinDisplayValue), Mathf.RoundToInt(parameter.MaxDisplayValue))
+                                : EditorGUILayout.Slider(parameter.DisplayName, displayValue, parameter.MinDisplayValue, parameter.MaxDisplayValue);
+                            benchmarkTuningSlots[i] = parameter.FromDisplayValue(displayValue);
                         }
                     }
+                }
+
+                EditorGUILayout.Space(4f);
+                EditorGUILayout.LabelField("Run modifiers", EditorStyles.boldLabel);
+                for (int i = 0; i < StackMergeProgression.Modifiers.Length; i++)
+                {
+                    ModifierDefinition modifier = StackMergeProgression.Modifiers[i];
+                    benchmarkModifierLevels[i] = EditorGUILayout.IntSlider(modifier.DisplayName, benchmarkModifierLevels[i], 0, modifier.MaxLevel);
                 }
 
                 maxMovesPerRun = EditorGUILayout.IntSlider("Max moves per run", maxMovesPerRun, 100, 10000);
@@ -188,6 +201,7 @@ namespace StackMerge.Editor
                 stackCapacity: stackCapacity,
                 queueLength: queueLength,
                 difficultyLevel: difficultyLevel,
+                modifiers: BuildBenchmarkModifiers(),
                 seed: runSeed);
 
             var context = new SolverContext(
@@ -251,6 +265,7 @@ namespace StackMerge.Editor
             builder.AppendLine($"Completed: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             builder.AppendLine($"Total time: {elapsed.TotalSeconds:0.00}s");
             builder.AppendLine($"Tuning: {BuildTuningSummary()}");
+            builder.AppendLine($"Modifiers: {BuildModifierSummary()}");
             if (canceled)
             {
                 builder.AppendLine("Status: canceled by user");
@@ -277,11 +292,6 @@ namespace StackMerge.Editor
             return builder.ToString();
         }
 
-        private static string FormatSigned(int value)
-        {
-            return value > 0 ? $"+{value}" : value.ToString();
-        }
-
         private SolverTuningSettings BuildBenchmarkTuning(SolverId solverId)
         {
             return runAllSolvers
@@ -302,7 +312,23 @@ namespace StackMerge.Editor
                 return "no tuning";
             }
 
-            return string.Join(", ", tuningDefinition.Parameters.Select((parameter, index) => $"{parameter.DisplayName} {FormatSigned(benchmarkTuningSlots[index])}"));
+            return string.Join(", ", tuningDefinition.Parameters.Select((parameter, index) =>
+                $"{parameter.DisplayName} {parameter.FormatValue(SolverTuningSettings.ClampValue(selectedSolver, index, benchmarkTuningSlots[index]))}"));
+        }
+
+        private StackMergeRunModifiers BuildBenchmarkModifiers()
+        {
+            return new StackMergeRunModifiers(
+                benchmarkModifierLevels[(int)ModifierId.UnstableStack],
+                benchmarkModifierLevels[(int)ModifierId.MirrorStack] > 0,
+                benchmarkModifierLevels[(int)ModifierId.Joker] > 0,
+                benchmarkModifierLevels[(int)ModifierId.MinersPickaxe],
+                benchmarkModifierLevels[(int)ModifierId.QueueScrubber]);
+        }
+
+        private string BuildModifierSummary()
+        {
+            return string.Join(", ", StackMergeProgression.Modifiers.Select((modifier, index) => $"{modifier.DisplayName} L{benchmarkModifierLevels[index]}"));
         }
 
         private readonly struct BenchmarkRunResult

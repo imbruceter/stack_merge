@@ -30,7 +30,7 @@ namespace StackMerge.Tests
             Assert.That(result.Accepted, Is.True);
             Assert.That(result.MergeCount, Is.EqualTo(1));
             Assert.That(state.Stacks[0], Is.EqualTo(new[] { 2 }));
-            Assert.That(state.Score, Is.EqualTo(1));
+            Assert.That(state.Score, Is.EqualTo(3));
             Assert.That(state.HighestBlock, Is.EqualTo(2));
             Assert.That(state.TotalMerges, Is.EqualTo(1));
             Assert.That(state.HighestMergedBlock, Is.EqualTo(2));
@@ -343,8 +343,8 @@ namespace StackMerge.Tests
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData());
 
-            progression.SetSolverTuningValue(SolverId.Heur, 0, 4);
-            progression.SetSolverTuningValue(SolverId.Heur, 2, -4);
+            progression.SetSolverTuningValue(SolverId.Heur, 0, 40);
+            progression.SetSolverTuningValue(SolverId.Heur, 2, -40);
             progression.SetSolverTuningValue(SolverId.Heur, 3, 1);
 
             SolverTuningSettings tuning = progression.GetSolverTuning(SolverId.Heur);
@@ -383,7 +383,7 @@ namespace StackMerge.Tests
         }
 
         [Test]
-        public void Progression_AgentsUnlockEquipAndCoordinatorAddsSlot()
+        public void Progression_AgentsUnlockEquipAndExtraSlotUpgradeAddsSlot()
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
             AgentDefinition quartermaster = progression.GetAgentDefinition(AgentId.Quartermaster);
@@ -406,21 +406,126 @@ namespace StackMerge.Tests
             Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.False);
             Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.Description));
 
-            Assert.That(progression.BuyAgent(AgentId.Coordinator), Is.True);
-            Assert.That(progression.EquipAgent(AgentId.Coordinator), Is.False);
-            Assert.That(progression.UnequipAgent(AgentId.HighwaterAnalyst), Is.True);
-            Assert.That(progression.EquipAgent(AgentId.Coordinator), Is.True);
-            Assert.That(progression.IsAgentActive(AgentId.Coordinator), Is.True);
+            Assert.That(progression.BuyExtraAgentSlotUpgrade(), Is.True);
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(3));
-            Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
-
+            Assert.That(progression.UnequipAgent(AgentId.HighwaterAnalyst), Is.True);
             Assert.That(progression.EquipAgent(AgentId.Quartermaster), Is.True);
             Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.True);
-            Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(2));
 
-            Assert.That(progression.UnequipAgent(AgentId.Coordinator), Is.True);
-            Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
-            Assert.That(progression.IsAgentActive(AgentId.Quartermaster), Is.False);
+            Assert.That(progression.BuyAgent(AgentId.RestartSponsor), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.RestartSponsor), Is.True);
+            Assert.That(progression.IsAgentActive(AgentId.RestartSponsor), Is.True);
+            Assert.That(progression.ActiveAgentCount, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void Progression_AutomationRequiresPurchasedSolverAndAutoRestartUsesTokens()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+
+            Assert.That(progression.ToggleOrBuyAutoSolve(), Is.False);
+            Assert.That(progression.ToggleOrBuyAutoRestart(), Is.False);
+
+            Assert.That(progression.SelectOrUnlockSolver(SolverId.Heur), Is.True);
+            Assert.That(progression.ToggleOrBuyAutoSolve(), Is.True);
+            Assert.That(progression.AutoSolveUnlocked, Is.True);
+            Assert.That(progression.AutoSolveEnabled, Is.True);
+
+            Assert.That(progression.ToggleOrBuyAutoRestart(), Is.True);
+            Assert.That(progression.AutoRestartUnlocked, Is.True);
+            Assert.That(progression.TryConsumeAutoRestartToken(), Is.False);
+
+            Assert.That(progression.BuyTokenPack(), Is.True);
+            Assert.That(progression.Tokens, Is.EqualTo(progression.GetTokenPackSize()));
+            Assert.That(progression.TryConsumeAutoRestartToken(), Is.True);
+            Assert.That(progression.Tokens, Is.EqualTo(progression.GetTokenPackSize() - 1));
+
+            Assert.That(progression.BuyAgentsMenuUnlock(), Is.True);
+            Assert.That(progression.BuyAgent(AgentId.RestartSponsor), Is.True);
+            Assert.That(progression.EquipAgent(AgentId.RestartSponsor), Is.True);
+            long tokensBeforeSponsorRestart = progression.Tokens;
+            Assert.That(progression.TryConsumeAutoRestartToken(), Is.True);
+            Assert.That(progression.Tokens, Is.EqualTo(tokensBeforeSponsorRestart));
+        }
+
+        [Test]
+        public void Progression_UnlocksSolverTuningAndModifiers()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+
+            Assert.That(progression.SolverTuningUnlocked, Is.False);
+            Assert.That(progression.BuySolverTuningUnlock(), Is.True);
+            Assert.That(progression.SolverTuningUnlocked, Is.True);
+
+            Assert.That(progression.BuyModifierUpgrade(ModifierId.UnstableStack), Is.False);
+
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            for (int i = 0; i < 7; i++)
+            {
+                unlockedSolvers[i] = true;
+            }
+
+            progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 20000,
+                solverUnlocked = unlockedSolvers,
+                agentsMenuUnlocked = true,
+                runsCompleted = 20,
+                totalMerges = 1000,
+                bestRunScore = 8000,
+                highestBlockEver = 1024
+            });
+
+            Assert.That(progression.CanUnlockModifiersMenu, Is.True);
+            Assert.That(progression.BuyModifiersMenuUnlock(), Is.True);
+            Assert.That(progression.BuyModifierUpgrade(ModifierId.UnstableStack), Is.True);
+            Assert.That(progression.BuyModifierUpgrade(ModifierId.Joker), Is.True);
+            StackMergeRunModifiers modifiers = progression.BuildRunModifiers();
+
+            Assert.That(modifiers.UnstableSaves, Is.EqualTo(1));
+            Assert.That(modifiers.JokerBlocks, Is.True);
+        }
+
+        [Test]
+        public void Modifiers_RescueFullStackAndSupportMirrorAndJokerMerges()
+        {
+            var unstable = new StackMergeGameState(stackCapacity: 2, modifiers: new StackMergeRunModifiers(1, false, false, 0, 0), seed: 21);
+            unstable.SetNextBlocksForTesting(4, 1, 1);
+            unstable.SetStacksForTesting(
+                new[] { 1, 2 },
+                new[] { 8, 16 },
+                new[] { 16, 32 },
+                new[] { 32, 64 });
+
+            Assert.That(unstable.CanPlace(0), Is.True);
+            MoveResult rescue = unstable.PlaceNext(0);
+            Assert.That(rescue.Accepted, Is.True);
+            Assert.That(rescue.UnstableSaveUsed, Is.True);
+            Assert.That(unstable.UnstableSavesRemaining, Is.EqualTo(0));
+            Assert.That(unstable.Stacks[0], Is.EqualTo(new[] { 2, 4 }));
+
+            var mirror = new StackMergeGameState(stackCapacity: 5, modifiers: new StackMergeRunModifiers(0, true, false, 0, 0), seed: 22);
+            mirror.SetNextBlocksForTesting(4, 1, 1);
+            mirror.SetStacksForTesting(
+                new[] { 4, 8 },
+                new int[] { },
+                new int[] { },
+                new int[] { });
+            MoveResult mirrored = mirror.PlaceNext(0);
+            Assert.That(mirrored.MergeCount, Is.EqualTo(2));
+            Assert.That(mirror.Stacks[0], Is.EqualTo(new[] { 16 }));
+
+            var joker = new StackMergeGameState(stackCapacity: 5, modifiers: new StackMergeRunModifiers(0, false, true, 0, 0), seed: 23);
+            joker.SetNextBlocksForTesting(StackMergeGameState.JokerBlockValue, 1, 1);
+            joker.SetStacksForTesting(
+                new[] { 8 },
+                new int[] { },
+                new int[] { },
+                new int[] { });
+            MoveResult jokerMerge = joker.PlaceNext(0);
+            Assert.That(jokerMerge.MergeCount, Is.EqualTo(1));
+            Assert.That(joker.Stacks[0], Is.EqualTo(new[] { 16 }));
         }
     }
 }

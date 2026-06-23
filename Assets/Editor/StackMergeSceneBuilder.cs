@@ -52,11 +52,12 @@ namespace StackMerge.Editor
             RectTransform gameplayPanel;
             RectTransform algorithmsPanel;
             RectTransform upgradesPanel;
+            RectTransform modifiersPanel;
             RectTransform historyPanel;
             RectTransform achievementsPanel;
             RectTransform agentsPanel;
             RectTransform settingsPanel;
-            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out historyPanel, out achievementsPanel, out agentsPanel, out settingsPanel);
+            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out modifiersPanel, out historyPanel, out achievementsPanel, out agentsPanel, out settingsPanel);
 
             TMP_Text scoreText;
             TMP_Text bestText;
@@ -143,25 +144,50 @@ namespace StackMerge.Editor
                 out solverTuneResetButton);
 
             TMP_Text upgradesChipsText;
-            Toggle autoSolveToggle;
+            Button autoSolveButton;
             Button[] speedUpgradeButtons;
             Button autoRestartButton;
+            Button tokenPackButton;
+            Button solverTuningUnlockButton;
+            Button extraAgentSlotUpgradeButton;
             Button[] stackCapacityUpgradeButtons;
             Button[] queuePreviewUpgradeButtons;
             Button[] incomeUpgradeButtons;
             Button[] difficultyUpgradeButtons;
+            TMP_Text progressionStageText;
+            Button modifiersMenuUnlockButton;
             Button agentsMenuUnlockButton;
             BuildUpgradesPanel(
                 upgradesPanel,
                 out upgradesChipsText,
-                out autoSolveToggle,
+                out autoSolveButton,
                 out speedUpgradeButtons,
                 out autoRestartButton,
+                out tokenPackButton,
+                out solverTuningUnlockButton,
+                out extraAgentSlotUpgradeButton,
                 out stackCapacityUpgradeButtons,
                 out queuePreviewUpgradeButtons,
                 out incomeUpgradeButtons,
                 out difficultyUpgradeButtons,
+                out progressionStageText,
+                out modifiersMenuUnlockButton,
                 out agentsMenuUnlockButton);
+
+            TMP_Text modifiersChipsText;
+            TMP_Text modifierSummaryText;
+            TMP_Text modifierDetailNameText;
+            TMP_Text modifierDetailInfoText;
+            TMP_Text modifierDetailStatusText;
+            Button modifierDetailActionButton;
+            Button[] modifierButtons = BuildModifiersPanel(
+                modifiersPanel,
+                out modifiersChipsText,
+                out modifierSummaryText,
+                out modifierDetailNameText,
+                out modifierDetailInfoText,
+                out modifierDetailStatusText,
+                out modifierDetailActionButton);
 
             TMP_Text historySummaryText;
             RectTransform historyChartRoot;
@@ -236,19 +262,20 @@ namespace StackMerge.Editor
                 gameplayPanel.gameObject,
                 algorithmsPanel.gameObject,
                 upgradesPanel.gameObject,
+                modifiersPanel.gameObject,
                 historyPanel.gameObject,
                 achievementsPanel.gameObject,
                 agentsPanel.gameObject,
                 settingsPanel.gameObject,
                 tabButtons,
-                new[] { gameplayChipsText, algorithmsChipsText, upgradesChipsText, agentsChipsText, settingsChipsText },
+                new[] { gameplayChipsText, algorithmsChipsText, upgradesChipsText, modifiersChipsText, agentsChipsText, settingsChipsText },
                 solverText,
                 speedText,
                 capacityText,
                 queueText,
                 runStatusText,
                 agentSlotsText,
-                autoSolveToggle,
+                autoSolveButton,
                 solverButtons,
                 solverDetailNameText,
                 solverDetailInfoText,
@@ -267,11 +294,22 @@ namespace StackMerge.Editor
                 solverTuneResetButton,
                 speedUpgradeButtons,
                 autoRestartButton,
+                tokenPackButton,
+                solverTuningUnlockButton,
+                extraAgentSlotUpgradeButton,
                 stackCapacityUpgradeButtons,
                 queuePreviewUpgradeButtons,
                 incomeUpgradeButtons,
                 difficultyUpgradeButtons,
+                progressionStageText,
+                modifiersMenuUnlockButton,
                 agentsMenuUnlockButton,
+                modifierButtons,
+                modifierSummaryText,
+                modifierDetailNameText,
+                modifierDetailInfoText,
+                modifierDetailStatusText,
+                modifierDetailActionButton,
                 historySummaryText,
                 historyChartRoot,
                 historySolverTableRoot,
@@ -385,6 +423,7 @@ namespace StackMerge.Editor
             out RectTransform gameplayPanel,
             out RectTransform algorithmsPanel,
             out RectTransform upgradesPanel,
+            out RectTransform modifiersPanel,
             out RectTransform historyPanel,
             out RectTransform achievementsPanel,
             out RectTransform agentsPanel,
@@ -393,6 +432,7 @@ namespace StackMerge.Editor
             gameplayPanel = CreateTabPanel("Gameplay Panel", parent);
             algorithmsPanel = CreateTabPanel("Algorithms Panel", parent);
             upgradesPanel = CreateTabPanel("Upgrades Panel", parent);
+            modifiersPanel = CreateTabPanel("Modifiers Panel", parent);
             historyPanel = CreateTabPanel("History Panel", parent);
             achievementsPanel = CreateTabPanel("Achievements Panel", parent);
             agentsPanel = CreateTabPanel("Agents Panel", parent);
@@ -400,6 +440,7 @@ namespace StackMerge.Editor
 
             algorithmsPanel.gameObject.SetActive(false);
             upgradesPanel.gameObject.SetActive(false);
+            modifiersPanel.gameObject.SetActive(false);
             historyPanel.gameObject.SetActive(false);
             achievementsPanel.gameObject.SetActive(false);
             agentsPanel.gameObject.SetActive(false);
@@ -820,45 +861,131 @@ namespace StackMerge.Editor
         private static void BuildUpgradesPanel(
             RectTransform panel,
             out TMP_Text chipsText,
-            out Toggle autoSolveToggle,
+            out Button autoSolveButton,
             out Button[] speedUpgradeButtons,
             out Button autoRestartButton,
+            out Button tokenPackButton,
+            out Button solverTuningUnlockButton,
+            out Button extraAgentSlotUpgradeButton,
             out Button[] stackCapacityUpgradeButtons,
             out Button[] queuePreviewUpgradeButtons,
             out Button[] incomeUpgradeButtons,
             out Button[] difficultyUpgradeButtons,
+            out TMP_Text progressionStageText,
+            out Button modifiersMenuUnlockButton,
             out Button agentsMenuUnlockButton)
         {
             BuildMenuHeader(panel, "Fejlesztesek", out chipsText);
 
-            TMP_Text subtitle = CreateText("Unlock each row from left to right. Risk increases starting block pressure for higher scores.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            TMP_Text subtitle = CreateText("Buy automation, unlock new layers, then push into riskier systems when the run history proves you are ready.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
             SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 46f);
             subtitle.enableAutoSizing = true;
             subtitle.fontSizeMin = 12;
             subtitle.fontSizeMax = 20;
 
-            RectTransform automation = CreateCategoryPanel(panel, "Automatization", 150f, 128f);
-            autoSolveToggle = CreateToggle(automation, "Auto solve", HexColor("#0F766E"));
-            SetGridCell(autoSolveToggle.GetComponent<RectTransform>(), 0, 3, 0, 1, 14f);
-            autoRestartButton = CreateButton(automation, "Auto restart\n180", HexColor("#C2410C"), 22);
-            SetGridCell(autoRestartButton.GetComponent<RectTransform>(), 1, 3, 0, 1, 14f);
-            agentsMenuUnlockButton = CreateButton(automation, "Unlock Agents\n650", HexColor("#9333EA"), 22);
-            SetGridCell(agentsMenuUnlockButton.GetComponent<RectTransform>(), 2, 3, 0, 1, 14f);
+            RectTransform stage = CreateCategoryPanel(panel, "Stage Progression", 150f, 154f);
+            progressionStageText = CreateText("Stage 1 - Core automation", stage, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E2E8F0"));
+            SetStretch(progressionStageText.rectTransform, 0f, 0f, 260f, 0f);
+            progressionStageText.enableAutoSizing = true;
+            progressionStageText.fontSizeMin = 11;
+            progressionStageText.fontSizeMax = 18;
 
-            RectTransform speed = CreateCategoryPanel(panel, "Solver Speed", 294f, 126f);
+            modifiersMenuUnlockButton = CreateButton(stage, "Modifier Lab\nStage locked", HexColor("#334155"), 20);
+            SetRightStretch(modifiersMenuUnlockButton.GetComponent<RectTransform>(), 0f, 0f, 0f, 236f);
+
+            RectTransform automation = CreateCategoryPanel(panel, "Automatization", 322f, 128f);
+            autoSolveButton = CreateButton(automation, "Auto solve\nNeeds algorithm", HexColor("#0F766E"), 22);
+            SetGridCell(autoSolveButton.GetComponent<RectTransform>(), 0, 3, 0, 1, 14f);
+            autoRestartButton = CreateButton(automation, "Auto restart\nNeeds algorithm", HexColor("#C2410C"), 22);
+            SetGridCell(autoRestartButton.GetComponent<RectTransform>(), 1, 3, 0, 1, 14f);
+            tokenPackButton = CreateButton(automation, "+50 tokens\n300 chips", HexColor("#0369A1"), 22);
+            SetGridCell(tokenPackButton.GetComponent<RectTransform>(), 2, 3, 0, 1, 14f);
+
+            RectTransform lab = CreateCategoryPanel(panel, "Lab Unlocks", 466f, 128f);
+            agentsMenuUnlockButton = CreateButton(lab, "Unlock Agents\n650", HexColor("#9333EA"), 22);
+            SetGridCell(agentsMenuUnlockButton.GetComponent<RectTransform>(), 0, 3, 0, 1, 14f);
+            solverTuningUnlockButton = CreateButton(lab, "Solver tuning\n700", HexColor("#2563EB"), 22);
+            SetGridCell(solverTuningUnlockButton.GetComponent<RectTransform>(), 1, 3, 0, 1, 14f);
+            extraAgentSlotUpgradeButton = CreateButton(lab, "+1 Agent slot\n1800", HexColor("#7C3AED"), 22);
+            SetGridCell(extraAgentSlotUpgradeButton.GetComponent<RectTransform>(), 2, 3, 0, 1, 14f);
+
+            RectTransform speed = CreateCategoryPanel(panel, "Solver Speed", 610f, 126f);
             speedUpgradeButtons = CreateUpgradeRow(speed, "Speed", HexColor("#0891B2"));
 
-            RectTransform stack = CreateCategoryPanel(panel, "Stack Capacity", 436f, 126f);
+            RectTransform stack = CreateCategoryPanel(panel, "Stack Capacity", 752f, 126f);
             stackCapacityUpgradeButtons = CreateUpgradeRow(stack, "Cap", HexColor("#4F46E5"));
 
-            RectTransform difficulty = CreateCategoryPanel(panel, "Difficulty Scaling", 578f, 126f);
+            RectTransform difficulty = CreateCategoryPanel(panel, "Difficulty Scaling", 894f, 126f);
             difficultyUpgradeButtons = CreateUpgradeRow(difficulty, "Risk", HexColor("#DB2777"), 3);
 
-            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 720f, 126f);
+            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 1036f, 126f);
             queuePreviewUpgradeButtons = CreateUpgradeRow(queue, "Next", HexColor("#7C3AED"), 2);
 
-            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 862f, 126f);
+            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 1178f, 126f);
             incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
+        }
+
+        private static Button[] BuildModifiersPanel(
+            RectTransform panel,
+            out TMP_Text chipsText,
+            out TMP_Text summaryText,
+            out TMP_Text detailNameText,
+            out TMP_Text detailInfoText,
+            out TMP_Text detailStatusText,
+            out Button detailActionButton)
+        {
+            BuildMenuHeader(panel, "Modifiers", out chipsText);
+
+            TMP_Text subtitle = CreateText("Late-game rule modules. They raise the ceiling, create rescue tools, and make solver choice matter more than raw price.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 46f);
+            subtitle.enableAutoSizing = true;
+            subtitle.fontSizeMin = 12;
+            subtitle.fontSizeMax = 20;
+
+            RectTransform summary = CreateCategoryPanel(panel, "Lab Status", 150f, 112f);
+            summaryText = CreateText("Modifier Lab locked.", summary, 19, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E2E8F0"));
+            SetStretch(summaryText.rectTransform, 0f, 0f, 0f, 0f);
+            summaryText.enableAutoSizing = true;
+            summaryText.fontSizeMin = 11;
+            summaryText.fontSizeMax = 19;
+
+            RectTransform details = CreateCategoryPanel(panel, "Selected Modifier", 278f, 188f);
+            detailNameText = CreateText("Unstable Stack", details, 28, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 230f, 38f);
+            detailNameText.enableAutoSizing = true;
+            detailNameText.fontSizeMin = 16;
+            detailNameText.fontSizeMax = 28;
+
+            detailStatusText = CreateText("Locked", details, 18, FontStyles.Bold, TextAlignmentOptions.MidlineRight, HexColor("#FDE68A"));
+            SetTopStretch(detailStatusText.rectTransform, 650f, 0f, 0f, 34f);
+            detailStatusText.enableAutoSizing = true;
+            detailStatusText.fontSizeMin = 11;
+            detailStatusText.fontSizeMax = 18;
+
+            detailInfoText = CreateText("Unlock Modifier Lab from Upgrades first.", details, 19, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(detailInfoText.rectTransform, 0f, 46f, 220f, 0f);
+            detailInfoText.enableAutoSizing = true;
+            detailInfoText.fontSizeMin = 11;
+            detailInfoText.fontSizeMax = 19;
+
+            detailActionButton = CreateButton(details, "Unlock in\nUpgrades", HexColor("#334155"), 22);
+            SetRightStretch(detailActionButton.GetComponent<RectTransform>(), 46f, 0f, 0f, 190f);
+
+            RectTransform collection = CreateCategoryPanel(panel, "Modifier Collection", 482f, 318f);
+            return CreateModifierGrid(collection);
+        }
+
+        private static Button[] CreateModifierGrid(RectTransform category)
+        {
+            Button[] buttons = new Button[StackMergeProgression.Modifiers.Length];
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                ModifierDefinition definition = StackMergeProgression.Modifiers[i];
+                buttons[i] = CreateButton(category, $"{definition.DisplayName}\nLocked", HexColor("#92400E"), 16);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, 2, 12f);
+            }
+
+            return buttons;
         }
 
         private static Button[] CreateUpgradeRow(RectTransform category, string prefix, Color color, int count = 5)
@@ -965,7 +1092,7 @@ namespace StackMerge.Editor
                 RectTransform slot = CreatePanel($"Agent Slot {i + 1}", slots, HexColor("#172033"));
                 SetGridCell(slot, i, 3, 0, 1, 12f);
 
-                TMP_Text slotText = CreateText(i == 2 ? "Bonus slot\nNeeds Coordinator" : $"Slot {i + 1}\nEmpty", slot, 18, FontStyles.Bold, TextAlignmentOptions.Center, i == 2 ? HexColor("#64748B") : HexColor("#CBD5E1"));
+                TMP_Text slotText = CreateText(i == 2 ? "Bonus slot\nNeeds upgrade" : $"Slot {i + 1}\nEmpty", slot, 18, FontStyles.Bold, TextAlignmentOptions.Center, i == 2 ? HexColor("#64748B") : HexColor("#CBD5E1"));
                 SetStretch(slotText.rectTransform, 10f, 0f, 10f, 0f);
                 slotText.enableAutoSizing = true;
                 slotText.fontSizeMin = 11;
@@ -995,14 +1122,15 @@ namespace StackMerge.Editor
             detailActionButton = CreateButton(details, "Buy\n120", HexColor("#0F766E"), 22);
             SetRightStretch(detailActionButton.GetComponent<RectTransform>(), 46f, 0f, 0f, 190f);
 
-            RectTransform collection = CreateCategoryPanel(panel, "Collection", 406f, 290f);
+            RectTransform collection = CreateCategoryPanel(panel, "Collection", 406f, 390f);
 
             Button[] buttons = new Button[StackMergeProgression.Agents.Length];
+            int rows = Mathf.CeilToInt(buttons.Length / 3f);
             for (int i = 0; i < buttons.Length; i++)
             {
                 AgentDefinition definition = StackMergeProgression.Agents[i];
                 buttons[i] = CreateButton(collection, $"{definition.DisplayName}\nLocked", HexColor("#9333EA"), 17);
-                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, 2, 14f);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 14f);
             }
 
             return buttons;
@@ -1047,7 +1175,7 @@ namespace StackMerge.Editor
             title.fontSizeMax = 38;
 
             RectTransform wallet = CreatePanel("Wallet", panel, HexColor("#172033"));
-            SetTopRight(wallet, 0f, 0f, 240f, 58f);
+            SetTopRight(wallet, 0f, 0f, 340f, 58f);
 
             chipsText = CreateText("Chips: 0", wallet, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDE68A"));
             SetStretch(chipsText.rectTransform, 12f, 0f, 12f, 0f);
@@ -1061,7 +1189,7 @@ namespace StackMerge.Editor
             RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0F172A"));
             SetBottomStretch(tabs, 40f, 24f, 40f, 86f);
 
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Agent", "Settings" };
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Settings" };
             Button[] buttons = new Button[labels.Length];
             for (int i = 0; i < labels.Length; i++)
             {

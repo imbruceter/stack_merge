@@ -15,16 +15,22 @@ namespace StackMerge
         public int[] solverSafetyTuning;
         public int[] solverLookaheadTuning;
         public int[] solverTuningValues;
+        public bool solverTuningUnlocked;
+        public long tokens;
         public int speedLevel;
-        public bool autoSolveEnabled = true;
+        public bool autoSolveUnlocked;
+        public bool autoSolveEnabled;
         public bool autoRestartUnlocked;
         public bool autoRestartEnabled;
         public int stackCapacityLevel;
         public int queuePreviewLevel;
         public int incomeLevel;
         public int difficultyLevel;
+        public bool modifiersMenuUnlocked;
+        public int[] modifierLevels;
         public int runsCompleted;
         public bool agentsMenuUnlocked;
+        public bool extraAgentSlotUnlocked;
         public bool[] agentUnlocked;
         public int[] activeAgentIds;
         public RunHistoryEntry[] runHistory;
@@ -35,6 +41,7 @@ namespace StackMerge
         public int totalMerges;
         public int highestBlockEver;
         public long bestRunScore;
+        public int mergeTokenProgress;
     }
 
     [Serializable]
@@ -56,7 +63,10 @@ namespace StackMerge
         ScoreAuditor = 2,
         Overclocker = 3,
         Quartermaster = 4,
-        Coordinator = 5
+        RestartSponsor = 5,
+        TokenProspector = 6,
+        MoveDividend = 7,
+        VelocityTrader = 8
     }
 
     public readonly struct AgentDefinition
@@ -91,6 +101,40 @@ namespace StackMerge
         HighestBlockEver
     }
 
+    public enum ModifierId
+    {
+        UnstableStack = 0,
+        CatalystStack = 1,
+        MirrorStack = 2,
+        Joker = 3,
+        MinersPickaxe = 4,
+        QueueScrubber = 5
+    }
+
+    public readonly struct ModifierDefinition
+    {
+        public ModifierDefinition(ModifierId id, string displayName, string lockedHint, string description, params int[] costs)
+        {
+            Id = id;
+            DisplayName = displayName;
+            LockedHint = lockedHint;
+            Description = description;
+            Costs = costs ?? Array.Empty<int>();
+        }
+
+        public ModifierId Id { get; }
+
+        public string DisplayName { get; }
+
+        public string LockedHint { get; }
+
+        public string Description { get; }
+
+        public int[] Costs { get; }
+
+        public int MaxLevel => Costs.Length;
+    }
+
     public readonly struct AchievementDefinition
     {
         public AchievementDefinition(int id, string displayName, string description, AchievementMetric metric, long target)
@@ -117,9 +161,23 @@ namespace StackMerge
     {
         private const string PlayerPrefsKey = "StackMerge.Progression.v2";
         private const int BaseAgentSlots = 2;
+        private const int AutoSolveUnlockCost = 140;
+        private const int AutoRestartUnlockCost = 220;
+        private const int SolverTuningUnlockCost = 700;
+        private const int TokenPackCost = 300;
+        private const int TokenPackSize = 50;
+        private const int ExtraAgentSlotUpgradeCost = 1800;
+        private const int ModifiersMenuUnlockCost = 5000;
+        private const int ModifierGateRuns = 20;
+        private const int ModifierGateSolvers = 7;
+        private const int ModifierGateBestScore = 8000;
+        private const int ModifierGateMerges = 1000;
+        private const int ModifierGateHighestBlock = 1024;
+
+        private const int TokenProspectorMergeTarget = 8;
 
         private static readonly int[] SpeedUpgradeCosts = { 20, 55, 130, 300, 680 };
-        private static readonly float[] MoveIntervals = { 1.4f, 0.95f, 0.65f, 0.45f, 0.30f, 0.20f };
+        private static readonly float[] MoveIntervals = { 0.18f, 0.12f, 0.08f, 0.055f, 0.035f, 0.022f };
         private static readonly int[] StackCapacityCosts = { 60, 140, 320, 720, 1600 };
         private static readonly int[] QueuePreviewUpgradeCosts = { 260, 900 };
         private static readonly int[] IncomeUpgradeCosts = { 90, 220, 520, 1200, 2800 };
@@ -129,12 +187,25 @@ namespace StackMerge
 
         public static readonly AgentDefinition[] Agents =
         {
-            new(AgentId.MergeBroker, "Merge Broker", 120, "Boosts merge income.", "+35% chips from merge rewards."),
-            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 240, "Rewards new highs.", "+70% chips from new highest-block rewards."),
-            new(AgentId.ScoreAuditor, "Score Auditor", 420, "Turns score into chips.", "+20% chips from end-of-run score bonus."),
-            new(AgentId.Overclocker, "Overclocker", 680, "Runs the solver faster.", "Solver move interval is 15% shorter."),
-            new(AgentId.Quartermaster, "Quartermaster", 950, "Improves baseline income.", "+1 chip on every successful placement."),
-            new(AgentId.Coordinator, "Coordinator", 1500, "Manages a larger crew.", "+1 active agent slot while equipped.")
+            new(AgentId.MergeBroker, "Merge Broker", 120, "Boosts merge income.", "+75% chips from merge rewards."),
+            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 240, "Rewards new highs.", "+140% chips from new highest-block rewards."),
+            new(AgentId.ScoreAuditor, "Score Auditor", 420, "Turns score into chips.", "+60% chips from end-of-run score bonus."),
+            new(AgentId.Overclocker, "Overclocker", 680, "Runs the solver faster.", "Solver move interval is 25% shorter."),
+            new(AgentId.Quartermaster, "Quartermaster", 950, "Improves baseline income.", "+4 chips on every successful placement."),
+            new(AgentId.RestartSponsor, "Restart Sponsor", 1500, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
+            new(AgentId.TokenProspector, "Token Prospector", 1800, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
+            new(AgentId.MoveDividend, "Move Dividend", 2200, "Rewards long, stable runs.", "End-of-run chips gain a bonus from total moves completed."),
+            new(AgentId.VelocityTrader, "Velocity Trader", 3000, "Rewards fast solvers.", "End-of-run chips gain a throughput bonus from moves per second.")
+        };
+
+        public static readonly ModifierDefinition[] Modifiers =
+        {
+            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run: if a full stack receives a non-merge block, its bottom block is removed without reducing score.", 650, 1300, 2600, 5200, 10400),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Each level adds +20% chips from merge rewards. At level 5, merge chips are doubled.", 800, 1600, 3200, 6400, 12800),
+            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 2400),
+            new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 3600),
+            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Cuts emergency blocks from the board.", "Each level gives one automatic pickaxe use per run when there are no legal placements.", 1600, 3200, 6400, 12800, 25600),
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Deletes bad upcoming blocks.", "Each level gives one automatic queue skip per run when the next block would leave no legal move.", 1400, 2800, 5600, 11200, 22400)
         };
 
         public static readonly AchievementDefinition[] Achievements =
@@ -169,19 +240,31 @@ namespace StackMerge
 
         public long Chips => data.chips;
 
+        public long Tokens => data.tokens;
+
         public SolverId SelectedSolver => (SolverId)data.selectedSolver;
 
         public int SpeedLevel => data.speedLevel;
 
+        public bool HasPurchasedSolver => data.solverUnlocked != null && data.solverUnlocked.Skip(1).Any(unlocked => unlocked);
+
+        public int UnlockedSolverCount => data.solverUnlocked?.Count(unlocked => unlocked) ?? 1;
+
+        public bool SolverTuningUnlocked => data.solverTuningUnlocked;
+
+        public bool AutoSolveUnlocked => data.autoSolveUnlocked;
+
         public bool AutoSolveEnabled
         {
             get => data.autoSolveEnabled;
-            set => data.autoSolveEnabled = value;
+            set => data.autoSolveEnabled = data.autoSolveUnlocked && value;
         }
 
         public bool AutoRestartUnlocked => data.autoRestartUnlocked;
 
         public bool AutoRestartEnabled => data.autoRestartEnabled;
+
+        public bool AutoRestartIsTokenFree => IsAgentActive(AgentId.RestartSponsor);
 
         public int StackCapacity => StackMergeGameState.DefaultStackCapacity + data.stackCapacityLevel;
 
@@ -207,6 +290,17 @@ namespace StackMerge
 
         public bool AgentsMenuUnlocked => data.agentsMenuUnlocked;
 
+        public bool ExtraAgentSlotUnlocked => data.extraAgentSlotUnlocked;
+
+        public bool ModifiersMenuUnlocked => data.modifiersMenuUnlocked;
+
+        public bool CanUnlockModifiersMenu => data.agentsMenuUnlocked
+            && UnlockedSolverCount >= ModifierGateSolvers
+            && data.runsCompleted >= ModifierGateRuns
+            && data.totalMerges >= ModifierGateMerges
+            && data.bestRunScore >= ModifierGateBestScore
+            && data.highestBlockEver >= ModifierGateHighestBlock;
+
         public RunHistoryEntry[] RunHistory => data.runHistory ?? Array.Empty<RunHistoryEntry>();
 
         public long TotalChipsEarned => data.totalChipsEarned;
@@ -223,11 +317,11 @@ namespace StackMerge
 
         public long BestRunScore => data.bestRunScore;
 
-        public int MonteCarloSimulationCount => 8 + data.speedLevel * 4;
+        public int MonteCarloSimulationCount => 3 + data.speedLevel * 2;
 
-        public int MonteCarloRolloutDepth => 8 + data.speedLevel;
+        public int MonteCarloRolloutDepth => 3 + data.speedLevel;
 
-        public float MoveInterval => MoveIntervals[Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1)] * AgentMoveIntervalMultiplier;
+        public float MoveInterval => GetMoveInterval(SelectedSolver);
 
         public bool IsMaxSpeed => data.speedLevel >= MoveIntervals.Length - 1;
 
@@ -241,9 +335,35 @@ namespace StackMerge
 
         public bool IsMaxDifficulty => data.difficultyLevel >= DifficultyUpgradeCosts.Length;
 
-        public int ActiveAgentSlots => BaseAgentSlots + (IsAgentActive(AgentId.Coordinator) ? 1 : 0);
+        public int ActiveAgentSlots => BaseAgentSlots + (data.extraAgentSlotUnlocked ? 1 : 0);
 
         public int MaxAgentSlots => BaseAgentSlots + 1;
+
+        public float GetMoveInterval(SolverId solverId)
+        {
+            float baseInterval = MoveIntervals[Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1)];
+            return Mathf.Max(0.012f, baseInterval * GetSolverPacingMultiplier(solverId) * AgentMoveIntervalMultiplier);
+        }
+
+        public double GetHighestBlockRewardMultiplier(int highestBlock)
+        {
+            int value = Math.Max(1, highestBlock);
+            int log = FloorLog2(value);
+            if (log >= 10)
+            {
+                return Math.Min(1_000_000_000.0, Math.Pow(10.0, log - 9));
+            }
+
+            return log switch
+            {
+                >= 9 => 7.5,
+                >= 8 => 5.0,
+                >= 7 => 3.0,
+                >= 6 => 2.0,
+                >= 5 => 1.45,
+                _ => 1.0
+            };
+        }
 
         public static StackMergeProgression Load()
         {
@@ -313,7 +433,7 @@ namespace StackMerge
             }
 
             int index = ClampSolverIndex(solverId);
-            data.solverTuningValues[index * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue(value);
+            data.solverTuningValues[index * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue((SolverId)index, slotIndex, value);
         }
 
         public void ResetSolverTuning(SolverId solverId)
@@ -324,6 +444,27 @@ namespace StackMerge
             {
                 data.solverTuningValues[offset + i] = 0;
             }
+        }
+
+        public long GetSolverTuningUnlockCost()
+        {
+            return data.solverTuningUnlocked ? 0 : SolverTuningUnlockCost;
+        }
+
+        public bool BuySolverTuningUnlock()
+        {
+            if (data.solverTuningUnlocked)
+            {
+                return true;
+            }
+
+            if (!Spend(SolverTuningUnlockCost))
+            {
+                return false;
+            }
+
+            data.solverTuningUnlocked = true;
+            return true;
         }
 
         public long GetSolverUnlockCost(SolverId solverId)
@@ -390,15 +531,43 @@ namespace StackMerge
             return upgradeIndex == data.speedLevel && BuySpeedUpgrade();
         }
 
+        public long GetAutoSolveCost()
+        {
+            return data.autoSolveUnlocked ? 0 : AutoSolveUnlockCost;
+        }
+
+        public bool ToggleOrBuyAutoSolve()
+        {
+            if (!data.autoSolveUnlocked)
+            {
+                if (!HasPurchasedSolver || !Spend(AutoSolveUnlockCost))
+                {
+                    return false;
+                }
+
+                data.autoSolveUnlocked = true;
+                data.autoSolveEnabled = true;
+                return true;
+            }
+
+            data.autoSolveEnabled = !data.autoSolveEnabled;
+            return true;
+        }
+
         public long GetAutoRestartCost()
         {
-            return data.autoRestartUnlocked ? 0 : 180;
+            return data.autoRestartUnlocked ? 0 : AutoRestartUnlockCost;
         }
 
         public bool ToggleOrBuyAutoRestart()
         {
             if (!data.autoRestartUnlocked)
             {
+                if (!HasPurchasedSolver)
+                {
+                    return false;
+                }
+
                 if (!Spend(GetAutoRestartCost()))
                 {
                     return false;
@@ -410,6 +579,48 @@ namespace StackMerge
             }
 
             data.autoRestartEnabled = !data.autoRestartEnabled;
+            return true;
+        }
+
+        public long GetTokenPackCost()
+        {
+            return TokenPackCost;
+        }
+
+        public int GetTokenPackSize()
+        {
+            return TokenPackSize;
+        }
+
+        public bool BuyTokenPack()
+        {
+            if (!Spend(TokenPackCost))
+            {
+                return false;
+            }
+
+            data.tokens += TokenPackSize;
+            return true;
+        }
+
+        public bool TryConsumeAutoRestartToken()
+        {
+            if (!data.autoRestartUnlocked || !data.autoRestartEnabled)
+            {
+                return false;
+            }
+
+            if (AutoRestartIsTokenFree)
+            {
+                return true;
+            }
+
+            if (data.tokens <= 0)
+            {
+                return false;
+            }
+
+            data.tokens--;
             return true;
         }
 
@@ -538,6 +749,119 @@ namespace StackMerge
             return true;
         }
 
+        public long GetExtraAgentSlotUpgradeCost()
+        {
+            return data.extraAgentSlotUnlocked ? 0 : ExtraAgentSlotUpgradeCost;
+        }
+
+        public bool BuyExtraAgentSlotUpgrade()
+        {
+            if (data.extraAgentSlotUnlocked)
+            {
+                return true;
+            }
+
+            if (!Spend(ExtraAgentSlotUpgradeCost))
+            {
+                return false;
+            }
+
+            data.extraAgentSlotUnlocked = true;
+            return true;
+        }
+
+        public long GetModifiersMenuUnlockCost()
+        {
+            return data.modifiersMenuUnlocked ? 0 : ModifiersMenuUnlockCost;
+        }
+
+        public string GetModifiersGateStatus()
+        {
+            if (data.modifiersMenuUnlocked)
+            {
+                return "Modifier Lab unlocked";
+            }
+
+            return $"Requires: Agents {FormatGate(data.agentsMenuUnlocked)}, Solvers {UnlockedSolverCount}/{ModifierGateSolvers}, Runs {data.runsCompleted}/{ModifierGateRuns}, Merges {data.totalMerges}/{ModifierGateMerges}, Best {data.bestRunScore}/{ModifierGateBestScore}, High {data.highestBlockEver}/{ModifierGateHighestBlock}";
+        }
+
+        public bool BuyModifiersMenuUnlock()
+        {
+            if (data.modifiersMenuUnlocked)
+            {
+                return true;
+            }
+
+            if (!CanUnlockModifiersMenu || !Spend(ModifiersMenuUnlockCost))
+            {
+                return false;
+            }
+
+            data.modifiersMenuUnlocked = true;
+            return true;
+        }
+
+        public ModifierDefinition GetModifierDefinition(ModifierId modifierId)
+        {
+            return Modifiers[(int)modifierId];
+        }
+
+        public int GetModifierLevel(ModifierId modifierId)
+        {
+            int index = (int)modifierId;
+            return index >= 0 && index < data.modifierLevels.Length ? data.modifierLevels[index] : 0;
+        }
+
+        public bool IsModifierMaxed(ModifierId modifierId)
+        {
+            ModifierDefinition definition = GetModifierDefinition(modifierId);
+            return GetModifierLevel(modifierId) >= definition.MaxLevel;
+        }
+
+        public long GetModifierUpgradeCost(ModifierId modifierId)
+        {
+            ModifierDefinition definition = GetModifierDefinition(modifierId);
+            int level = GetModifierLevel(modifierId);
+            return level >= definition.MaxLevel ? 0 : definition.Costs[level];
+        }
+
+        public bool BuyModifierUpgrade(ModifierId modifierId)
+        {
+            int index = (int)modifierId;
+            if (!data.modifiersMenuUnlocked || index < 0 || index >= data.modifierLevels.Length || IsModifierMaxed(modifierId))
+            {
+                return false;
+            }
+
+            if (!Spend(GetModifierUpgradeCost(modifierId)))
+            {
+                return false;
+            }
+
+            data.modifierLevels[index]++;
+            return true;
+        }
+
+        public StackMergeRunModifiers BuildRunModifiers()
+        {
+            if (!data.modifiersMenuUnlocked)
+            {
+                return default;
+            }
+
+            return new StackMergeRunModifiers(
+                GetModifierLevel(ModifierId.UnstableStack),
+                GetModifierLevel(ModifierId.MirrorStack) > 0,
+                GetModifierLevel(ModifierId.Joker) > 0,
+                GetModifierLevel(ModifierId.MinersPickaxe),
+                GetModifierLevel(ModifierId.QueueScrubber));
+        }
+
+        private static string FormatGate(bool value)
+        {
+            return value ? "yes" : "no";
+        }
+
         public AgentDefinition GetAgentDefinition(AgentId agentId)
         {
             return Agents[(int)agentId];
@@ -646,21 +970,26 @@ namespace StackMerge
                 return 0;
             }
 
-            long placement = 1 + AgentFlatPlacementBonus;
-            long merge = result.MergeCount * (2 + FloorLog2(Math.Max(1, result.ResultingTopValue)));
+            double highestMultiplier = GetHighestBlockRewardMultiplier(Math.Max(result.HighestBlock, result.ResultingTopValue));
+            long placement = 2 + AgentFlatPlacementBonus;
+            double merge = result.MergeCount <= 0
+                ? 0
+                : result.MergeCount * Math.Max(1, result.ResultingTopValue) * highestMultiplier * 0.55;
             long highest = result.MergeCount > 0 && result.ResultingTopValue >= result.HighestBlock
-                ? 2 + FloorLog2(Math.Max(1, result.HighestBlock)) * 2
+                ? (long)Math.Ceiling(Math.Max(1, result.HighestBlock) * highestMultiplier * 0.85)
                 : 0;
 
             long gained = placement;
-            gained += (long)Math.Ceiling(merge * AgentMergeMultiplier);
+            gained += (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
             gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
+            gained = ApplyStageMultiplier(gained);
             gained = ApplyIncomeMultiplier(gained);
             data.chips += gained;
             data.totalChipsEarned += gained;
             data.totalBlocksDropped++;
             data.totalMerges += Math.Max(0, result.MergeCount);
             data.highestBlockEver = Math.Max(data.highestBlockEver, result.HighestBlock);
+            AwardMergeTokens(result.MergeCount);
             return gained;
         }
 
@@ -676,6 +1005,11 @@ namespace StackMerge
 
         public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun)
         {
+            return AwardRunCompleted(runScore, solverId, moves, merges, highestMergedBlock, manualRun, 0f);
+        }
+
+        public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun, float elapsedSeconds)
+        {
             data.runsCompleted++;
             if (manualRun)
             {
@@ -684,7 +1018,16 @@ namespace StackMerge
 
             data.bestRunScore = Math.Max(data.bestRunScore, Math.Max(0, runScore));
             data.highestBlockEver = Math.Max(data.highestBlockEver, highestMergedBlock);
-            long bonus = Math.Max(1, (long)Math.Ceiling((runScore / 50.0) * AgentScoreMultiplier));
+            double highestMultiplier = GetHighestBlockRewardMultiplier(highestMergedBlock);
+            double scoreBonus = Math.Max(1, runScore) * 0.22 * highestMultiplier * AgentScoreMultiplier;
+            double moveBonus = IsAgentActive(AgentId.MoveDividend)
+                ? Math.Max(0, moves) * Math.Max(1.0, highestMultiplier * 0.35) * 4.0
+                : 0;
+            double speedBonus = IsAgentActive(AgentId.VelocityTrader) && elapsedSeconds > 0.01f
+                ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18)
+                : 0;
+            long bonus = Math.Max(1, (long)Math.Ceiling(scoreBonus + moveBonus + speedBonus));
+            bonus = ApplyStageMultiplier(bonus);
             bonus = ApplyIncomeMultiplier(bonus);
             data.chips += bonus;
             data.totalChipsEarned += bonus;
@@ -800,19 +1143,62 @@ namespace StackMerge
             }
         }
 
-        private double AgentMergeMultiplier => IsAgentActive(AgentId.MergeBroker) ? 1.35 : 1.0;
+        private double AgentMergeMultiplier => IsAgentActive(AgentId.MergeBroker) ? 1.75 : 1.0;
 
-        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 1.70 : 1.0;
+        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 2.40 : 1.0;
 
-        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.20 : 1.0;
+        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.60 : 1.0;
 
-        private float AgentMoveIntervalMultiplier => IsAgentActive(AgentId.Overclocker) ? 0.85f : 1f;
+        private float AgentMoveIntervalMultiplier => IsAgentActive(AgentId.Overclocker) ? 0.75f : 1f;
 
-        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? 1 : 0;
+        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? 4 : 0;
+
+        private double ModifierMergeMultiplier => 1.0 + GetModifierLevel(ModifierId.CatalystStack) * 0.20;
+
+        private long ApplyStageMultiplier(long amount)
+        {
+            double multiplier = data.modifiersMenuUnlocked ? 24.0 : data.agentsMenuUnlocked ? 5.0 : 1.0;
+            return Math.Max(1, (long)Math.Ceiling(amount * multiplier));
+        }
 
         private long ApplyIncomeMultiplier(long amount)
         {
-            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.12)));
+            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35)));
+        }
+
+        private void AwardMergeTokens(int mergeCount)
+        {
+            if (!IsAgentActive(AgentId.TokenProspector) || mergeCount <= 0)
+            {
+                return;
+            }
+
+            data.mergeTokenProgress += mergeCount;
+            while (data.mergeTokenProgress >= TokenProspectorMergeTarget)
+            {
+                data.mergeTokenProgress -= TokenProspectorMergeTarget;
+                data.tokens++;
+            }
+        }
+
+        private static float GetSolverPacingMultiplier(SolverId solverId)
+        {
+            return solverId switch
+            {
+                SolverId.Rand => 0.25f,
+                SolverId.Merge => 0.34f,
+                SolverId.Balance => 0.44f,
+                SolverId.Heur => 0.50f,
+                SolverId.Look => 0.60f,
+                SolverId.Combo => 0.62f,
+                SolverId.AntiStall => 0.64f,
+                SolverId.Plan3 => 0.78f,
+                SolverId.Plan5 => 0.95f,
+                SolverId.Moca => 0.92f,
+                SolverId.MocaPlus => 1.05f,
+                SolverId.Mcts => 1.12f,
+                _ => 1f
+            };
         }
 
         private bool Spend(long cost)
@@ -863,11 +1249,28 @@ namespace StackMerge
             }
 
             data.highestUnlockedSolver = Math.Max(data.highestUnlockedSolver, data.selectedSolver);
+            data.tokens = Math.Max(0, data.tokens);
+            data.mergeTokenProgress = Mathf.Clamp(data.mergeTokenProgress, 0, TokenProspectorMergeTarget - 1);
+            if (!data.autoSolveUnlocked)
+            {
+                data.autoSolveEnabled = false;
+            }
+
+            if (!data.autoRestartUnlocked)
+            {
+                data.autoRestartEnabled = false;
+            }
+
             data.speedLevel = Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1);
             data.stackCapacityLevel = Mathf.Clamp(data.stackCapacityLevel, 0, StackMergeGameState.MaxStackCapacity - StackMergeGameState.DefaultStackCapacity);
             data.queuePreviewLevel = Mathf.Clamp(data.queuePreviewLevel, 0, QueuePreviewUpgradeCosts.Length);
             data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
             data.difficultyLevel = Mathf.Clamp(data.difficultyLevel, 0, DifficultyUpgradeCosts.Length);
+            data.modifierLevels = NormalizeModifierLevels(data.modifierLevels);
+            if (!data.modifiersMenuUnlocked && data.modifierLevels.Any(level => level > 0))
+            {
+                data.modifiersMenuUnlocked = true;
+            }
 
             if (data.agentUnlocked == null || data.agentUnlocked.Length != Agents.Length)
             {
@@ -902,6 +1305,11 @@ namespace StackMerge
                 bool hadAgentProgress = data.agentUnlocked.Any(unlocked => unlocked)
                     || data.activeAgentIds.Any(id => id >= 0);
                 data.agentsMenuUnlocked = hadAgentProgress;
+            }
+
+            if (!data.extraAgentSlotUnlocked && data.activeAgentIds.Length > BaseAgentSlots && data.activeAgentIds[BaseAgentSlots] >= 0)
+            {
+                data.extraAgentSlotUnlocked = true;
             }
 
             for (int i = 0; i < data.activeAgentIds.Length; i++)
@@ -973,7 +1381,25 @@ namespace StackMerge
 
             for (int i = 0; i < source.Length && i < normalized.Length; i++)
             {
-                normalized[i] = SolverTuningSettings.ClampValue(source[i]);
+                SolverId solverId = (SolverId)(i / SolverTuningSettings.MaxSlots);
+                int slotIndex = i % SolverTuningSettings.MaxSlots;
+                normalized[i] = SolverTuningSettings.ClampValue(solverId, slotIndex, source[i]);
+            }
+
+            return normalized;
+        }
+
+        private static int[] NormalizeModifierLevels(int[] source)
+        {
+            int[] normalized = new int[Modifiers.Length];
+            if (source == null)
+            {
+                return normalized;
+            }
+
+            for (int i = 0; i < source.Length && i < normalized.Length; i++)
+            {
+                normalized[i] = Mathf.Clamp(source[i], 0, Modifiers[i].MaxLevel);
             }
 
             return normalized;
@@ -1026,7 +1452,7 @@ namespace StackMerge
             }
 
             int solverIndex = ClampSolverIndex(solverId);
-            data.solverTuningValues[solverIndex * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue(value);
+            data.solverTuningValues[solverIndex * SolverTuningSettings.MaxSlots + slotIndex] = SolverTuningSettings.ClampValue((SolverId)solverIndex, slotIndex, value);
         }
 
         private static int FloorLog2(int value)
