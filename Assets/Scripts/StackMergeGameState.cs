@@ -4,6 +4,13 @@ using System.Linq;
 
 namespace StackMerge
 {
+    public enum SolverActionKind
+    {
+        Place,
+        Pickaxe,
+        QueueSkip
+    }
+
     public readonly struct StackMergeRunModifiers
     {
         public StackMergeRunModifiers(
@@ -178,6 +185,11 @@ namespace StackMerge
             return false;
         }
 
+        public bool HasAvailableAction()
+        {
+            return HasLegalMove() || (queueSkipsRemaining > 0 && nextBlocks.Count > 0) || HasPickaxeTarget();
+        }
+
         public int[] GetLegalMoveIndices()
         {
             if (IsGameOver)
@@ -216,6 +228,11 @@ namespace StackMerge
                 return true;
             }
 
+            if (mirrorStackEnabled && stack[0] == next)
+            {
+                return true;
+            }
+
             return unstableSavesRemaining > 0;
         }
 
@@ -230,14 +247,17 @@ namespace StackMerge
 
             if (!CanPlace(stackIndex))
             {
-                IsGameOver = !HasLegalMove();
+                IsGameOver = !HasAvailableAction();
                 return MoveResult.Rejected(stackIndex, "Stack is full");
             }
 
             int placedValue = nextBlocks[0];
             List<int> stack = stacks[stackIndex];
+            int previousHeight = stack.Count;
+            bool nonMergePlacement = stack.Count > 0 && !CanMergeWithTop(placedValue, stack[^1]);
+            bool mirrorPlacement = mirrorStackEnabled && stack.Count > 0 && stack[0] == placedValue;
             bool usedUnstableSave = false;
-            if (stack.Count >= StackCapacity && stack.Count > 0 && !CanMergeWithTop(placedValue, stack[^1]) && unstableSavesRemaining > 0)
+            if (stack.Count >= StackCapacity && nonMergePlacement && !mirrorPlacement && unstableSavesRemaining > 0)
             {
                 stack.RemoveAt(0);
                 unstableSavesRemaining--;
@@ -254,12 +274,17 @@ namespace StackMerge
             int mergeCount = ResolveMerges(stack);
             TotalMerges += mergeCount;
             int resultingTop = stack.Count > 0 ? stack[^1] : blockValue;
+            if (!usedUnstableSave && nonMergePlacement && !mirrorPlacement && previousHeight >= StackCapacity - 1 && stack.Count >= StackCapacity && unstableSavesRemaining > 0)
+            {
+                stack.RemoveAt(0);
+                unstableSavesRemaining--;
+                usedUnstableSave = true;
+            }
 
             nextBlocks.RemoveAt(0);
             nextBlocks.Add(GenerateNextBlock());
 
-            StabilizeWithRunModifiers();
-            IsGameOver = !HasLegalMove();
+            IsGameOver = !HasAvailableAction();
 
             return new MoveResult(
                 accepted: true,
@@ -272,6 +297,81 @@ namespace StackMerge
                 isGameOver: IsGameOver,
                 reason: usedUnstableSave ? "Unstable stack saved the move" : string.Empty,
                 unstableSaveUsed: usedUnstableSave);
+        }
+
+        public bool CanUsePickaxe(int stackIndex, int blockIndex)
+        {
+            if (IsGameOver || pickaxeUsesRemaining <= 0 || stackIndex < 0 || stackIndex >= StackCount)
+            {
+                return false;
+            }
+
+            return blockIndex >= 0 && blockIndex < stacks[stackIndex].Count;
+        }
+
+        public MoveResult UsePickaxe(int stackIndex, int blockIndex)
+        {
+            ValidateStackIndex(stackIndex);
+            if (!CanUsePickaxe(stackIndex, blockIndex))
+            {
+                return MoveResult.Rejected(stackIndex, "Pickaxe unavailable");
+            }
+
+            List<int> stack = stacks[stackIndex];
+            int removedValue = stack[blockIndex];
+            stack.RemoveAt(blockIndex);
+            pickaxeUsesRemaining--;
+
+            int mergeCount = ResolveMerges(stack);
+            TotalMerges += mergeCount;
+            int resultingTop = stack.Count > 0 ? stack[^1] : 0;
+            IsGameOver = !HasAvailableAction();
+
+            return new MoveResult(
+                accepted: true,
+                stackIndex: stackIndex,
+                placedValue: 0,
+                resultingTopValue: resultingTop,
+                mergeCount: mergeCount,
+                score: Score,
+                highestBlock: HighestBlock,
+                isGameOver: IsGameOver,
+                reason: $"Pickaxe removed {removedValue}",
+                actionKind: SolverActionKind.Pickaxe,
+                blockIndex: blockIndex,
+                removedValue: removedValue);
+        }
+
+        public bool CanSkipNextBlock()
+        {
+            return !IsGameOver && queueSkipsRemaining > 0 && nextBlocks.Count > 0;
+        }
+
+        public MoveResult SkipNextBlock()
+        {
+            if (!CanSkipNextBlock())
+            {
+                return MoveResult.Rejected(-1, "Queue skip unavailable");
+            }
+
+            int skippedValue = nextBlocks[0];
+            queueSkipsRemaining--;
+            nextBlocks.RemoveAt(0);
+            nextBlocks.Add(GenerateNextBlock());
+            IsGameOver = !HasAvailableAction();
+
+            return new MoveResult(
+                accepted: true,
+                stackIndex: -1,
+                placedValue: 0,
+                resultingTopValue: 0,
+                mergeCount: 0,
+                score: Score,
+                highestBlock: HighestBlock,
+                isGameOver: IsGameOver,
+                reason: $"Skipped {skippedValue}",
+                actionKind: SolverActionKind.QueueSkip,
+                removedValue: skippedValue);
         }
 
         public StackMergeSnapshot CreateSnapshot()
@@ -326,7 +426,7 @@ namespace StackMerge
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
             HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
             RestoreModifierState(snapshot.Modifiers);
-            IsGameOver = snapshot.IsGameOver || !HasLegalMove();
+            IsGameOver = snapshot.IsGameOver || !HasAvailableAction();
         }
 
         public void RestoreSnapshotResized(StackMergeSnapshot snapshot)
@@ -366,7 +466,7 @@ namespace StackMerge
                 nextBlocks.Add(GenerateNextBlock());
             }
 
-            IsGameOver = snapshot.IsGameOver || !HasLegalMove();
+            IsGameOver = snapshot.IsGameOver || !HasAvailableAction();
         }
 
         public void SetNextBlocksForTesting(params int[] blocks)
@@ -379,7 +479,7 @@ namespace StackMerge
             nextBlocks.Clear();
             nextBlocks.AddRange(blocks);
             HighestBlock = Math.Max(HighestBlock, blocks.Where(block => block > 0).DefaultIfEmpty(1).Max());
-            IsGameOver = !HasLegalMove();
+            IsGameOver = !HasAvailableAction();
         }
 
         public void SetStacksForTesting(params int[][] newStacks)
@@ -402,7 +502,7 @@ namespace StackMerge
 
             int maxStackBlock = stacks.SelectMany(stack => stack).DefaultIfEmpty(2).Max();
             HighestBlock = Math.Max(HighestBlock, maxStackBlock);
-            IsGameOver = !HasLegalMove();
+            IsGameOver = !HasAvailableAction();
         }
 
         private void RestoreModifierState(StackMergeRunModifiers modifiers)
@@ -474,58 +574,14 @@ namespace StackMerge
             return mergeCount;
         }
 
-        private void StabilizeWithRunModifiers()
+        private bool HasPickaxeTarget()
         {
-            while (!HasLegalMove())
-            {
-                if (queueSkipsRemaining > 0)
-                {
-                    queueSkipsRemaining--;
-                    nextBlocks.RemoveAt(0);
-                    nextBlocks.Add(GenerateNextBlock());
-                    continue;
-                }
-
-                if (pickaxeUsesRemaining > 0 && RemoveBestPickaxeTarget())
-                {
-                    pickaxeUsesRemaining--;
-                    continue;
-                }
-
-                break;
-            }
-        }
-
-        private bool RemoveBestPickaxeTarget()
-        {
-            int bestStack = -1;
-            int bestIndex = -1;
-            int bestHeight = -1;
-            int bestValue = int.MaxValue;
-
-            for (int stackIndex = 0; stackIndex < stacks.Length; stackIndex++)
-            {
-                List<int> stack = stacks[stackIndex];
-                for (int blockIndex = 0; blockIndex < stack.Count; blockIndex++)
-                {
-                    int value = stack[blockIndex];
-                    if (stack.Count > bestHeight || (stack.Count == bestHeight && value < bestValue))
-                    {
-                        bestStack = stackIndex;
-                        bestIndex = blockIndex;
-                        bestHeight = stack.Count;
-                        bestValue = value;
-                    }
-                }
-            }
-
-            if (bestStack < 0)
+            if (pickaxeUsesRemaining <= 0)
             {
                 return false;
             }
 
-            stacks[bestStack].RemoveAt(bestIndex);
-            return true;
+            return stacks.Any(stack => stack.Count > 0);
         }
 
         private int GenerateNextBlock()
@@ -611,7 +667,10 @@ namespace StackMerge
             int highestBlock,
             bool isGameOver,
             string reason,
-            bool unstableSaveUsed = false)
+            bool unstableSaveUsed = false,
+            SolverActionKind actionKind = SolverActionKind.Place,
+            int blockIndex = -1,
+            int removedValue = 0)
         {
             Accepted = accepted;
             StackIndex = stackIndex;
@@ -623,6 +682,9 @@ namespace StackMerge
             IsGameOver = isGameOver;
             Reason = reason;
             UnstableSaveUsed = unstableSaveUsed;
+            ActionKind = actionKind;
+            BlockIndex = blockIndex;
+            RemovedValue = removedValue;
         }
 
         public bool Accepted { get; }
@@ -644,6 +706,12 @@ namespace StackMerge
         public string Reason { get; }
 
         public bool UnstableSaveUsed { get; }
+
+        public SolverActionKind ActionKind { get; }
+
+        public int BlockIndex { get; }
+
+        public int RemovedValue { get; }
 
         public static MoveResult Rejected(int stackIndex, string reason)
         {

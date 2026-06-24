@@ -201,11 +201,11 @@ namespace StackMerge
         public static readonly ModifierDefinition[] Modifiers =
         {
             new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run: if a full stack receives a non-merge block, its bottom block is removed without reducing score.", 650, 1300, 2600, 5200, 10400),
-            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Each level adds +20% chips from merge rewards. At level 5, merge chips are doubled.", 800, 1600, 3200, 6400, 12800),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Permanent unlock: merge rewards are doubled on every run after purchase.", 2400),
             new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 2400),
             new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 3600),
-            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Cuts emergency blocks from the board.", "Each level gives one automatic pickaxe use per run when there are no legal placements.", 1600, 3200, 6400, 12800, 25600),
-            new(ModifierId.QueueScrubber, "Queue Scrubber", "Deletes bad upcoming blocks.", "Each level gives one automatic queue skip per run when the next block would leave no legal move.", 1400, 2800, 5600, 11200, 22400)
+            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one solver-controlled pickaxe use per run. The solver may delete any block in any stack, including middle blocks, to open space or trigger merges.", 1600, 3200, 6400, 12800, 25600),
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1400, 2800, 5600, 11200, 22400)
         };
 
         public static readonly AchievementDefinition[] Achievements =
@@ -971,7 +971,7 @@ namespace StackMerge
             }
 
             double highestMultiplier = GetHighestBlockRewardMultiplier(Math.Max(result.HighestBlock, result.ResultingTopValue));
-            long placement = 2 + AgentFlatPlacementBonus;
+            long placement = result.ActionKind == SolverActionKind.Place ? 2 + AgentFlatPlacementBonus : 0;
             double merge = result.MergeCount <= 0
                 ? 0
                 : result.MergeCount * Math.Max(1, result.ResultingTopValue) * highestMultiplier * 0.55;
@@ -982,11 +982,19 @@ namespace StackMerge
             long gained = placement;
             gained += (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
             gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
-            gained = ApplyStageMultiplier(gained);
-            gained = ApplyIncomeMultiplier(gained);
-            data.chips += gained;
-            data.totalChipsEarned += gained;
-            data.totalBlocksDropped++;
+            if (gained > 0)
+            {
+                gained = ApplyStageMultiplier(gained);
+                gained = ApplyIncomeMultiplier(gained);
+                data.chips += gained;
+                data.totalChipsEarned += gained;
+            }
+
+            if (result.ActionKind == SolverActionKind.Place)
+            {
+                data.totalBlocksDropped++;
+            }
+
             data.totalMerges += Math.Max(0, result.MergeCount);
             data.highestBlockEver = Math.Max(data.highestBlockEver, result.HighestBlock);
             AwardMergeTokens(result.MergeCount);
@@ -1153,7 +1161,7 @@ namespace StackMerge
 
         private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? 4 : 0;
 
-        private double ModifierMergeMultiplier => 1.0 + GetModifierLevel(ModifierId.CatalystStack) * 0.20;
+        private double ModifierMergeMultiplier => GetModifierLevel(ModifierId.CatalystStack) > 0 ? 2.0 : 1.0;
 
         private long ApplyStageMultiplier(long amount)
         {

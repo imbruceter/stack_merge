@@ -232,12 +232,12 @@ namespace StackMerge.Editor
                 }
 
                 SolverDecision decision = solver.ChooseMove(state, context);
-                if (!decision.HasMove || !state.CanPlace(decision.StackIndex))
+                if (!SolverScoring.CanApplyDecision(state, decision))
                 {
                     break;
                 }
 
-                MoveResult result = state.PlaceNext(decision.StackIndex);
+                MoveResult result = SolverScoring.ApplyDecision(state, decision);
                 if (!result.Accepted)
                 {
                     break;

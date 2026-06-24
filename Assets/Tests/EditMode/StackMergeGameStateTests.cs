@@ -516,6 +516,30 @@ namespace StackMerge.Tests
             Assert.That(mirrored.MergeCount, Is.EqualTo(2));
             Assert.That(mirror.Stacks[0], Is.EqualTo(new[] { 16 }));
 
+            var fullMirror = new StackMergeGameState(stackCapacity: 2, modifiers: new StackMergeRunModifiers(0, true, false, 0, 0), seed: 24);
+            fullMirror.SetNextBlocksForTesting(2, 1, 1);
+            fullMirror.SetStacksForTesting(
+                new[] { 2, 4 },
+                new[] { 8, 16 },
+                new[] { 16, 32 },
+                new[] { 32, 64 });
+            Assert.That(fullMirror.CanPlace(0), Is.True);
+            MoveResult fullMirrorMerge = fullMirror.PlaceNext(0);
+            Assert.That(fullMirrorMerge.Accepted, Is.True);
+            Assert.That(fullMirrorMerge.MergeCount, Is.EqualTo(2));
+            Assert.That(fullMirror.Stacks[0], Is.EqualTo(new[] { 8 }));
+
+            var mirrorBeforeUnstable = new StackMergeGameState(stackCapacity: 2, modifiers: new StackMergeRunModifiers(1, true, false, 0, 0), seed: 25);
+            mirrorBeforeUnstable.SetNextBlocksForTesting(2, 1, 1);
+            mirrorBeforeUnstable.SetStacksForTesting(
+                new[] { 2, 4 },
+                new[] { 8, 16 },
+                new[] { 16, 32 },
+                new[] { 32, 64 });
+            MoveResult mirrorSaved = mirrorBeforeUnstable.PlaceNext(0);
+            Assert.That(mirrorSaved.UnstableSaveUsed, Is.False);
+            Assert.That(mirrorBeforeUnstable.UnstableSavesRemaining, Is.EqualTo(1));
+
             var joker = new StackMergeGameState(stackCapacity: 5, modifiers: new StackMergeRunModifiers(0, false, true, 0, 0), seed: 23);
             joker.SetNextBlocksForTesting(StackMergeGameState.JokerBlockValue, 1, 1);
             joker.SetStacksForTesting(
@@ -526,6 +550,37 @@ namespace StackMerge.Tests
             MoveResult jokerMerge = joker.PlaceNext(0);
             Assert.That(jokerMerge.MergeCount, Is.EqualTo(1));
             Assert.That(joker.Stacks[0], Is.EqualTo(new[] { 16 }));
+        }
+
+        [Test]
+        public void Modifiers_PickaxeAndQueueScrubberAreRunActions()
+        {
+            var pickaxe = new StackMergeGameState(stackCapacity: 5, modifiers: new StackMergeRunModifiers(0, false, false, 1, 0), seed: 31);
+            pickaxe.SetNextBlocksForTesting(8, 1, 1);
+            pickaxe.SetStacksForTesting(
+                new[] { 2, 4, 2 },
+                new int[] { },
+                new int[] { },
+                new int[] { });
+
+            Assert.That(pickaxe.CanUsePickaxe(0, 1), Is.True);
+            MoveResult pickaxeResult = pickaxe.UsePickaxe(0, 1);
+            Assert.That(pickaxeResult.Accepted, Is.True);
+            Assert.That(pickaxeResult.ActionKind, Is.EqualTo(SolverActionKind.Pickaxe));
+            Assert.That(pickaxeResult.MergeCount, Is.EqualTo(1));
+            Assert.That(pickaxe.PickaxeUsesRemaining, Is.EqualTo(0));
+            Assert.That(pickaxe.Stacks[0], Is.EqualTo(new[] { 4 }));
+
+            var scrubber = new StackMergeGameState(modifiers: new StackMergeRunModifiers(0, false, false, 0, 1), seed: 32);
+            scrubber.SetNextBlocksForTesting(8, 2, 1);
+
+            Assert.That(scrubber.CanSkipNextBlock(), Is.True);
+            MoveResult scrubResult = scrubber.SkipNextBlock();
+            Assert.That(scrubResult.Accepted, Is.True);
+            Assert.That(scrubResult.ActionKind, Is.EqualTo(SolverActionKind.QueueSkip));
+            Assert.That(scrubResult.RemovedValue, Is.EqualTo(8));
+            Assert.That(scrubber.QueueSkipsRemaining, Is.EqualTo(0));
+            Assert.That(scrubber.NextBlocks[0], Is.EqualTo(2));
         }
     }
 }

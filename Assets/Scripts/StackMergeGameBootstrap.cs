@@ -867,7 +867,7 @@ namespace StackMerge
 
             if (decision.HasMove)
             {
-                PlaceOnStack(decision.StackIndex, decision.Reason, true);
+                ApplySolverDecision(decision);
             }
         }
 
@@ -893,6 +893,37 @@ namespace StackMerge
                 return;
             }
 
+            HandleAcceptedMove(result, reason, autoSolverMove, wasGameOver);
+        }
+
+        private void ApplySolverDecision(SolverDecision decision)
+        {
+            if (gameState == null || progression == null)
+            {
+                return;
+            }
+
+            if (!SolverScoring.CanApplyDecision(gameState, decision))
+            {
+                SetText(feedbackText, decision.Reason);
+                RefreshEverything();
+                return;
+            }
+
+            bool wasGameOver = gameState.IsGameOver;
+            MoveResult result = SolverScoring.ApplyDecision(gameState, decision);
+            if (!result.Accepted)
+            {
+                SetText(feedbackText, result.Reason);
+                RefreshEverything();
+                return;
+            }
+
+            HandleAcceptedMove(result, decision.Reason, true, wasGameOver);
+        }
+
+        private void HandleAcceptedMove(MoveResult result, string reason, bool autoSolverMove, bool wasGameOver)
+        {
             long chipsGained = progression.AwardMove(result);
             if (autoSolverMove)
             {
@@ -921,9 +952,14 @@ namespace StackMerge
             UpdateHighScore();
 
             string chipText = runBonus > 0 ? $"+{chipsGained + runBonus} chips" : $"+{chipsGained} chips";
-            string moveText = result.MergeCount > 0
-                ? $"Merge x{result.MergeCount}: {FormatNumber(result.ResultingTopValue)}"
-                : $"+{FormatNumber(result.PlacedValue)}";
+            string moveText = result.ActionKind switch
+            {
+                SolverActionKind.Pickaxe => $"Pickaxe -{FormatNumber(result.RemovedValue)}",
+                SolverActionKind.QueueSkip => $"Scrubbed {FormatNumber(result.RemovedValue)}",
+                _ => result.MergeCount > 0
+                    ? $"Merge x{result.MergeCount}: {FormatNumber(result.ResultingTopValue)}"
+                    : $"+{FormatNumber(result.PlacedValue)}"
+            };
             string resultReason = string.IsNullOrWhiteSpace(result.Reason)
                 ? reason
                 : string.IsNullOrWhiteSpace(reason)
