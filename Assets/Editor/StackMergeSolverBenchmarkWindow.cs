@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using UnityEditor;
@@ -28,8 +29,13 @@ namespace StackMerge.Editor
         private int maxSecondsPerSolver = 30;
         private int seed = 12345;
         private bool mlBenchmarkTrainingMode = true;
+        private bool ppoEvaluationEnabled = true;
+        private int ppoEvaluationInterval = 100;
+        private int ppoEvaluationRuns = 3;
+        private int ppoLogEveryNthRun = 1;
         private Vector2 scroll;
         private string lastOutput = "No benchmark run yet.";
+        private string lastPpoDetailPath = string.Empty;
         private readonly List<MlBenchmarkRunLine> lastMlRunLines = new();
 
         [MenuItem("Tools/Stack Merge/Solver Benchmark")]
@@ -56,8 +62,9 @@ namespace StackMerge.Editor
                     selectedSolver = (SolverId)EditorGUILayout.EnumPopup("Solver", selectedSolver);
                 }
 
+                bool selectedPpo = !runAllSolvers && selectedSolver == SolverId.MachineLearning;
                 fastBenchmarkMode = EditorGUILayout.Toggle("Fast benchmark mode", fastBenchmarkMode);
-                runCount = EditorGUILayout.IntSlider("Runs", runCount, 1, 2000);
+                runCount = EditorGUILayout.IntSlider("Runs", runCount, 1, selectedPpo ? 100000 : 2000);
                 stackCapacity = EditorGUILayout.IntSlider("Stack capacity", stackCapacity, 2, StackMergeGameState.MaxStackCapacity);
                 queueLength = EditorGUILayout.IntSlider("Queue length", queueLength, 1, StackMergeGameState.DefaultQueueLength + 2);
                 difficultyLevel = EditorGUILayout.IntSlider("Difficulty", difficultyLevel, 0, 3);
@@ -95,12 +102,20 @@ namespace StackMerge.Editor
                     }
                 }
 
-                if (!runAllSolvers && selectedSolver == SolverId.MachineLearning)
+                if (selectedPpo)
                 {
                     EditorGUILayout.Space(4f);
                     EditorGUILayout.LabelField("PPO benchmark", EditorStyles.boldLabel);
                     mlBenchmarkTrainingMode = EditorGUILayout.Toggle("Training mode learning", mlBenchmarkTrainingMode);
-                    EditorGUILayout.HelpBox("When benchmarking only PPO, the output includes one line per run with policy/value loss, entropy, updates, reward, and progress.", MessageType.Info);
+                    ppoEvaluationEnabled = EditorGUILayout.Toggle("Greedy evaluation", ppoEvaluationEnabled);
+                    using (new EditorGUI.DisabledScope(!ppoEvaluationEnabled))
+                    {
+                        ppoEvaluationInterval = EditorGUILayout.IntSlider("Eval every N runs", ppoEvaluationInterval, 10, 5000);
+                        ppoEvaluationRuns = EditorGUILayout.IntSlider("Eval runs", ppoEvaluationRuns, 1, 50);
+                    }
+
+                    ppoLogEveryNthRun = EditorGUILayout.IntSlider("UI log every N runs", ppoLogEveryNthRun, 1, 1000);
+                    EditorGUILayout.HelpBox("PPO supports larger training runs. The full per-run log is written to a TSV file; the UI can show every Nth training row plus evaluation rows.", MessageType.Info);
                 }
 
                 EditorGUILayout.Space(4f);
@@ -113,7 +128,7 @@ namespace StackMerge.Editor
 
                 maxMovesPerRun = EditorGUILayout.IntSlider("Max moves per run", maxMovesPerRun, 100, 10000);
                 maxSecondsPerRun = EditorGUILayout.IntSlider("Max seconds per run", maxSecondsPerRun, 1, 60);
-                maxSecondsPerSolver = EditorGUILayout.IntSlider("Max seconds per solver", maxSecondsPerSolver, 5, 600);
+                maxSecondsPerSolver = EditorGUILayout.IntSlider("Max seconds per solver", maxSecondsPerSolver, 5, selectedPpo ? 36000 : 600);
                 seed = EditorGUILayout.IntField("Seed", seed);
 
                 EditorGUILayout.Space(8f);
@@ -133,6 +148,7 @@ namespace StackMerge.Editor
         {
             EnsureBenchmarkModifierArray();
             lastMlRunLines.Clear();
+            lastPpoDetailPath = string.Empty;
             SolverId[] solverIds = runAllSolvers
                 ? StackMergeSolverCatalog.Definitions.Select(definition => definition.Id).ToArray()
                 : new[] { selectedSolver };
@@ -195,6 +211,7 @@ namespace StackMerge.Editor
             StackMergePpoAgent ppoAgent = solverId == SolverId.MachineLearning
                 ? new StackMergePpoAgent(new StackMergePpoTrainingData(), seedRandom.Next())
                 : null;
+            StringBuilder ppoDetails = ppoAgent != null && !runAllSolvers ? CreatePpoDetailBuilder() : null;
 
             for (int i = 0; i < runCount; i++)
             {
@@ -217,18 +234,48 @@ namespace StackMerge.Editor
 
                 int runSeed = seedRandom.Next();
                 StackMergePpoMetrics ppoBefore = ppoAgent?.Metrics ?? default;
-                BenchmarkRunResult result = RunSingleGame(solver, runSeed, solverStopwatch, ppoAgent);
+                BenchmarkRunResult result = RunSingleGame(
+                    solver,
+                    runSeed,
+                    solverStopwatch,
+                    ppoAgent,
+                    mlBenchmarkTrainingMode,
+                    ppoAgent != null);
                 results.Add(result);
                 if (solverId == SolverId.MachineLearning)
                 {
                     StackMergePpoMetrics ppoAfter = ppoAgent?.Metrics ?? default;
+                    AppendPpoDetailLine(ppoDetails, "Train", i + 1, 0, ppoBefore, ppoAfter, result);
                     if (!runAllSolvers)
                     {
-                        lastMlRunLines.Add(new MlBenchmarkRunLine(
-                            i + 1,
-                            ppoBefore,
-                            ppoAfter,
-                            result));
+                        AddVisiblePpoLine("Train", i + 1, 0, ppoBefore, ppoAfter, result);
+                    }
+
+                    if (!runAllSolvers
+                        && ppoEvaluationEnabled
+                        && ppoEvaluationInterval > 0
+                        && (i + 1) % ppoEvaluationInterval == 0)
+                    {
+                        for (int evalIndex = 1; evalIndex <= ppoEvaluationRuns; evalIndex++)
+                        {
+                            if (solverStopwatch.Elapsed.TotalSeconds >= maxSecondsPerSolver)
+                            {
+                                solverTimedOut = true;
+                                break;
+                            }
+
+                            StackMergePpoMetrics evalBefore = ppoAgent?.Metrics ?? default;
+                            BenchmarkRunResult evalResult = RunSingleGame(
+                                solver,
+                                seedRandom.Next(),
+                                solverStopwatch,
+                                ppoAgent,
+                                ppoTrainingMode: false,
+                                ppoLearningEnabled: false);
+                            StackMergePpoMetrics evalAfter = ppoAgent?.Metrics ?? default;
+                            AppendPpoDetailLine(ppoDetails, "Eval", i + 1, evalIndex, evalBefore, evalAfter, evalResult);
+                            AddVisiblePpoLine("Eval", i + 1, evalIndex, evalBefore, evalAfter, evalResult);
+                        }
                     }
                 }
 
@@ -239,11 +286,22 @@ namespace StackMerge.Editor
                 }
             }
 
+            if (ppoDetails != null)
+            {
+                lastPpoDetailPath = WritePpoDetailFile(ppoDetails);
+            }
+
             solverStopwatch.Stop();
             return BenchmarkSummary.Create(solverId, results, solverStopwatch.Elapsed, solverTimedOut, canceled, runCount);
         }
 
-        private BenchmarkRunResult RunSingleGame(IStackMergeSolver solver, int runSeed, Stopwatch solverStopwatch, StackMergePpoAgent ppoAgent = null)
+        private BenchmarkRunResult RunSingleGame(
+            IStackMergeSolver solver,
+            int runSeed,
+            Stopwatch solverStopwatch,
+            StackMergePpoAgent ppoAgent = null,
+            bool ppoTrainingMode = false,
+            bool ppoLearningEnabled = false)
         {
             var state = new StackMergeGameState(
                 stackCapacity: stackCapacity,
@@ -261,7 +319,7 @@ namespace StackMerge.Editor
                 BuildBenchmarkTuning(solver.Id),
                 IsBenchmarkModifierActive(ModifierId.NeuralAccelerator),
                 ppoAgent,
-                mlBenchmarkTrainingMode);
+                ppoTrainingMode);
 
             Stopwatch runStopwatch = Stopwatch.StartNew();
             int moves = 0;
@@ -294,17 +352,17 @@ namespace StackMerge.Editor
                     break;
                 }
 
-                if (solver.Id == SolverId.MachineLearning)
+                if (solver.Id == SolverId.MachineLearning && ppoLearningEnabled)
                 {
-                    ppoAgent?.Observe(result, state, mlBenchmarkTrainingMode);
+                    ppoAgent?.Observe(result, state, ppoTrainingMode);
                 }
 
                 moves++;
             }
 
-            if (solver.Id == SolverId.MachineLearning)
+            if (solver.Id == SolverId.MachineLearning && ppoLearningEnabled)
             {
-                ppoAgent?.ForceUpdate(mlBenchmarkTrainingMode);
+                ppoAgent?.ForceUpdate(ppoTrainingMode);
             }
 
             runStopwatch.Stop();
@@ -354,15 +412,20 @@ namespace StackMerge.Editor
             if (!runAllSolvers && selectedSolver == SolverId.MachineLearning && lastMlRunLines.Count > 0)
             {
                 builder.AppendLine();
+                if (!string.IsNullOrWhiteSpace(lastPpoDetailPath))
+                {
+                    builder.AppendLine($"Full PPO TSV: {lastPpoDetailPath}");
+                }
+
                 builder.AppendLine("PPO Learning Runs");
-                builder.AppendLine("Run\tUpdatesBefore\tUpdatesAfter\tProgressBefore\tProgressAfter\tAvgReward\tPolicyLoss\tValueLoss\tEntropy\tScore\tMoves\tMerges\tHigh\tEnded\tTimed\tMoveCap\tSecs");
+                builder.AppendLine("Phase\tRun\tEval\tUpdatesBefore\tUpdatesAfter\tProgressBefore\tProgressAfter\tAvgScore\tAvgMoves\tAvgMerges\tAvgHigh\tAvgReward\tPolicyLoss\tValueLoss\tEntropy\tScore\tMoves\tMerges\tHigh\tEnded\tTimed\tMoveCap\tSecs");
                 foreach (MlBenchmarkRunLine line in lastMlRunLines)
                 {
                     BenchmarkRunResult result = line.Result;
                     StackMergePpoMetrics before = line.Before;
                     StackMergePpoMetrics after = line.After;
                     builder.AppendLine(
-                        $"{line.RunIndex}\t{before.Updates}\t{after.Updates}\t{before.Progress * 100f:0.0}%\t{after.Progress * 100f:0.0}%\t{after.RecentAverageReward:0.000}\t{after.LastPolicyLoss:0.000}\t{after.LastValueLoss:0.000}\t{after.LastEntropy:0.000}\t{result.Score}\t{result.Moves}\t{result.Merges}\t{result.HighestMergedBlock}\t{(result.GameOver ? "Y" : "N")}\t{(result.RunTimedOut || result.SolverTimedOut ? "Y" : "N")}\t{(result.HitMoveCap ? "Y" : "N")}\t{result.ElapsedSeconds:0.000}");
+                        $"{line.Phase}\t{line.RunIndex}\t{line.EvalIndex}\t{before.Updates}\t{after.Updates}\t{before.Progress * 100f:0.0}%\t{after.Progress * 100f:0.0}%\t{after.RecentAverageScore:0.0}\t{after.RecentAverageMoves:0.0}\t{after.RecentAverageMerges:0.0}\t{after.RecentAverageHigh:0.0}\t{after.RecentAverageReward:0.000}\t{after.LastPolicyLoss:0.000}\t{after.LastValueLoss:0.000}\t{after.LastEntropy:0.000}\t{result.Score}\t{result.Moves}\t{result.Merges}\t{result.HighestMergedBlock}\t{(result.GameOver ? "Y" : "N")}\t{(result.RunTimedOut || result.SolverTimedOut ? "Y" : "N")}\t{(result.HitMoveCap ? "Y" : "N")}\t{result.ElapsedSeconds:0.000}");
                 }
             }
 
@@ -414,6 +477,62 @@ namespace StackMerge.Editor
             return string.Join(", ", StackMergeProgression.Modifiers.Select((modifier, index) => $"{modifier.DisplayName} L{benchmarkModifierLevels[index]}"));
         }
 
+        private StringBuilder CreatePpoDetailBuilder()
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine("Phase\tRun\tEval\tUpdatesBefore\tUpdatesAfter\tProgressBefore\tProgressAfter\tAvgScore\tAvgMoves\tAvgMerges\tAvgHigh\tAvgReward\tPolicyLoss\tValueLoss\tEntropy\tScore\tMoves\tMerges\tHigh\tEnded\tTimed\tMoveCap\tSecs");
+            return builder;
+        }
+
+        private void AppendPpoDetailLine(
+            StringBuilder builder,
+            string phase,
+            int runIndex,
+            int evalIndex,
+            StackMergePpoMetrics before,
+            StackMergePpoMetrics after,
+            BenchmarkRunResult result)
+        {
+            if (builder == null)
+            {
+                return;
+            }
+
+            builder.AppendLine(
+                $"{phase}\t{runIndex}\t{evalIndex}\t{before.Updates}\t{after.Updates}\t{before.Progress * 100f:0.0}%\t{after.Progress * 100f:0.0}%\t{after.RecentAverageScore:0.0}\t{after.RecentAverageMoves:0.0}\t{after.RecentAverageMerges:0.0}\t{after.RecentAverageHigh:0.0}\t{after.RecentAverageReward:0.000}\t{after.LastPolicyLoss:0.000}\t{after.LastValueLoss:0.000}\t{after.LastEntropy:0.000}\t{result.Score}\t{result.Moves}\t{result.Merges}\t{result.HighestMergedBlock}\t{(result.GameOver ? "Y" : "N")}\t{(result.RunTimedOut || result.SolverTimedOut ? "Y" : "N")}\t{(result.HitMoveCap ? "Y" : "N")}\t{result.ElapsedSeconds:0.000}");
+        }
+
+        private void AddVisiblePpoLine(
+            string phase,
+            int runIndex,
+            int evalIndex,
+            StackMergePpoMetrics before,
+            StackMergePpoMetrics after,
+            BenchmarkRunResult result)
+        {
+            if (phase != "Train" || runIndex == 1 || runIndex == runCount || runIndex % Math.Max(1, ppoLogEveryNthRun) == 0)
+            {
+                lastMlRunLines.Add(new MlBenchmarkRunLine(phase, runIndex, evalIndex, before, after, result));
+            }
+        }
+
+        private static string WritePpoDetailFile(StringBuilder builder)
+        {
+            try
+            {
+                string folder = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "BenchmarkResults"));
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, $"ppo_benchmark_{DateTime.Now:yyyyMMdd_HHmmss}.tsv");
+                File.WriteAllText(path, builder.ToString(), Encoding.UTF8);
+                return path;
+            }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogWarning($"Could not write PPO benchmark TSV: {exception.Message}");
+                return string.Empty;
+            }
+        }
+
         private readonly struct BenchmarkRunResult
         {
             public BenchmarkRunResult(
@@ -459,15 +578,21 @@ namespace StackMerge.Editor
 
         private readonly struct MlBenchmarkRunLine
         {
-            public MlBenchmarkRunLine(int runIndex, StackMergePpoMetrics before, StackMergePpoMetrics after, BenchmarkRunResult result)
+            public MlBenchmarkRunLine(string phase, int runIndex, int evalIndex, StackMergePpoMetrics before, StackMergePpoMetrics after, BenchmarkRunResult result)
             {
+                Phase = phase;
                 RunIndex = runIndex;
+                EvalIndex = evalIndex;
                 Before = before;
                 After = after;
                 Result = result;
             }
 
+            public string Phase { get; }
+
             public int RunIndex { get; }
+
+            public int EvalIndex { get; }
 
             public StackMergePpoMetrics Before { get; }
 
