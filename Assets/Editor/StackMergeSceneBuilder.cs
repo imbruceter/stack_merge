@@ -347,7 +347,7 @@ namespace StackMerge.Editor
             camera.orthographic = true;
             camera.orthographicSize = 5f;
             camera.clearFlags = CameraClearFlags.SolidColor;
-            camera.backgroundColor = HexColor("#111827");
+            camera.backgroundColor = HexColor("#0B1220");
             camera.transform.position = new Vector3(0f, 0f, -10f);
             return camera;
         }
@@ -397,12 +397,12 @@ namespace StackMerge.Editor
         {
             RectTransform background = CreateRect("Background", parent);
             Stretch(background);
-            background.gameObject.AddComponent<Image>().color = HexColor("#111827");
+            background.gameObject.AddComponent<Image>().color = HexColor("#0B1220");
         }
 
         private static void BuildHeader(RectTransform parent)
         {
-            RectTransform header = CreatePanel("Header", parent, HexColor("#0F172A"));
+            RectTransform header = CreatePanel("Header", parent, HexColor("#0B1322"));
             SetTopStretch(header, 40f, 24f, 40f, 82f);
 
             TMP_Text title = CreateText("Stack Merge", header, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
@@ -500,7 +500,7 @@ namespace StackMerge.Editor
 
         private static TMP_Text CreateStatBox(RectTransform parent, string name, string label, string value, Color accent, int column, int columns = 3)
         {
-            RectTransform box = CreatePanel(name, parent, HexColor("#1F2937"));
+            RectTransform box = CreatePanel(name, parent, HexColor("#18212F"));
             SetGridCell(box, column, columns, 0, 1, 12f);
 
             TMP_Text labelText = CreateText(label, box, 16, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#9CA3AF"));
@@ -524,7 +524,7 @@ namespace StackMerge.Editor
             out TMP_Text runStatusText,
             out TMP_Text agentSlotsText)
         {
-            RectTransform status = CreatePanel("Status Bar", parent, HexColor("#172033"));
+            RectTransform status = CreatePanel("Status Bar", parent, HexColor("#141C2B"));
             SetTopStretch(status, 0f, 104f, 0f, 96f);
 
             RectTransform topRow = CreateRect("Economy Status", status);
@@ -545,7 +545,7 @@ namespace StackMerge.Editor
 
         private static TMP_Text CreateStatusPill(RectTransform parent, string name, string value, Color color, int column, int columns)
         {
-            RectTransform pill = CreatePanel(name, parent, HexColor("#111827", 0.72f));
+            RectTransform pill = CreatePanel(name, parent, HexColor("#0B1220", 0.72f));
             SetGridCell(pill, column, columns, 0, 1, 8f);
 
             TMP_Text text = CreateText(value, pill, 18, FontStyles.Bold, TextAlignmentOptions.Center, color);
@@ -558,7 +558,7 @@ namespace StackMerge.Editor
 
         private static RectTransform BuildNextBlocks(RectTransform parent)
         {
-            RectTransform panel = CreatePanel("Next Blocks Panel", parent, HexColor("#1F2937"));
+            RectTransform panel = CreatePanel("Next Blocks Panel", parent, HexColor("#18212F"));
             SetTopStretch(panel, 0f, 214f, 0f, 132f);
 
             TMP_Text title = CreateText("Kovetkezo", panel, 22, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
@@ -588,18 +588,18 @@ namespace StackMerge.Editor
 
             for (int i = 0; i < StackMergeGameState.DefaultStackCount; i++)
             {
-                RectTransform column = CreatePanel($"Stack {i + 1}", board, HexColor("#182033"));
+                RectTransform column = CreatePanel($"Stack {i + 1}", board, HexColor("#141C2B"));
                 SetGridCell(column, i, StackMergeGameState.DefaultStackCount, 0, 1, 18f);
 
                 Button button = column.gameObject.AddComponent<Button>();
                 button.targetGraphic = column.GetComponent<Image>();
-                button.colors = ButtonColors(HexColor("#253046"), HexColor("#31415D"), HexColor("#111827"));
+                button.colors = ButtonColors(HexColor("#253046"), HexColor("#31415D"), HexColor("#0B1220"));
                 stackButtons[i] = button;
 
                 RectTransform fill = CreateRect("Column Fill", column);
                 SetStretch(fill, 10f, 10f, 10f, 10f);
                 Image fillImage = fill.gameObject.AddComponent<Image>();
-                fillImage.color = HexColor("#0F172A", 0.52f);
+                fillImage.color = HexColor("#0B1322", 0.52f);
                 fill.gameObject.AddComponent<RectMask2D>();
                 stackLayers[i] = fill;
             }
@@ -610,7 +610,7 @@ namespace StackMerge.Editor
             RectTransform footer = CreateRect("Footer", parent);
             SetBottomStretch(footer, 0f, 8f, 0f, 80f);
 
-            RectTransform infoPanel = CreatePanel("Run Info", footer, HexColor("#1F2937"));
+            RectTransform infoPanel = CreatePanel("Run Info", footer, HexColor("#18212F"));
             SetStretch(infoPanel, 0f, 0f, 660f, 0f);
 
             droppedText = CreateText("Dobasok: 0", infoPanel, 22, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#D1D5DB"));
@@ -643,7 +643,7 @@ namespace StackMerge.Editor
             RectTransform overlay = CreatePanel("Gameplay Info Overlay", parent, HexColor("#020617", 0.74f));
             Stretch(overlay);
 
-            RectTransform modal = CreatePanel("Gameplay Info Modal", overlay, HexColor("#1F2937"));
+            RectTransform modal = CreatePanel("Gameplay Info Modal", overlay, HexColor("#18212F"));
             SetCenter(modal, 760f, 560f);
 
             TMP_Text title = CreateText("Run Info", modal, 34, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
@@ -773,7 +773,7 @@ namespace StackMerge.Editor
             out Button backButton,
             out Button resetButton)
         {
-            RectTransform panel = CreatePanel("Solver Tune Panel", parent, HexColor("#111827"));
+            RectTransform panel = CreatePanel("Solver Tune Panel", parent, HexColor("#0B1220"));
             Stretch(panel);
 
             titleText = CreateText("HEUR tuning", panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
@@ -820,7 +820,7 @@ namespace StackMerge.Editor
             TMP_Text[] descriptionTexts,
             Slider[] sliders)
         {
-            RectTransform row = CreatePanel($"Tune Parameter {rowIndex + 1}", parent, rowIndex % 2 == 0 ? HexColor("#172033") : HexColor("#111827", 0.86f));
+            RectTransform row = CreatePanel($"Tune Parameter {rowIndex + 1}", parent, rowIndex % 2 == 0 ? HexColor("#141C2B") : HexColor("#0B1220", 0.86f));
             SetTopStretch(row, 0f, rowIndex * 106f, 0f, 92f);
 
             TMP_Text nameText = CreateText("Parameter", row, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
@@ -1042,7 +1042,7 @@ namespace StackMerge.Editor
             chartRoot = CreateRect("History Chart", chart);
             Stretch(chartRoot);
             Image chartBackground = chartRoot.gameObject.AddComponent<Image>();
-            chartBackground.color = HexColor("#111827", 0.58f);
+            chartBackground.color = HexColor("#0B1220", 0.58f);
 
             RectTransform recent = CreateCategoryPanel(panel, "Recent Runs", 830f, 276f);
             recentRunsRoot = CreateRect("Recent Runs Table", recent);
@@ -1091,7 +1091,7 @@ namespace StackMerge.Editor
             agentSlotTexts = new TMP_Text[3];
             for (int i = 0; i < agentSlotTexts.Length; i++)
             {
-                RectTransform slot = CreatePanel($"Agent Slot {i + 1}", slots, HexColor("#172033"));
+                RectTransform slot = CreatePanel($"Agent Slot {i + 1}", slots, HexColor("#141C2B"));
                 SetGridCell(slot, i, 3, 0, 1, 12f);
 
                 TMP_Text slotText = CreateText(i == 2 ? "Bonus slot\nNeeds upgrade" : $"Slot {i + 1}\nEmpty", slot, 18, FontStyles.Bold, TextAlignmentOptions.Center, i == 2 ? HexColor("#64748B") : HexColor("#CBD5E1"));
@@ -1142,7 +1142,7 @@ namespace StackMerge.Editor
         {
             BuildMenuHeader(panel, "Settings", out chipsText);
 
-            RectTransform placeholderPanel = CreatePanel("Settings Placeholder", panel, HexColor("#1F2937"));
+            RectTransform placeholderPanel = CreatePanel("Settings Placeholder", panel, HexColor("#18212F"));
             SetTopStretch(placeholderPanel, 0f, 138f, 0f, 260f);
 
             TMP_Text placeholder = CreateText("Placeholder\n\nSound, animation, number format, save reset, and accessibility options can live here later.", placeholderPanel, 26, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#E5E7EB"));
@@ -1154,7 +1154,7 @@ namespace StackMerge.Editor
 
         private static RectTransform CreateCategoryPanel(RectTransform parent, string titleText, float top, float height)
         {
-            RectTransform panel = CreatePanel($"{titleText} Category", parent, HexColor("#1F2937"));
+            RectTransform panel = CreatePanel($"{titleText} Category", parent, HexColor("#18212F"));
             SetTopStretch(panel, 0f, top, 0f, height);
 
             TMP_Text title = CreateText(titleText, panel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
@@ -1176,7 +1176,7 @@ namespace StackMerge.Editor
             title.fontSizeMin = 20;
             title.fontSizeMax = 38;
 
-            RectTransform wallet = CreatePanel("Wallet", panel, HexColor("#172033"));
+            RectTransform wallet = CreatePanel("Wallet", panel, HexColor("#141C2B"));
             SetTopRight(wallet, 0f, 0f, 340f, 58f);
 
             chipsText = CreateText("Chips: 0", wallet, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDE68A"));
@@ -1188,14 +1188,14 @@ namespace StackMerge.Editor
 
         private static Button[] BuildBottomTabs(RectTransform parent)
         {
-            RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0F172A"));
+            RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0B1322"));
             SetBottomStretch(tabs, 40f, 24f, 40f, 86f);
 
             string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Settings" };
             Button[] buttons = new Button[labels.Length];
             for (int i = 0; i < labels.Length; i++)
             {
-                buttons[i] = CreateButton(tabs, labels[i], i == 0 ? HexColor("#1D4ED8") : HexColor("#1F2937"), 18);
+                buttons[i] = CreateButton(tabs, labels[i], i == 0 ? HexColor("#1D4ED8") : HexColor("#18212F"), 18);
                 SetGridCell(buttons[i].GetComponent<RectTransform>(), i, labels.Length, 0, 1, 8f);
             }
 
@@ -1209,7 +1209,7 @@ namespace StackMerge.Editor
             Image scrim = overlay.gameObject.AddComponent<Image>();
             scrim.color = HexColor("#030712", 0.78f);
 
-            RectTransform modal = CreatePanel("Game Over Modal", overlay, HexColor("#1F2937"));
+            RectTransform modal = CreatePanel("Game Over Modal", overlay, HexColor("#18212F"));
             SetCenter(modal, 720f, 440f);
 
             TMP_Text title = CreateText("Jatek vege", modal, 54, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#F9FAFB"));
@@ -1241,7 +1241,7 @@ namespace StackMerge.Editor
             blockTemplate.sizeDelta = new Vector2(144f, 78f);
             blockTemplate.gameObject.AddComponent<Image>().color = HexColor("#5EEAD4");
 
-            TMP_Text value = CreateText("4", blockTemplate, 34, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#111827"));
+            TMP_Text value = CreateText("4", blockTemplate, 34, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#0B1220"));
             SetStretch(value.rectTransform, 6f, 4f, 6f, 4f);
             value.enableAutoSizing = true;
             value.fontSizeMin = 12;
@@ -1301,7 +1301,7 @@ namespace StackMerge.Editor
             slider.wholeNumbers = true;
             slider.value = 0;
 
-            RectTransform background = CreatePanel("Background", root, HexColor("#0F172A"));
+            RectTransform background = CreatePanel("Background", root, HexColor("#0B1322"));
             SetStretch(background, 0f, 7f, 0f, 7f);
 
             RectTransform fillArea = CreateRect("Fill Area", root);

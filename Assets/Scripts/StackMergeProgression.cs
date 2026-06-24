@@ -426,11 +426,49 @@ namespace StackMerge
             }
         }
 
+        private bool saveDirty;
+
+        /// <summary>
+        /// True when in-memory state has changed since the last disk write.
+        /// </summary>
+        public bool HasUnsavedChanges => saveDirty;
+
+        /// <summary>
+        /// Marks the progression as dirty. The actual disk write is deferred and
+        /// throttled by the caller (see <see cref="FlushIfDirty"/>). Serializing the
+        /// full state — which includes the PPO network weights — on every single move
+        /// was the dominant per-move cost and tanked the frame rate, so the hot path
+        /// must never touch the disk directly.
+        /// </summary>
         public void Save()
+        {
+            saveDirty = true;
+        }
+
+        /// <summary>
+        /// Immediately serializes and flushes the progression to PlayerPrefs.
+        /// Use sparingly (quit, pause, periodic autosave) — not in the per-move loop.
+        /// </summary>
+        public void SaveImmediate()
         {
             data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
             PlayerPrefs.SetString(PlayerPrefsKey, JsonUtility.ToJson(data));
             PlayerPrefs.Save();
+            saveDirty = false;
+        }
+
+        /// <summary>
+        /// Writes pending changes to disk if any exist. Returns true when a write happened.
+        /// </summary>
+        public bool FlushIfDirty()
+        {
+            if (!saveDirty)
+            {
+                return false;
+            }
+
+            SaveImmediate();
+            return true;
         }
 
         public bool IsSolverUnlocked(SolverId solverId)

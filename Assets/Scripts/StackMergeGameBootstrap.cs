@@ -123,6 +123,10 @@ namespace StackMerge
         private long highScore;
         private float autoSolveTimer;
         private float autoRestartTimer;
+        private float saveFlushTimer;
+        private const float SaveFlushInterval = 4f;
+        private int lastRenderedCapacity = -1;
+        private bool boardLayoutDirty = true;
         private int lastScreenWidth;
         private int lastScreenHeight;
         private int selectedTabIndex;
@@ -161,6 +165,7 @@ namespace StackMerge
             {
                 lastScreenWidth = Screen.width;
                 lastScreenHeight = Screen.height;
+                boardLayoutDirty = true;
                 RefreshColumns();
             }
 
@@ -169,6 +174,36 @@ namespace StackMerge
             {
                 currentRunElapsed += Time.deltaTime;
             }
+
+            // Persistence is throttled: the per-move path only marks the progression
+            // dirty, and we flush it to disk at most a few times per second-of-play here.
+            if (progression != null && progression.HasUnsavedChanges)
+            {
+                saveFlushTimer += Time.deltaTime;
+                if (saveFlushTimer >= SaveFlushInterval)
+                {
+                    saveFlushTimer = 0f;
+                    progression.FlushIfDirty();
+                }
+            }
+        }
+
+        private void OnApplicationPause(bool pauseStatus)
+        {
+            if (pauseStatus)
+            {
+                progression?.FlushIfDirty();
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            progression?.FlushIfDirty();
+        }
+
+        private void OnDisable()
+        {
+            progression?.FlushIfDirty();
         }
 
         public void ConfigureSceneReferences(
@@ -870,6 +905,10 @@ namespace StackMerge
                     solverRandom,
                     progression.MonteCarloSimulationCount,
                     progression.MonteCarloRolloutDepth,
+                    // Real-time play uses the lightweight solver path so the two compute-heavy
+                    // solvers (MOCA+, MCTS) stay at a smooth frame rate. The benchmark window runs
+                    // the full-strength path, so measured strength is unaffected.
+                    lightweightMode: true,
                     tuning: progression.SolverTuningUnlocked
                         ? progression.GetSolverTuning(progression.SelectedSolver)
                         : SolverTuningSettings.Neutral(progression.SelectedSolver),
@@ -1000,7 +1039,17 @@ namespace StackMerge
                 : string.Empty;
             SetText(feedbackText, $"{moveText} | {chipText}{learningText} | {resultReason}");
 
-            RefreshEverything();
+            // Per-move: only refresh the cheap game view. When a run actually ends, do a
+            // single full refresh so the history / achievements / upgrade panels pick up the
+            // run-completion rewards (this happens once per run, not once per move).
+            if (!wasGameOver && result.IsGameOver)
+            {
+                RefreshEverything();
+            }
+            else
+            {
+                RefreshGameView();
+            }
         }
 
         public void StartNewGame()
@@ -1369,6 +1418,19 @@ namespace StackMerge
 
         private void RefreshEverything()
         {
+            RefreshGameView();
+            RefreshProgressionUi();
+        }
+
+        /// <summary>
+        /// Cheap per-move refresh: only the board, the queue, the game-over overlay and the
+        /// text-only HUD. The heavy panels (solver/agent/modifier/upgrade buttons, history
+        /// charts, achievement lists) are NOT rebuilt here — they only change on user actions
+        /// and are refreshed by <see cref="RefreshProgressionUi"/>. Rebuilding everything on
+        /// every solver move was a major frame-rate sink.
+        /// </summary>
+        private void RefreshGameView()
+        {
             if (gameState == null)
             {
                 return;
@@ -1380,10 +1442,10 @@ namespace StackMerge
             RefreshNextBlocks();
             RefreshColumns();
             RefreshGameOver();
-            RefreshProgressionUi();
+            RefreshHud();
         }
 
-        private void RefreshProgressionUi()
+        private void RefreshHud()
         {
             if (progression == null)
             {
@@ -1414,6 +1476,16 @@ namespace StackMerge
             {
                 feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#5EEAD4");
             }
+        }
+
+        private void RefreshProgressionUi()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            RefreshHud();
 
             RefreshSolverButtons();
             RefreshSolverDetails();
@@ -2459,8 +2531,6 @@ namespace StackMerge
                 return;
             }
 
-            ClearChildren(nextBlocksRoot);
-
             int blockCount = gameState.NextBlocks.Count;
             float spacing = 16f;
             float availableWidth = Mathf.Max(360f, nextBlocksRoot.rect.width);
@@ -2468,24 +2538,50 @@ namespace StackMerge
             float blockHeight = blockWidth >= 132f ? 78f : 70f;
             int fontSize = Mathf.RoundToInt(blockHeight * 0.44f);
 
-            for (int i = 0; i < gameState.NextBlocks.Count; i++)
+            for (int i = 0; i < blockCount; i++)
             {
-                RectTransform block = CreateBlock(nextBlocksRoot, gameState.NextBlocks[i], blockWidth, blockHeight, fontSize);
+                RectTransform block = i < nextBlocksRoot.childCount
+                    ? (RectTransform)nextBlocksRoot.GetChild(i)
+                    : CreateBlockInstance(nextBlocksRoot);
+                ConfigureBlock(block, gameState.NextBlocks[i], blockWidth, blockHeight, fontSize);
                 LayoutElement layout = EnsureComponent<LayoutElement>(block.gameObject);
                 layout.preferredWidth = blockWidth;
                 layout.preferredHeight = blockHeight;
+            }
+
+            for (int i = nextBlocksRoot.childCount - 1; i >= blockCount; i--)
+            {
+                GameObject extra = nextBlocksRoot.GetChild(i).gameObject;
+                if (extra.activeSelf)
+                {
+                    extra.SetActive(false);
+                }
             }
         }
 
         private void RefreshColumns()
         {
-            if (stackBlockLayers == null || stackButtons == null)
+            if (stackBlockLayers == null || stackButtons == null || gameState == null)
             {
                 return;
             }
 
-            ResizeBoardToCapacity();
-            Canvas.ForceUpdateCanvases();
+            int capacity = gameState.StackCapacity;
+            if (capacity != lastRenderedCapacity)
+            {
+                lastRenderedCapacity = capacity;
+                boardLayoutDirty = true;
+            }
+
+            // Canvas.ForceUpdateCanvases() is expensive; only run it (and re-anchor the board)
+            // when the layout actually changed (capacity upgrade or screen resize), not on
+            // every move. Between layout changes, layer.rect already holds valid dimensions.
+            if (boardLayoutDirty)
+            {
+                ResizeBoardToCapacity();
+                Canvas.ForceUpdateCanvases();
+                boardLayoutDirty = false;
+            }
 
             for (int stackIndex = 0; stackIndex < stackBlockLayers.Length; stackIndex++)
             {
@@ -2495,23 +2591,38 @@ namespace StackMerge
                     continue;
                 }
 
-                ClearChildren(layer);
-
                 float layerWidth = Mathf.Max(128f, layer.rect.width);
                 float layerHeight = Mathf.Max(420f, layer.rect.height);
                 float padding = 12f;
                 float spacing = 7f;
-                float blockHeight = Mathf.Min(74f, (layerHeight - padding * 2f - spacing * (gameState.StackCapacity - 1)) / gameState.StackCapacity);
+                float blockHeight = Mathf.Min(74f, (layerHeight - padding * 2f - spacing * (capacity - 1)) / capacity);
                 float blockWidth = Mathf.Max(110f, layerWidth - padding * 2f);
+                int fontSize = Mathf.RoundToInt(blockHeight * 0.44f);
 
-                IReadOnlyList<int> stack = gameState.Stacks[stackIndex];
-                for (int i = 0; i < stack.Count; i++)
+                IReadOnlyList<int> stack = stackIndex < gameState.StackCount ? gameState.Stacks[stackIndex] : Array.Empty<int>();
+                int count = stack.Count;
+
+                // Pool block objects: reuse the layer's existing children instead of
+                // destroying and re-instantiating every block on every move.
+                for (int i = 0; i < count; i++)
                 {
-                    RectTransform block = CreateBlock(layer, stack[i], blockWidth, blockHeight, Mathf.RoundToInt(blockHeight * 0.44f));
+                    RectTransform block = i < layer.childCount
+                        ? (RectTransform)layer.GetChild(i)
+                        : CreateBlockInstance(layer);
+                    ConfigureBlock(block, stack[i], blockWidth, blockHeight, fontSize);
                     block.anchorMin = new Vector2(0.5f, 0f);
                     block.anchorMax = new Vector2(0.5f, 0f);
                     block.pivot = new Vector2(0.5f, 0f);
                     block.anchoredPosition = new Vector2(0f, padding + i * (blockHeight + spacing));
+                }
+
+                for (int i = layer.childCount - 1; i >= count; i--)
+                {
+                    GameObject extra = layer.GetChild(i).gameObject;
+                    if (extra.activeSelf)
+                    {
+                        extra.SetActive(false);
+                    }
                 }
 
                 if (stackIndex < stackButtons.Length && stackButtons[stackIndex] != null)
@@ -2568,13 +2679,20 @@ namespace StackMerge
                 : "Run ended");
         }
 
-        private RectTransform CreateBlock(Transform parent, int value, float width, float height, int fontSize)
+        private RectTransform CreateBlockInstance(Transform parent)
         {
-            RectTransform block = blockTemplate != null
+            return blockTemplate != null
                 ? Instantiate(blockTemplate, parent)
                 : CreateFallbackBlock(parent);
+        }
 
-            block.gameObject.SetActive(true);
+        private void ConfigureBlock(RectTransform block, int value, float width, float height, int fontSize)
+        {
+            if (!block.gameObject.activeSelf)
+            {
+                block.gameObject.SetActive(true);
+            }
+
             block.name = $"Block {value}";
             block.sizeDelta = new Vector2(width, height);
 
@@ -2600,8 +2718,6 @@ namespace StackMerge
                 text.fontSizeMin = 12;
                 text.fontSizeMax = Mathf.Max(14, fontSize);
             }
-
-            return block;
         }
 
         private static RectTransform CreateFallbackBlock(Transform parent)
@@ -2797,25 +2913,43 @@ namespace StackMerge
             return color;
         }
 
+        // Modern, cohesive tile ramp keyed by the block's power-of-two tier: cool neutrals climb
+        // through teal/blue/violet into warm amber/rose as the value grows, so higher tiles read
+        // as "hotter" at a glance while staying readable.
+        private static readonly string[] BlockPalette =
+        {
+            "#E2E8F0", // 1
+            "#C7D2FE", // 2
+            "#93C5FD", // 4
+            "#5EEAD4", // 8
+            "#6EE7B7", // 16
+            "#FCD34D", // 32
+            "#FB923C", // 64
+            "#F87171", // 128
+            "#F472B6", // 256
+            "#C084FC", // 512
+            "#818CF8", // 1024
+            "#22D3EE", // 2048
+            "#2DD4BF", // 4096
+            "#A3E635", // 8192
+            "#FACC15"  // 16384
+        };
+
         private static Color GetBlockColor(int value)
         {
-            return value switch
+            if (value == StackMergeGameState.JokerBlockValue)
             {
-                StackMergeGameState.JokerBlockValue => HexColor("#F8FAFC"),
-                1 => HexColor("#FDE68A"),
-                2 => HexColor("#FDBA74"),
-                4 => HexColor("#5EEAD4"),
-                8 => HexColor("#60A5FA"),
-                16 => HexColor("#A78BFA"),
-                32 => HexColor("#FB7185"),
-                64 => HexColor("#34D399"),
-                128 => HexColor("#F472B6"),
-                256 => HexColor("#F59E0B"),
-                512 => HexColor("#22D3EE"),
-                1024 => HexColor("#8B5CF6"),
-                2048 => HexColor("#EF4444"),
-                _ => Color.Lerp(HexColor("#EC4899"), HexColor("#10B981"), Mathf.PingPong(Mathf.Log(value, 2f) * 0.17f, 1f))
-            };
+                return HexColor("#FFFFFF");
+            }
+
+            int exponent = SolverScoring.FloorLog2(Math.Max(1, value));
+            if (exponent < BlockPalette.Length)
+            {
+                return HexColor(BlockPalette[exponent]);
+            }
+
+            float t = Mathf.PingPong((exponent - BlockPalette.Length) * 0.22f, 1f);
+            return Color.Lerp(HexColor("#FBBF24"), HexColor("#E879F9"), t);
         }
 
         private static Color GetReadableTextColor(Color background)

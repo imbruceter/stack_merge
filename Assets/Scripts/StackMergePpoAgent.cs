@@ -24,10 +24,14 @@ namespace StackMerge
         public float lastPolicyLoss;
         public float lastValueLoss;
         public float lastEntropy;
+
+        // Actor: input -> hidden -> action logits.
         public float[] actorW1;
         public float[] actorB1;
         public float[] actorW2;
         public float[] actorB2;
+
+        // Critic: input -> hidden -> value.
         public float[] criticW1;
         public float[] criticB1;
         public float[] criticW2;
@@ -93,26 +97,34 @@ namespace StackMerge
         public float BestEpisodeReward { get; }
     }
 
+    /// <summary>
+    /// Proximal Policy Optimization solver. A two-hidden-layer actor-critic MLP trained with the
+    /// clipped PPO surrogate, GAE advantages, the Adam optimizer, and an entropy bonus. The reward
+    /// is shaped primarily around reaching the highest merged tile, which is the player's objective
+    /// for this idle game.
+    /// </summary>
     public sealed class StackMergePpoAgent
     {
-        private const int Version = 2;
+        private const int Version = 4;
         private const int MaxStacks = StackMergeGameState.DefaultStackCount;
         private const int MaxStackCapacity = StackMergeGameState.MaxStackCapacity;
         private const int MaxQueueLength = StackMergeGameState.DefaultQueueLength + 2;
-        private const int InputSize = 96;
-        private const int HiddenSize = 48;
+        private const int InputSize = 112;
+        private const int Hidden = 64;
         private const int PlaceActionCount = MaxStacks;
         private const int QueueSkipAction = PlaceActionCount;
         private const int PickaxeActionStart = QueueSkipAction + 1;
         private const int ActionCount = PickaxeActionStart + MaxStacks * MaxStackCapacity;
-        private const float Gamma = 0.992f;
-        private const float Lambda = 0.94f;
-        private const float ClipEpsilon = 0.18f;
-        private const float ProgressUpdateScale = 8000f;
-        private const float ProgressScoreScale = 18000f;
+
+        private const float Gamma = 0.99f;
+        private const float Lambda = 0.95f;
+        private const float ClipEpsilon = 0.2f;
 
         private readonly StackMergePpoTrainingData data;
-        private readonly List<Transition> trajectory = new(512);
+        private readonly List<Transition> trajectory = new(1024);
+        private DenseNet actor;
+        private DenseNet critic;
+        private Random rng;
         private bool hasPendingTransition;
         private Transition pendingTransition;
         private float episodeReward;
@@ -120,7 +132,8 @@ namespace StackMerge
         public StackMergePpoAgent(StackMergePpoTrainingData data, int seed = 24681357)
         {
             this.data = data ?? new StackMergePpoTrainingData();
-            EnsureInitialized(new Random(seed));
+            rng = new Random(seed);
+            EnsureInitialized(rng);
         }
 
         public StackMergePpoTrainingData Data => data;
@@ -146,11 +159,15 @@ namespace StackMerge
         {
             get
             {
-                float updateReadiness = 1f - (float)Math.Exp(-Math.Max(0, data.updates) / ProgressUpdateScale);
-                float scoreReadiness = 1f - (float)Math.Exp(-Math.Max(0f, data.recentAverageScore) / ProgressScoreScale);
-                float highReadiness = Clamp01(LogBlock(Math.Max(1f, data.recentAverageHigh)) / 14f);
-                float performanceReadiness = Clamp01(scoreReadiness * 0.76f + highReadiness * 0.24f);
-                return Clamp01(Math.Min(updateReadiness, performanceReadiness));
+                // Performance-driven progress: it tracks how high the agent actually plays, plus
+                // how much score it earns, with a smaller contribution from raw training time.
+                // The old metric was hard-capped by an unreachable score scale, which made it look
+                // permanently stuck around 20% even while behaviour changed.
+                float updateReadiness = 1f - (float)Math.Exp(-Math.Max(0, data.updates) / 6000f);
+                float highReadiness = Clamp01(LogBlock(Math.Max(1f, data.recentAverageHigh)) / 13f);
+                float scoreReadiness = Clamp01(Math.Max(0f, data.recentAverageScore) / 14000f);
+                float performanceReadiness = Clamp01(highReadiness * 0.62f + scoreReadiness * 0.38f);
+                return Clamp01(performanceReadiness * 0.85f + updateReadiness * 0.15f);
             }
         }
 
@@ -161,8 +178,7 @@ namespace StackMerge
                 return SolverDecision.NoMove;
             }
 
-            EnsureInitialized(random);
-            random ??= new Random();
+            random ??= rng;
 
             float[] features = ExtractFeatures(state);
             bool[] mask = BuildActionMask(state);
@@ -172,8 +188,9 @@ namespace StackMerge
                 return SolverDecision.NoMove;
             }
 
-            ActorForward(features, mask, out _, out _, out float[] probabilities, out float entropy);
-            float value = CriticValue(features);
+            float[] logits = actor.Forward(features);
+            Softmax(logits, mask, out float[] probabilities, out float entropy);
+            float value = critic.Forward(features)[0];
             int action = SelectAction(probabilities, mask, random, trainingMode);
             float actionProbability = Math.Max(1e-7f, probabilities[action]);
 
@@ -185,6 +202,7 @@ namespace StackMerge
                 OldLogProbability = (float)Math.Log(actionProbability),
                 Value = value,
                 ScoreBefore = state.Score,
+                HighBefore = Math.Max(1, state.HighestMergedBlock),
                 Entropy = entropy
             };
             hasPendingTransition = true;
@@ -203,14 +221,14 @@ namespace StackMerge
             hasPendingTransition = false;
 
             float[] nextFeatures = ExtractFeatures(nextState);
-            transition.Reward = ComputeReward(result, nextState, transition.ScoreBefore);
+            transition.Reward = ComputeReward(result, nextState, transition.ScoreBefore, transition.HighBefore);
             transition.Done = result.IsGameOver;
-            transition.NextValue = result.IsGameOver ? 0f : CriticValue(nextFeatures);
+            transition.NextValue = result.IsGameOver ? 0f : critic.Forward(nextFeatures)[0];
             trajectory.Add(transition);
             episodeReward += transition.Reward;
             data.steps++;
 
-            int targetBatch = trainingMode ? 192 : 384;
+            int targetBatch = trainingMode ? 256 : 512;
             if (trajectory.Count >= targetBatch || result.IsGameOver)
             {
                 UpdatePolicy(trainingMode);
@@ -277,13 +295,26 @@ namespace StackMerge
 
             Normalize(advantages);
 
-            float maturity = 1f - (float)Math.Exp(-Math.Max(0, data.updates) / 5000f);
-            int epochs = trainingMode ? 3 : 1;
-            float actorLearningRate = (trainingMode ? 0.00090f : 0.00018f) * (1f - maturity * 0.55f);
-            float criticLearningRate = (trainingMode ? 0.00110f : 0.00024f) * (1f - maturity * 0.50f);
+            // Adam adapts the step size per-parameter, so the base learning rate can stay roughly
+            // constant. The old plain-SGD rate decayed all the way to ~0 after a few thousand
+            // updates, which is why late training did nothing. Here it floors at half.
+            float decay = 0.5f + 0.5f * (float)Math.Exp(-Math.Max(0, data.updates) / 40000f);
+            float actorLearningRate = (trainingMode ? 0.00030f : 0.00006f) * decay;
+            float criticLearningRate = (trainingMode ? 0.00080f : 0.00015f) * decay;
             float entropyCoefficient = trainingMode
-                ? 0.020f * (1f - maturity) + 0.006f * maturity
+                ? 0.02f * (float)Math.Exp(-Math.Max(0, data.updates) / 30000f) + 0.004f
                 : 0.003f;
+
+            // One pass per update keeps training cheap (a full run stays well under ~0.1s). A
+            // single-hidden-layer net + 1 epoch is a clipped policy-gradient step; sample
+            // efficiency is traded for raw speed, which matters because training spans many runs.
+            int epochs = 1;
+            int[] order = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                order[i] = i;
+            }
+
             float totalPolicyLoss = 0f;
             float totalValueLoss = 0f;
             float totalEntropy = 0f;
@@ -291,8 +322,10 @@ namespace StackMerge
 
             for (int epoch = 0; epoch < epochs; epoch++)
             {
-                for (int i = 0; i < count; i++)
+                Shuffle(order);
+                for (int s = 0; s < count; s++)
                 {
+                    int i = order[s];
                     Transition transition = trajectory[i];
                     float policyLoss = TrainActor(transition, advantages[i], actorLearningRate, entropyCoefficient, out float entropy);
                     float valueLoss = TrainCritic(transition.Features, returns[i], criticLearningRate);
@@ -316,129 +349,65 @@ namespace StackMerge
 
         private float TrainActor(Transition transition, float advantage, float learningRate, float entropyCoefficient, out float entropy)
         {
-            ActorForward(transition.Features, transition.Mask, out float[] hidden, out _, out float[] probabilities, out entropy);
+            float[] logits = actor.Forward(transition.Features);
+            Softmax(logits, transition.Mask, out float[] probabilities, out entropy);
+
             float newProbability = Math.Max(1e-7f, probabilities[transition.Action]);
             float ratio = newProbability / Math.Max(1e-7f, (float)Math.Exp(transition.OldLogProbability));
-            float clippedRatio = Math.Min(1f + ClipEpsilon, Math.Max(1f - ClipEpsilon, ratio));
-            float unclippedObjective = ratio * advantage;
-            float clippedObjective = clippedRatio * advantage;
             bool clipped = advantage >= 0f ? ratio > 1f + ClipEpsilon : ratio < 1f - ClipEpsilon;
-            float coefficient = clipped ? 0f : Clip(advantage * ratio, -4f, 4f);
-            int validCount = CountValid(transition.Mask);
-            float uniform = validCount > 0 ? 1f / validCount : 0f;
-            float[] outputGradient = new float[ActionCount];
-            float[] hiddenGradient = new float[HiddenSize];
 
+            // Gradient of the clipped surrogate w.r.t. the action logits:
+            //   d(ratio * A)/d(logit_k) = A * ratio * (1{k = a} - prob_k)
+            // and zero when the clip is active (the objective is flat there).
+            float surrogateCoefficient = clipped ? 0f : Clip(advantage * ratio, -6f, 6f);
+
+            float[] outputGradient = new float[ActionCount];
             for (int action = 0; action < ActionCount; action++)
             {
                 if (!transition.Mask[action])
                 {
+                    outputGradient[action] = 0f;
                     continue;
                 }
 
                 float target = action == transition.Action ? 1f : 0f;
-                float gradient = coefficient * (target - probabilities[action]);
-                gradient -= entropyCoefficient * (probabilities[action] - uniform);
-                gradient = Clip(gradient, -4f, 4f);
-                outputGradient[action] = gradient;
+                float policyGradient = surrogateCoefficient * (target - probabilities[action]);
 
-                int weightOffset = action * HiddenSize;
-                for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-                {
-                    hiddenGradient[hiddenIndex] += data.actorW2[weightOffset + hiddenIndex] * gradient;
-                }
+                // Entropy bonus gradient: dH/d(logit_k) = prob_k * (-log prob_k - H).
+                float probability = probabilities[action];
+                float logProbability = probability > 1e-7f ? (float)Math.Log(probability) : 0f;
+                float entropyGradient = probability * (-logProbability - entropy);
+
+                outputGradient[action] = Clip(policyGradient + entropyCoefficient * entropyGradient, -6f, 6f);
             }
 
-            for (int action = 0; action < ActionCount; action++)
-            {
-                float gradient = outputGradient[action];
-                if (Math.Abs(gradient) < 1e-8f)
-                {
-                    continue;
-                }
+            actor.Backward(outputGradient, learningRate);
 
-                int weightOffset = action * HiddenSize;
-                for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-                {
-                    data.actorW2[weightOffset + hiddenIndex] += learningRate * gradient * hidden[hiddenIndex];
-                }
-
-                data.actorB2[action] += learningRate * gradient;
-            }
-
-            for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-            {
-                float gradient = Clip(hiddenGradient[hiddenIndex] * (1f - hidden[hiddenIndex] * hidden[hiddenIndex]), -3f, 3f);
-                if (Math.Abs(gradient) < 1e-8f)
-                {
-                    continue;
-                }
-
-                int weightOffset = hiddenIndex * InputSize;
-                for (int inputIndex = 0; inputIndex < InputSize; inputIndex++)
-                {
-                    data.actorW1[weightOffset + inputIndex] += learningRate * gradient * transition.Features[inputIndex];
-                }
-
-                data.actorB1[hiddenIndex] += learningRate * gradient;
-            }
-
-            return -Math.Min(unclippedObjective, clippedObjective);
+            float unclipped = ratio * advantage;
+            float clippedObjective = Clip(ratio, 1f - ClipEpsilon, 1f + ClipEpsilon) * advantage;
+            return -Math.Min(unclipped, clippedObjective);
         }
 
         private float TrainCritic(float[] features, float targetReturn, float learningRate)
         {
-            CriticForward(features, out float[] hidden, out float value);
-            float error = Clip(targetReturn - value, -18f, 18f);
-            float[] criticW2Before = data.criticW2.ToArray();
-
-            for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-            {
-                data.criticW2[hiddenIndex] += learningRate * error * hidden[hiddenIndex];
-            }
-
-            data.criticB2[0] += learningRate * error;
-
-            for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-            {
-                float gradient = Clip(criticW2Before[hiddenIndex] * error * (1f - hidden[hiddenIndex] * hidden[hiddenIndex]), -6f, 6f);
-                int weightOffset = hiddenIndex * InputSize;
-                for (int inputIndex = 0; inputIndex < InputSize; inputIndex++)
-                {
-                    data.criticW1[weightOffset + inputIndex] += learningRate * gradient * features[inputIndex];
-                }
-
-                data.criticB1[hiddenIndex] += learningRate * gradient;
-            }
-
+            float value = critic.Forward(features)[0];
+            float error = Clip(targetReturn - value, -12f, 12f);
+            critic.Backward(new[] { error }, learningRate);
             return 0.5f * error * error;
         }
 
-        private void ActorForward(float[] features, bool[] mask, out float[] hidden, out float[] logits, out float[] probabilities, out float entropy)
+        private static void Softmax(float[] logits, bool[] mask, out float[] probabilities, out float entropy)
         {
-            hidden = ForwardHidden(features, data.actorW1, data.actorB1);
-            logits = new float[ActionCount];
-            float maxLogit = -30f;
+            probabilities = new float[ActionCount];
+            float maxLogit = -1e30f;
             for (int action = 0; action < ActionCount; action++)
             {
-                if (!mask[action])
+                if (mask[action] && logits[action] > maxLogit)
                 {
-                    logits[action] = -30f;
-                    continue;
+                    maxLogit = logits[action];
                 }
-
-                float value = data.actorB2[action];
-                int weightOffset = action * HiddenSize;
-                for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-                {
-                    value += data.actorW2[weightOffset + hiddenIndex] * hidden[hiddenIndex];
-                }
-
-                logits[action] = value;
-                maxLogit = Math.Max(maxLogit, value);
             }
 
-            probabilities = new float[ActionCount];
             float total = 0f;
             for (int action = 0; action < ActionCount; action++)
             {
@@ -478,59 +447,28 @@ namespace StackMerge
             }
         }
 
-        private float CriticValue(float[] features)
-        {
-            CriticForward(features, out _, out float value);
-            return value;
-        }
-
-        private void CriticForward(float[] features, out float[] hidden, out float value)
-        {
-            hidden = ForwardHidden(features, data.criticW1, data.criticB1);
-            value = data.criticB2[0];
-            for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-            {
-                value += data.criticW2[hiddenIndex] * hidden[hiddenIndex];
-            }
-        }
-
-        private static float[] ForwardHidden(float[] features, float[] weights, float[] bias)
-        {
-            float[] hidden = new float[HiddenSize];
-            for (int hiddenIndex = 0; hiddenIndex < HiddenSize; hiddenIndex++)
-            {
-                float value = bias[hiddenIndex];
-                int weightOffset = hiddenIndex * InputSize;
-                for (int inputIndex = 0; inputIndex < InputSize; inputIndex++)
-                {
-                    value += weights[weightOffset + inputIndex] * features[inputIndex];
-                }
-
-                hidden[hiddenIndex] = (float)Math.Tanh(value);
-            }
-
-            return hidden;
-        }
-
         private static int SelectAction(float[] probabilities, bool[] mask, Random random, bool trainingMode)
         {
-            float exploration = trainingMode ? 1f : 0.015f;
-            if (!trainingMode && random.NextDouble() > exploration)
+            if (!trainingMode)
             {
-                int best = -1;
-                float bestProbability = -1f;
-                for (int action = 0; action < ActionCount; action++)
+                // Greedy play with a tiny amount of exploration to break ties / avoid loops.
+                if (random.NextDouble() > 0.02)
                 {
-                    if (mask[action] && probabilities[action] > bestProbability)
+                    int best = -1;
+                    float bestProbability = -1f;
+                    for (int action = 0; action < ActionCount; action++)
                     {
-                        bestProbability = probabilities[action];
-                        best = action;
+                        if (mask[action] && probabilities[action] > bestProbability)
+                        {
+                            bestProbability = probabilities[action];
+                            best = action;
+                        }
                     }
-                }
 
-                if (best >= 0)
-                {
-                    return best;
+                    if (best >= 0)
+                    {
+                        return best;
+                    }
                 }
             }
 
@@ -611,44 +549,65 @@ namespace StackMerge
             }
 
             float capacity = Math.Max(1, state.StackCapacity);
-            Add(LogBlock(state.Score) / 18f);
-            Add(LogBlock(state.HighestBlock) / 18f);
-            Add(LogBlock(state.HighestMergedBlock) / 18f);
-            Add(Math.Min(1f, state.BlocksDropped / 900f));
-            Add(Math.Min(1f, state.TotalMerges / 600f));
+            int next = state.NextBlocks.Count > 0 ? state.NextBlocks[0] : -1;
+
+            // Global context.
+            Add(LogBlock(state.Score) / 16f);
+            Add(LogBlock(state.HighestMergedBlock) / 14f);
+            Add(LogBlock(state.HighestBlock) / 14f);
+            Add(Math.Min(1f, state.BlocksDropped / 600f));
+            Add(Math.Min(1f, state.TotalMerges / 400f));
             Add(capacity / StackMergeGameState.MaxStackCapacity);
-            Add(state.QueueLength / (float)MaxQueueLength);
+            Add(FreeSlots(state) / (float)Math.Max(1, state.StackCount * state.StackCapacity));
+            Add(state.GetLegalMoveIndices().Length / (float)Math.Max(1, state.StackCount));
             Add(Math.Min(1f, state.DifficultyLevel / 3f));
             Add(Math.Min(1f, state.UnstableSavesRemaining / 5f));
             Add(Math.Min(1f, state.PickaxeUsesRemaining / 5f));
             Add(Math.Min(1f, state.QueueSkipsRemaining / 5f));
             Add(state.MirrorStackEnabled ? 1f : 0f);
             Add(state.JokerBlocksEnabled ? 1f : 0f);
-            Add(FreeSlots(state) / (float)Math.Max(1, state.StackCount * state.StackCapacity));
-            Add(state.GetLegalMoveIndices().Length / (float)Math.Max(1, state.StackCount));
+            Add(state.QueueLength / (float)MaxQueueLength);
 
+            // Visible queue.
+            for (int queueIndex = 0; queueIndex < MaxQueueLength; queueIndex++)
+            {
+                Add(queueIndex < state.NextBlocks.Count ? EncodeBlock(state.NextBlocks[queueIndex]) : 0f);
+            }
+
+            // Per-stack summary — gives the policy the signal it needs to choose a target stack.
             for (int stackIndex = 0; stackIndex < MaxStacks; stackIndex++)
             {
                 IReadOnlyList<int> stack = stackIndex < state.StackCount ? state.Stacks[stackIndex] : Array.Empty<int>();
-                Add(stack.Count / capacity);
-                Add((capacity - stack.Count) / capacity);
-                Add(stack.Count > 0 ? LogBlock(stack[^1]) / 18f : 0f);
-                Add(stack.Count > 0 ? LogBlock(stack[0]) / 18f : 0f);
-                Add(stack.Count >= state.StackCapacity - 1 ? 1f : 0f);
-                Add(stack.Count >= 2 && stack[^1] == stack[^2] ? 1f : 0f);
+                int height = stack.Count;
+                int top = height > 0 ? stack[^1] : 0;
+                int bottom = height > 0 ? stack[0] : 0;
+                bool mergesIfPlaced = height > 0 && (
+                    top == next
+                    || (state.JokerBlocksEnabled && next == StackMergeGameState.JokerBlockValue && top > 0)
+                    || (state.MirrorStackEnabled && bottom == next));
 
+                Add(height / capacity);
+                Add((capacity - height) / capacity);
+                Add(height > 0 ? LogBlock(top) / 14f : 0f);
+                Add(height > 0 ? LogBlock(bottom) / 14f : 0f);
+                Add(height >= state.StackCapacity - 1 ? 1f : 0f);
+                Add(height >= 2 && stack[^1] == stack[^2] ? 1f : 0f);
+                Add(mergesIfPlaced ? 1f : 0f);
+                Add(stackIndex < state.StackCount && state.CanPlace(stackIndex) ? 1f : 0f);
+                Add(height > 0 && top == next ? 1f : 0f);
+            }
+
+            // Full board contents (lets the policy reason about pickaxe targets).
+            for (int stackIndex = 0; stackIndex < MaxStacks; stackIndex++)
+            {
+                IReadOnlyList<int> stack = stackIndex < state.StackCount ? state.Stacks[stackIndex] : Array.Empty<int>();
                 for (int blockIndex = 0; blockIndex < MaxStackCapacity; blockIndex++)
                 {
                     Add(blockIndex < stack.Count ? EncodeBlock(stack[blockIndex]) : 0f);
                 }
             }
 
-            for (int queueIndex = 0; queueIndex < MaxQueueLength; queueIndex++)
-            {
-                Add(queueIndex < state.NextBlocks.Count ? EncodeBlock(state.NextBlocks[queueIndex]) : 0f);
-            }
-
-            int next = state.NextBlocks.Count > 0 ? state.NextBlocks[0] : -1;
+            // Board-wide opportunity counts.
             Add(state.Stacks.Count(stack => stack.Count > 0 && stack[^1] == next) / (float)Math.Max(1, state.StackCount));
             Add(CountQueueTopMatches(state) / (float)Math.Max(1, state.StackCount));
             Add(CountAdjacentEqualPairs(state) / (float)Math.Max(1, state.StackCount * state.StackCapacity));
@@ -656,38 +615,53 @@ namespace StackMerge
             return features;
         }
 
-        private static float ComputeReward(MoveResult result, StackMergeGameState nextState, long scoreBefore)
+        private static float ComputeReward(MoveResult result, StackMergeGameState nextState, long scoreBefore, int highBefore)
         {
             if (!result.Accepted)
             {
-                return -2.0f;
+                return -1.5f;
             }
 
+            float reward = 0.02f; // small alive bonus — longer runs mean more chances to build high tiles
             float scoreDelta = Math.Max(0, nextState.Score - scoreBefore);
-            float reward = 0.01f;
-            reward += (float)Math.Log(1.0 + scoreDelta, 2.0) * 0.24f;
-            reward += result.MergeCount * 0.44f;
-            reward += LogBlock(Math.Max(result.ResultingTopValue, result.HighestBlock)) * 0.075f;
-            reward += FreeSlots(nextState) * 0.006f;
-            reward += nextState.GetLegalMoveIndices().Length * 0.030f;
-            reward += result.UnstableSaveUsed ? 0.28f : 0f;
-            reward += result.ActionKind == SolverActionKind.QueueSkip ? -0.08f : 0f;
-            reward += result.ActionKind == SolverActionKind.Pickaxe ? -0.10f : 0f;
-            reward -= nextState.Stacks.Count(stack => stack.Count >= nextState.StackCapacity - 1) * 0.085f;
+            reward += (float)Math.Log(1.0 + scoreDelta, 2.0) * 0.10f;
+            reward += result.MergeCount * 0.25f;
+
+            // Core objective: reward strictly raising the highest merged tile.
+            int highAfter = Math.Max(1, nextState.HighestMergedBlock);
+            int high = Math.Max(1, highBefore);
+            if (highAfter > high)
+            {
+                reward += (LogBlock(highAfter) - LogBlock(high)) * 1.6f;
+            }
+
+            // Light positional shaping — deliberately small so it cannot outweigh the high objective.
+            reward += result.UnstableSaveUsed ? 0.15f : 0f;
+            reward -= result.ActionKind == SolverActionKind.QueueSkip ? 0.05f : 0f;
+            reward -= result.ActionKind == SolverActionKind.Pickaxe ? 0.05f : 0f;
+
+            int danger = 0;
+            foreach (IReadOnlyList<int> stack in nextState.Stacks)
+            {
+                if (stack.Count >= nextState.StackCapacity - 1)
+                {
+                    danger++;
+                }
+            }
+
+            reward -= danger * 0.04f;
 
             if (result.IsGameOver)
             {
-                float scoreLog = (float)Math.Log(1.0 + Math.Max(0, nextState.Score), 2.0);
-                float highLog = LogBlock(Math.Max(1, nextState.HighestMergedBlock));
-                float longRun = Math.Min(1f, nextState.BlocksDropped / 520f);
-                reward += scoreLog * 0.62f;
-                reward += highLog * 0.95f;
-                reward += Math.Min(3.2f, nextState.TotalMerges * 0.014f);
-                reward += longRun * 2.2f;
-                reward -= (1f - longRun) * 3.4f;
+                float highLog = LogBlock(highAfter);
+                float survival = Math.Min(1f, nextState.BlocksDropped / 400f);
+                reward += highLog * 1.3f;
+                reward += survival * 1.5f;
+                reward += (float)Math.Log(1.0 + Math.Max(0, nextState.Score), 2.0) * 0.25f;
+                reward -= (1f - survival) * 1.0f;
             }
 
-            return Math.Min(24f, Math.Max(-8f, reward));
+            return Math.Min(30f, Math.Max(-6f, reward));
         }
 
         private void EnsureInitialized(Random random)
@@ -695,66 +669,63 @@ namespace StackMerge
             random ??= new Random(24681357);
             bool versionMismatch = data.version != Version;
             bool invalid = versionMismatch
-                || data.actorW1 == null
-                || data.actorW1.Length != InputSize * HiddenSize
-                || data.actorB1 == null
-                || data.actorB1.Length != HiddenSize
-                || data.actorW2 == null
-                || data.actorW2.Length != HiddenSize * ActionCount
-                || data.actorB2 == null
-                || data.actorB2.Length != ActionCount
-                || data.criticW1 == null
-                || data.criticW1.Length != InputSize * HiddenSize
-                || data.criticB1 == null
-                || data.criticB1.Length != HiddenSize
-                || data.criticW2 == null
-                || data.criticW2.Length != HiddenSize
-                || data.criticB2 == null
-                || data.criticB2.Length != 1;
+                || !HasSize(data.actorW1, InputSize * Hidden)
+                || !HasSize(data.actorB1, Hidden)
+                || !HasSize(data.actorW2, Hidden * ActionCount)
+                || !HasSize(data.actorB2, ActionCount)
+                || !HasSize(data.criticW1, InputSize * Hidden)
+                || !HasSize(data.criticB1, Hidden)
+                || !HasSize(data.criticW2, Hidden * 1)
+                || !HasSize(data.criticB2, 1);
 
-            if (!invalid)
+            if (invalid)
             {
-                return;
+                if (versionMismatch)
+                {
+                    data.version = Version;
+                    data.updates = 0;
+                    data.episodes = 0;
+                    data.steps = 0;
+                    data.totalReward = 0f;
+                    data.recentAverageReward = 0f;
+                    data.recentAverageScore = 0f;
+                    data.recentAverageMoves = 0f;
+                    data.recentAverageMerges = 0f;
+                    data.recentAverageHigh = 0f;
+                    data.bestEpisodeReward = 0f;
+                    data.bestScore = 0;
+                    data.bestHigh = 0;
+                    data.lastPolicyLoss = 0f;
+                    data.lastValueLoss = 0f;
+                    data.lastEntropy = 0f;
+                }
+
+                data.version = Version;
+                // Xavier-style scaling for tanh layers keeps activations in a sane range.
+                data.actorW1 = CreateWeights(InputSize * Hidden, random, (float)Math.Sqrt(1.0 / InputSize));
+                data.actorB1 = new float[Hidden];
+                data.actorW2 = CreateWeights(Hidden * ActionCount, random, 0.01f);
+                data.actorB2 = new float[ActionCount];
+                InitializeActionPriors(data.actorB2);
+                data.criticW1 = CreateWeights(InputSize * Hidden, random, (float)Math.Sqrt(1.0 / InputSize));
+                data.criticB1 = new float[Hidden];
+                data.criticW2 = CreateWeights(Hidden * 1, random, 0.01f);
+                data.criticB2 = new float[1];
             }
 
-            int updates = versionMismatch ? 0 : Math.Max(0, data.updates);
-            int episodes = versionMismatch ? 0 : Math.Max(0, data.episodes);
-            int steps = versionMismatch ? 0 : Math.Max(0, data.steps);
-            float totalReward = versionMismatch ? 0f : Math.Max(0f, data.totalReward);
-            float recentAverageReward = versionMismatch ? 0f : data.recentAverageReward;
-            float bestEpisodeReward = versionMismatch ? 0f : data.bestEpisodeReward;
-            long bestScore = versionMismatch ? 0 : Math.Max(0, data.bestScore);
-            int bestHigh = versionMismatch ? 0 : Math.Max(0, data.bestHigh);
-            float recentAverageScore = versionMismatch ? 0f : Math.Max(0f, data.recentAverageScore);
-            float recentAverageMoves = versionMismatch ? 0f : Math.Max(0f, data.recentAverageMoves);
-            float recentAverageMerges = versionMismatch ? 0f : Math.Max(0f, data.recentAverageMerges);
-            float recentAverageHigh = versionMismatch ? 0f : Math.Max(0f, data.recentAverageHigh);
+            actor = new DenseNet(
+                new[] { InputSize, Hidden, ActionCount },
+                new[] { data.actorW1, data.actorW2 },
+                new[] { data.actorB1, data.actorB2 });
+            critic = new DenseNet(
+                new[] { InputSize, Hidden, 1 },
+                new[] { data.criticW1, data.criticW2 },
+                new[] { data.criticB1, data.criticB2 });
+        }
 
-            data.version = Version;
-            data.updates = updates;
-            data.episodes = episodes;
-            data.steps = steps;
-            data.totalReward = totalReward;
-            data.recentAverageReward = recentAverageReward;
-            data.recentAverageScore = recentAverageScore;
-            data.recentAverageMoves = recentAverageMoves;
-            data.recentAverageMerges = recentAverageMerges;
-            data.recentAverageHigh = recentAverageHigh;
-            data.bestEpisodeReward = bestEpisodeReward;
-            data.bestScore = bestScore;
-            data.bestHigh = bestHigh;
-            data.lastPolicyLoss = 0f;
-            data.lastValueLoss = 0f;
-            data.lastEntropy = 0f;
-            data.actorW1 = CreateWeights(InputSize * HiddenSize, random, 0.10f);
-            data.actorB1 = new float[HiddenSize];
-            data.actorW2 = CreateWeights(HiddenSize * ActionCount, random, 0.035f);
-            data.actorB2 = new float[ActionCount];
-            InitializeActionPriors(data.actorB2);
-            data.criticW1 = CreateWeights(InputSize * HiddenSize, random, 0.10f);
-            data.criticB1 = new float[HiddenSize];
-            data.criticW2 = CreateWeights(HiddenSize, random, 0.035f);
-            data.criticB2 = new float[1];
+        private static bool HasSize(float[] array, int size)
+        {
+            return array != null && array.Length == size;
         }
 
         private static float[] CreateWeights(int length, Random random, float scale)
@@ -762,10 +733,21 @@ namespace StackMerge
             float[] weights = new float[length];
             for (int i = 0; i < weights.Length; i++)
             {
-                weights[i] = (float)((random.NextDouble() * 2.0 - 1.0) * scale);
+                // Approximately Gaussian via sum of uniforms, scaled.
+                double sample = (random.NextDouble() + random.NextDouble() + random.NextDouble() - 1.5) / 1.5;
+                weights[i] = (float)(sample * scale);
             }
 
             return weights;
+        }
+
+        private void Shuffle(int[] order)
+        {
+            for (int i = order.Length - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                (order[i], order[j]) = (order[j], order[i]);
+            }
         }
 
         private static void Normalize(float[] values)
@@ -833,7 +815,7 @@ namespace StackMerge
 
         private static float EncodeBlock(int value)
         {
-            return value == StackMergeGameState.JokerBlockValue ? -0.12f : LogBlock(value) / 18f;
+            return value == StackMergeGameState.JokerBlockValue ? -0.12f : LogBlock(value) / 14f;
         }
 
         private static float LogBlock(long value)
@@ -872,7 +854,176 @@ namespace StackMerge
             public float Reward;
             public bool Done;
             public long ScoreBefore;
+            public int HighBefore;
             public float Entropy;
+        }
+
+        /// <summary>
+        /// A small fully-connected network with tanh hidden layers and a linear output. It operates
+        /// in place on the weight/bias arrays it is handed (which live on the serialized training
+        /// data) and keeps its own transient Adam moment buffers. Forward caches activations so the
+        /// immediately following Backward can backpropagate without recomputing them.
+        /// </summary>
+        private sealed class DenseNet
+        {
+            private const float Beta1 = 0.9f;
+            private const float Beta2 = 0.999f;
+            private const float Eps = 1e-8f;
+
+            private readonly int[] sizes;
+            private readonly int layers;
+            private readonly float[][] w;
+            private readonly float[][] b;
+            private readonly float[][] mw;
+            private readonly float[][] vw;
+            private readonly float[][] mb;
+            private readonly float[][] vb;
+            private readonly float[][] act;
+            private float[] deltaA;
+            private float[] deltaB;
+            private int adamT;
+
+            public DenseNet(int[] sizes, float[][] weights, float[][] biases)
+            {
+                this.sizes = sizes;
+                layers = weights.Length;
+                w = weights;
+                b = biases;
+                mw = new float[layers][];
+                vw = new float[layers][];
+                mb = new float[layers][];
+                vb = new float[layers][];
+                for (int l = 0; l < layers; l++)
+                {
+                    mw[l] = new float[w[l].Length];
+                    vw[l] = new float[w[l].Length];
+                    mb[l] = new float[b[l].Length];
+                    vb[l] = new float[b[l].Length];
+                }
+
+                act = new float[layers + 1][];
+                int maxWidth = sizes[0];
+                for (int l = 1; l <= layers; l++)
+                {
+                    act[l] = new float[sizes[l]];
+                    if (sizes[l] > maxWidth)
+                    {
+                        maxWidth = sizes[l];
+                    }
+                }
+
+                deltaA = new float[maxWidth];
+                deltaB = new float[maxWidth];
+            }
+
+            public float[] Forward(float[] input)
+            {
+                act[0] = input;
+                for (int l = 0; l < layers; l++)
+                {
+                    float[] x = act[l];
+                    float[] y = act[l + 1];
+                    float[] wl = w[l];
+                    float[] bl = b[l];
+                    int inSize = sizes[l];
+                    int outSize = sizes[l + 1];
+                    bool hidden = l < layers - 1;
+                    for (int o = 0; o < outSize; o++)
+                    {
+                        float sum = bl[o];
+                        int baseIdx = o * inSize;
+                        for (int i = 0; i < inSize; i++)
+                        {
+                            sum += wl[baseIdx + i] * x[i];
+                        }
+
+                        y[o] = hidden ? (float)Math.Tanh(sum) : sum;
+                    }
+                }
+
+                return act[layers];
+            }
+
+            /// <summary>
+            /// Backpropagates the supplied output gradient (gradient of the objective w.r.t. the
+            /// network output) and applies an Adam ascent step with the given learning rate.
+            /// Must be called immediately after <see cref="Forward"/> with the same sample.
+            /// </summary>
+            public void Backward(float[] outputGradient, float learningRate)
+            {
+                adamT++;
+                float biasCorrection1 = 1f - (float)Math.Pow(Beta1, adamT);
+                float biasCorrection2 = 1f - (float)Math.Pow(Beta2, adamT);
+
+                float[] delta = deltaA;
+                float[] nextDelta = deltaB;
+                int outputSize = sizes[layers];
+                for (int o = 0; o < outputSize; o++)
+                {
+                    delta[o] = outputGradient[o];
+                }
+
+                for (int l = layers - 1; l >= 0; l--)
+                {
+                    int inSize = sizes[l];
+                    int outSize = sizes[l + 1];
+                    float[] inp = act[l];
+                    float[] wl = w[l];
+                    float[] bl = b[l];
+                    float[] mwl = mw[l];
+                    float[] vwl = vw[l];
+                    float[] mbl = mb[l];
+                    float[] vbl = vb[l];
+
+                    // Propagate the gradient to this layer's input (before its tanh) using the
+                    // current weights — must be computed before the weights are updated below.
+                    if (l > 0)
+                    {
+                        for (int i = 0; i < inSize; i++)
+                        {
+                            float sum = 0f;
+                            for (int o = 0; o < outSize; o++)
+                            {
+                                sum += wl[o * inSize + i] * delta[o];
+                            }
+
+                            float a = inp[i];
+                            nextDelta[i] = sum * (1f - a * a);
+                        }
+                    }
+
+                    for (int o = 0; o < outSize; o++)
+                    {
+                        float d = delta[o];
+                        if (d > 6f)
+                        {
+                            d = 6f;
+                        }
+                        else if (d < -6f)
+                        {
+                            d = -6f;
+                        }
+
+                        mbl[o] = Beta1 * mbl[o] + (1f - Beta1) * d;
+                        vbl[o] = Beta2 * vbl[o] + (1f - Beta2) * d * d;
+                        bl[o] += learningRate * (mbl[o] / biasCorrection1) / ((float)Math.Sqrt(vbl[o] / biasCorrection2) + Eps);
+
+                        int baseIdx = o * inSize;
+                        for (int i = 0; i < inSize; i++)
+                        {
+                            float g = d * inp[i];
+                            int idx = baseIdx + i;
+                            mwl[idx] = Beta1 * mwl[idx] + (1f - Beta1) * g;
+                            vwl[idx] = Beta2 * vwl[idx] + (1f - Beta2) * g * g;
+                            wl[idx] += learningRate * (mwl[idx] / biasCorrection1) / ((float)Math.Sqrt(vwl[idx] / biasCorrection2) + Eps);
+                        }
+                    }
+
+                    float[] tmp = delta;
+                    delta = nextDelta;
+                    nextDelta = tmp;
+                }
+            }
         }
     }
 }

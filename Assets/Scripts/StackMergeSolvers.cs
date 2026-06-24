@@ -1162,60 +1162,71 @@ namespace StackMerge
                 return toolDecision;
             }
 
-            var root = new SearchNode(null, state.CreateSnapshot(), legalMoves, -1, 0);
-            int baseIterations = context.LightweightMode
-                ? Math.Max(3, context.MonteCarloSimulations)
-                : Math.Max(7, context.MonteCarloSimulations * 2);
-            int iterations = context.TunedTreeIterations(baseIterations);
+            StackMergeSnapshot rootSnapshot = state.CreateSnapshot();
+            var root = new SearchNode(null, rootSnapshot, legalMoves, -1, 0);
+
+            // Iterations are modest because each one is cheap: it expands a single node and scores
+            // it with a strong STATIC board heuristic (the same evaluation the strong queue planner
+            // uses) after a short allocation-free playout. There is no per-candidate heavy scoring
+            // during expansion and no heavy heuristic rollout — those were what made MCTS slow.
+            int iterations = context.LightweightMode
+                ? Math.Max(24, context.MonteCarloSimulations * 3)
+                : Math.Max(60, context.MonteCarloSimulations * 6);
+            iterations = context.TunedTreeIterations(iterations);
+            int playoutDepth = context.LightweightMode ? 2 : 3;
+
+            // Single reusable scratch state: restored from a node snapshot each iteration, then
+            // mutated freely during the playout (discarded on the next restore).
+            StackMergeGameState working = state.CreateSimulationCopy(context.Random.Next());
 
             for (int i = 0; i < iterations; i++)
             {
                 SearchNode node = root;
-                StackMergeGameState working = state.CreateSimulationCopy(context.Random.Next());
-
                 while (node.UntriedMoves.Count == 0 && node.Children.Count > 0)
                 {
                     node = SelectChild(node, context);
-                    working.RestoreSnapshot(node.Snapshot);
                 }
 
-                if (node.UntriedMoves.Count > 0)
-                {
-                    int move = SelectExpansionMove(node, working, context);
-                    node.UntriedMoves.Remove(move);
+                working.RestoreSnapshot(node.Snapshot);
 
-                    long beforeScore = working.Score;
+                if (node.UntriedMoves.Count > 0 && !working.IsGameOver)
+                {
+                    int lastIndex = node.UntriedMoves.Count - 1;
+                    int move = node.UntriedMoves[lastIndex];
+                    node.UntriedMoves.RemoveAt(lastIndex);
+
                     MoveResult result = working.PlaceNext(move);
                     if (result.Accepted)
                     {
-                        double priorScore = ImmediateTreeScore(working, result, working.Score - beforeScore, context);
-                        var child = new SearchNode(node, working.CreateSnapshot(), working.GetLegalMoveIndices(), move, priorScore);
+                        var child = new SearchNode(node, working.CreateSnapshot(), working.GetLegalMoveIndices(), move, 0);
                         node.Children.Add(child);
                         node = child;
                     }
                 }
 
-                int rolloutDepth = context.LightweightMode ? Math.Min(2, context.TunedRolloutDepth()) : Math.Min(3, context.TunedRolloutDepth());
-                double reward = Rollout(working, context, rolloutDepth);
+                double value = LeafEvaluate(working, context, playoutDepth);
                 while (node != null)
                 {
                     node.Visits++;
-                    node.Value += reward;
+                    node.Value += value;
                     node = node.Parent;
                 }
             }
 
-            SearchNode bestChild = root.Children
-                .OrderByDescending(child => child.AverageValue + child.PriorScore * 0.22)
-                .ThenByDescending(child => child.Visits)
-                .FirstOrDefault();
-
-            if (bestChild == null)
+            // Robust child: pick the most-visited root move (standard MCTS final selection),
+            // which is scale-free, with average value as the tiebreak.
+            SearchNode bestChild = null;
+            foreach (SearchNode child in root.Children)
             {
-                return toolDecision;
+                if (bestChild == null
+                    || child.Visits > bestChild.Visits
+                    || (child.Visits == bestChild.Visits && child.AverageValue > bestChild.AverageValue))
+                {
+                    bestChild = child;
+                }
             }
 
-            if (toolDecision.HasMove && toolDecision.Score > bestChild.AverageValue + bestChild.PriorScore * 0.22)
+            if (bestChild == null)
             {
                 return toolDecision;
             }
@@ -1225,89 +1236,118 @@ namespace StackMerge
 
         private static SearchNode SelectChild(SearchNode node, SolverContext context)
         {
-            double parentVisits = Math.Max(1, node.Visits);
-            return node.Children
-                .OrderByDescending(child =>
-                {
-                    double exploit = child.AverageValue;
-                    double explore = Math.Sqrt(Math.Log(parentVisits + 1) / Math.Max(1, child.Visits));
-                    double prior = child.PriorScore / (1.0 + child.Visits * 0.35);
-                    double priorWeight = 0.18 * context.Tuning.Factor(SolverTuneParameterId.PriorBias, 0.16);
-                    double explorationWeight = 1.10 * context.Tuning.Factor(SolverTuneParameterId.Exploration, 0.10);
-                    return exploit + prior * priorWeight + explorationWeight * explore + context.Random.NextDouble() * 0.0001;
-                })
-                .First();
-        }
-
-        private static int SelectExpansionMove(SearchNode node, StackMergeGameState state, SolverContext context)
-        {
-            int selectedMove = node.UntriedMoves[0];
-            double bestScore = double.NegativeInfinity;
-
-            foreach (int move in node.UntriedMoves)
+            // Normalize the exploitation term to ~[0,1] using the sibling value range so the
+            // UCT exploration term is on a comparable scale. Raw rollout rewards are in the
+            // thousands, which previously drowned out exploration entirely and collapsed the
+            // search into greedy first-rollout selection.
+            double minValue = double.PositiveInfinity;
+            double maxValue = double.NegativeInfinity;
+            foreach (SearchNode child in node.Children)
             {
-                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
-                long beforeScore = copy.Score;
-                MoveResult result = copy.PlaceNext(move);
-                if (!result.Accepted)
+                double value = child.AverageValue;
+                if (value < minValue)
                 {
-                    continue;
+                    minValue = value;
                 }
 
-                double score = ImmediateTreeScore(copy, result, copy.Score - beforeScore, context);
-                score += context.Random.NextDouble() * 0.001;
-                if (score > bestScore)
+                if (value > maxValue)
                 {
-                    bestScore = score;
-                    selectedMove = move;
+                    maxValue = value;
                 }
             }
 
-            return selectedMove;
-        }
-
-        private static double ImmediateTreeScore(StackMergeGameState state, MoveResult result, long scoreDelta, SolverContext context)
-        {
-            double score = HeuristicStackMergeSolver.ScoreMove(state, result, scoreDelta) * 0.48;
-            score += QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.22 * context.Tuning.Factor(SolverTuneParameterId.BoardEvaluation, 0.12);
-            score += AntiStallStackMergeSolver.ScoreAntiStall(state, result, scoreDelta) * 0.18 * context.Tuning.Factor(SolverTuneParameterId.SafetyCushion, 0.12);
-            score += ComboFocusedStackMergeSolver.ScoreComboMove(state, result, scoreDelta) * 0.12 * context.Tuning.Factor(SolverTuneParameterId.ComboSetup, 0.12);
-            score += TuningScore(state, result, scoreDelta, context);
-            return score;
-        }
-
-        private static double Rollout(StackMergeGameState state, SolverContext context, int depth)
-        {
-            long startScore = state.Score;
-            for (int i = 0; i < depth && !state.IsGameOver; i++)
+            double range = maxValue - minValue;
+            if (range < 1e-9)
             {
-                SolverDecision decision;
-                if (context.LightweightMode)
+                range = 1.0;
+            }
+
+            double logParent = Math.Log(Math.Max(1, node.Visits) + 1);
+            double explorationWeight = 1.4 * context.Tuning.Factor(SolverTuneParameterId.Exploration, 0.10);
+
+            SearchNode best = null;
+            double bestScore = double.NegativeInfinity;
+            foreach (SearchNode child in node.Children)
+            {
+                double exploit = (child.AverageValue - minValue) / range;
+                double explore = Math.Sqrt(logParent / Math.Max(1, child.Visits));
+                double score = exploit + explorationWeight * explore + context.Random.NextDouble() * 1e-4;
+                if (score > bestScore)
                 {
-                    decision = i % 2 == 0
-                        ? HeuristicStackMergeSolver.ChooseHeuristicMove(state, context, "MCTS fast rollout")
-                        : ChooseBestByScore(state, context, "MCTS anti-stall rollout", AntiStallStackMergeSolver.ScoreAntiStall);
+                    bestScore = score;
+                    best = child;
                 }
-                else
-                {
-                    decision = i % 2 == 0
-                        ? HeuristicStackMergeSolver.ChooseHeuristicMove(state, context, "MCTS heuristic rollout")
-                        : ChooseBestByScore(state, context, "MCTS anti-stall rollout", AntiStallStackMergeSolver.ScoreAntiStall);
-                }
-                if (!decision.HasMove)
+            }
+
+            return best ?? node.Children[0];
+        }
+
+        /// <summary>
+        /// Leaf value = a strong STATIC board heuristic after a short, cheap playout. The static
+        /// evaluation (the queue planner's board score) is exactly what makes the lookahead solvers
+        /// strong; using it as the tree's leaf value — instead of a weak random rollout — keeps MCTS
+        /// fast AND competitive, while the tree itself supplies the adaptive lookahead depth.
+        /// </summary>
+        private static double LeafEvaluate(StackMergeGameState state, SolverContext context, int playoutDepth)
+        {
+            for (int i = 0; i < playoutDepth && !state.IsGameOver; i++)
+            {
+                int move = FastPlayoutMove(state);
+                if (move < 0)
                 {
                     break;
                 }
 
-                ApplyDecision(state, decision);
+                state.PlaceNext(move);
             }
 
-            return state.Score - startScore
-                + QueuePlannerStackMergeSolver.EvaluateBoard(state) * 0.30
-                + TuningBoardScore(state, context) * 0.45
-                + CountQueueTopMatches(state) * 28
-                + CountAdjacentEqualPairs(state) * 18
-                - (state.IsGameOver ? 4000 : 0);
+            double value = QueuePlannerStackMergeSolver.EvaluateBoard(state);
+            if (!context.Tuning.IsNeutral)
+            {
+                value += TuningBoardScore(state, context) * 0.45;
+            }
+
+            return value - (state.IsGameOver ? 6000 : 0);
+        }
+
+        /// <summary>
+        /// Allocation-free playout policy: take an immediate merge if one exists, otherwise drop on
+        /// the shortest stack to keep the board alive. Returns -1 when nothing can be placed.
+        /// </summary>
+        private static int FastPlayoutMove(StackMergeGameState state)
+        {
+            int next = state.NextBlocks.Count > 0 ? state.NextBlocks[0] : -1;
+            int shortest = -1;
+            int shortestHeight = int.MaxValue;
+
+            for (int move = 0; move < state.StackCount; move++)
+            {
+                if (!state.CanPlace(move))
+                {
+                    continue;
+                }
+
+                IReadOnlyList<int> stack = state.Stacks[move];
+                if (stack.Count > 0)
+                {
+                    int top = stack[^1];
+                    bool merges = top == next
+                        || (state.JokerBlocksEnabled && next == StackMergeGameState.JokerBlockValue && top > 0)
+                        || (state.MirrorStackEnabled && stack[0] == next);
+                    if (merges)
+                    {
+                        return move;
+                    }
+                }
+
+                if (stack.Count < shortestHeight)
+                {
+                    shortestHeight = stack.Count;
+                    shortest = move;
+                }
+            }
+
+            return shortest;
         }
 
         private sealed class SearchNode
