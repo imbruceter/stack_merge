@@ -47,6 +47,7 @@ namespace StackMerge
         public int machineLearningRuns;
         public long machineLearningBestScore;
         public int machineLearningBestHigh;
+        public StackMergePpoTrainingData machineLearningPolicy;
     }
 
     [Serializable]
@@ -179,10 +180,6 @@ namespace StackMerge
         private const int ModifierGateBestScore = 8000;
         private const int ModifierGateMerges = 1000;
         private const int ModifierGateHighestBlock = 1024;
-        private const float MachineLearningExperienceScale = 5200f;
-        private const float MachineLearningTrainingMultiplier = 8f;
-        private const float MachineLearningNormalMultiplier = 1.15f;
-
         private const int TokenProspectorMergeTarget = 8;
 
         private static readonly int[] SpeedUpgradeCosts = { 20, 55, 130, 300, 680 };
@@ -241,11 +238,13 @@ namespace StackMerge
         };
 
         private readonly StackMergeProgressionData data;
+        private readonly StackMergePpoAgent machineLearningAgent;
 
         public StackMergeProgression(StackMergeProgressionData data)
         {
             this.data = data ?? new StackMergeProgressionData();
             Normalize();
+            machineLearningAgent = new StackMergePpoAgent(this.data.machineLearningPolicy);
         }
 
         public long Chips => data.chips;
@@ -320,17 +319,21 @@ namespace StackMerge
             && IsSolverUnlocked(SolverId.MachineLearning)
             && data.machineLearningTrainingMode;
 
-        public float MachineLearningExperience => Math.Max(0f, data.machineLearningExperience);
+        public StackMergePpoAgent MachineLearningAgent => machineLearningAgent;
 
-        public float MachineLearningSkill => ComputeMachineLearningSkill(data.machineLearningExperience);
+        public float MachineLearningExperience => machineLearningAgent != null
+            ? machineLearningAgent.Metrics.Steps
+            : Math.Max(0f, data.machineLearningExperience);
 
-        public int MachineLearningLevel => ComputeMachineLearningLevel(data.machineLearningExperience);
+        public float MachineLearningSkill => machineLearningAgent?.TrainingProgress ?? 0f;
 
-        public int MachineLearningRuns => data.machineLearningRuns;
+        public int MachineLearningLevel => machineLearningAgent?.Level ?? 0;
 
-        public long MachineLearningBestScore => data.machineLearningBestScore;
+        public int MachineLearningRuns => Math.Max(data.machineLearningRuns, machineLearningAgent?.Metrics.Episodes ?? 0);
 
-        public int MachineLearningBestHigh => data.machineLearningBestHigh;
+        public long MachineLearningBestScore => Math.Max(data.machineLearningBestScore, data.machineLearningPolicy?.bestScore ?? 0);
+
+        public int MachineLearningBestHigh => Math.Max(data.machineLearningBestHigh, data.machineLearningPolicy?.bestHigh ?? 0);
 
         public bool CanUnlockModifiersMenu => data.agentsMenuUnlocked
             && UnlockedSolverCount >= ModifierGateSolvers
@@ -425,6 +428,7 @@ namespace StackMerge
 
         public void Save()
         {
+            data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
             PlayerPrefs.SetString(PlayerPrefsKey, JsonUtility.ToJson(data));
             PlayerPrefs.Save();
         }
@@ -449,7 +453,9 @@ namespace StackMerge
 
         public string GetMachineLearningStatus()
         {
-            return $"Training Lv {MachineLearningLevel} | Skill {MachineLearningSkill * 100f:0}% | Runs {MachineLearningRuns} | Best {FormatNumber(data.machineLearningBestScore)} | Mode {(data.machineLearningTrainingMode ? "Training: no chips, fast learning" : "Normal: earns chips, slow learning")}";
+            return machineLearningAgent != null
+                ? machineLearningAgent.BuildStatus(MachineLearningBestScore, MachineLearningBestHigh, data.machineLearningTrainingMode)
+                : "PPO model is not initialized yet.";
         }
 
         public void ToggleMachineLearningTrainingMode()
@@ -1140,12 +1146,20 @@ namespace StackMerge
 
         public float AwardMachineLearningRun(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)
         {
-            float gained = ComputeMachineLearningExperienceGain(runScore, moves, merges, highestMergedBlock, trainingMode);
-            data.machineLearningExperience = Math.Max(0f, data.machineLearningExperience + gained);
             data.machineLearningRuns++;
             data.machineLearningBestScore = Math.Max(data.machineLearningBestScore, Math.Max(0, runScore));
             data.machineLearningBestHigh = Math.Max(data.machineLearningBestHigh, Math.Max(0, highestMergedBlock));
-            return gained;
+            return machineLearningAgent?.Metrics.LastPolicyLoss ?? 0f;
+        }
+
+        public void ObserveMachineLearningMove(MoveResult result, StackMergeGameState stateAfterMove, bool trainingMode)
+        {
+            machineLearningAgent?.Observe(result, stateAfterMove, trainingMode);
+        }
+
+        public void FlushMachineLearningTraining(bool trainingMode)
+        {
+            machineLearningAgent?.ForceUpdate(trainingMode);
         }
 
         public long GetAchievementProgress(AchievementDefinition achievement)
@@ -1317,19 +1331,18 @@ namespace StackMerge
 
         public static float ComputeMachineLearningExperienceGain(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)
         {
-            double scoreValue = Math.Sqrt(Math.Max(0, runScore)) * 1.6;
-            double moveValue = Math.Max(0, moves) * 0.55;
-            double mergeValue = Math.Max(0, merges) * 2.8;
-            double highValue = FloorLog2(Math.Max(1, highestMergedBlock)) * 42.0;
-            double baseGain = Math.Max(8.0, scoreValue + moveValue + mergeValue + highValue);
-            double multiplier = trainingMode ? MachineLearningTrainingMultiplier : MachineLearningNormalMultiplier;
-            return (float)Math.Min(25000.0, baseGain * multiplier);
+            double scoreValue = Math.Sqrt(Math.Max(0, runScore)) * 0.10;
+            double moveValue = Math.Max(0, moves) * 0.025;
+            double mergeValue = Math.Max(0, merges) * 0.12;
+            double highValue = FloorLog2(Math.Max(1, highestMergedBlock)) * 1.6;
+            double baseGain = Math.Max(1.0, scoreValue + moveValue + mergeValue + highValue);
+            return (float)Math.Min(500.0, baseGain * (trainingMode ? 1.0 : 0.35));
         }
 
         public static float ComputeMachineLearningSkill(float experience)
         {
             experience = Math.Max(0f, experience);
-            return Mathf.Clamp01(1f - Mathf.Exp(-experience / MachineLearningExperienceScale));
+            return Mathf.Clamp01(1f - Mathf.Exp(-experience / 650f));
         }
 
         public static int ComputeMachineLearningLevel(float experience)
@@ -1482,6 +1495,7 @@ namespace StackMerge
             data.machineLearningRuns = Math.Max(0, data.machineLearningRuns);
             data.machineLearningBestScore = Math.Max(0, data.machineLearningBestScore);
             data.machineLearningBestHigh = Math.Max(0, data.machineLearningBestHigh);
+            data.machineLearningPolicy ??= new StackMergePpoTrainingData();
             if (!IsSolverUnlocked(SolverId.MachineLearning))
             {
                 data.machineLearningTrainingMode = false;

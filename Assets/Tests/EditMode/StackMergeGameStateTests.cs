@@ -137,6 +137,35 @@ namespace StackMerge.Tests
         }
 
         [Test]
+        public void PpoSolver_RecordsTrajectoryAndUpdatesPolicy()
+        {
+            var state = new StackMergeGameState(seed: 77);
+            var agent = new StackMergePpoAgent(new StackMergePpoTrainingData(), 77);
+            var solver = new MachineLearningStackMergeSolver();
+
+            for (int i = 0; i < 64 && !state.IsGameOver; i++)
+            {
+                var context = new SolverContext(
+                    new Random(77 + i),
+                    1,
+                    1,
+                    machineLearningAgent: agent,
+                    machineLearningTrainingMode: true);
+                SolverDecision decision = solver.ChooseMove(state, context);
+
+                Assert.That(SolverScoring.CanApplyDecision(state, decision), Is.True);
+                MoveResult result = SolverScoring.ApplyDecision(state, decision);
+                Assert.That(result.Accepted, Is.True);
+                agent.Observe(result, state, true);
+            }
+
+            agent.ForceUpdate(true);
+
+            Assert.That(agent.Metrics.Steps, Is.GreaterThan(0));
+            Assert.That(agent.Metrics.Updates, Is.GreaterThan(0));
+        }
+
+        [Test]
         public void HighTierAccelerator_HalvesExpensiveSolverCompute()
         {
             var neutral = new SolverContext(

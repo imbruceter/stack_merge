@@ -263,7 +263,7 @@ namespace StackMerge
             new(SolverId.Mcts, "MCTS", 6200, "Builds a search tree.", "Monte Carlo Tree Search: balances exploring new lines with exploiting lines that already score well."),
             new(SolverId.AntiStall, "STALL", 1250, "Avoids dead boards.", "Anti-stall solver: heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges."),
             new(SolverId.Combo, "COMBO", 1800, "Sets up chain merges.", "Combo-focused solver: reads the queue and rewards positions that can cascade over the next 2-3 turns."),
-            new(SolverId.MachineLearning, "DQN", 250000, "Endgame learner. Requires every Modifier to be fully purchased.", "Machine Learning solver: starts noisy and immature, then trains into a fast value-policy solver that reads board shape, queue pressure, tools, and long-term merge value.")
+            new(SolverId.MachineLearning, "PPO", 250000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization solver: a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
         };
 
         public static readonly SolverTuningDefinition[] TuningDefinitions =
@@ -336,7 +336,7 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Changes how much immediate merging competes with setup."),
                 TuneWhole(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through.", -2, 2),
                 Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Keeps some space open while building combos.")),
-            new(SolverId.MachineLearning, "DQN has no manual sliders. It is tuned by training runs: Training mode learns fast with no chip output, normal mode learns slower while earning.")
+            new(SolverId.MachineLearning, "PPO has no manual sliders. It trains its own actor and critic networks: Training mode updates faster with no chip output, normal mode updates slower while earning.")
         };
 
         public static SolverDefinition GetDefinition(SolverId id)
@@ -458,7 +458,8 @@ namespace StackMerge
             int planningDepthLimit = int.MaxValue,
             SolverTuningSettings? tuning = null,
             bool highTierSpeedTuningAccelerator = false,
-            float machineLearningSkill = 0f)
+            StackMergePpoAgent machineLearningAgent = null,
+            bool machineLearningTrainingMode = false)
         {
             Random = random ?? new Random();
             MonteCarloSimulations = Math.Max(1, monteCarloSimulations);
@@ -467,7 +468,8 @@ namespace StackMerge
             PlanningDepthLimit = Math.Max(1, planningDepthLimit);
             Tuning = tuning ?? SolverTuningSettings.Neutral(SolverId.Rand);
             HighTierSpeedTuningAccelerator = highTierSpeedTuningAccelerator;
-            MachineLearningSkill = Math.Min(1f, Math.Max(0f, machineLearningSkill));
+            MachineLearningAgent = machineLearningAgent;
+            MachineLearningTrainingMode = machineLearningTrainingMode;
         }
 
         public Random Random { get; }
@@ -484,7 +486,9 @@ namespace StackMerge
 
         public bool HighTierSpeedTuningAccelerator { get; }
 
-        public float MachineLearningSkill { get; }
+        public StackMergePpoAgent MachineLearningAgent { get; }
+
+        public bool MachineLearningTrainingMode { get; }
 
         public int LimitPlanningDepth(int requestedDepth)
         {
@@ -995,146 +999,23 @@ namespace StackMerge
     {
         public SolverId Id => SolverId.MachineLearning;
 
-        public string DisplayName => "DQN";
+        public string DisplayName => "PPO";
 
         public SolverDecision ChooseMove(StackMergeGameState state, SolverContext context)
         {
+            if (context.MachineLearningAgent != null)
+            {
+                return context.MachineLearningAgent.ChooseMove(state, context.Random, context.MachineLearningTrainingMode);
+            }
+
             int[] legalMoves = state.GetLegalMoveIndices();
-            float skill = Math.Min(1f, Math.Max(0f, context.MachineLearningSkill));
-
-            if (legalMoves.Length > 0 && skill < 0.12f && context.Random.NextDouble() < 0.35 - skill * 1.8)
+            if (legalMoves.Length == 0)
             {
-                int randomMove = legalMoves[context.Random.Next(legalMoves.Length)];
-                return new SolverDecision(true, randomMove, 0, "DQN warmup exploration");
+                return SolverDecision.NoMove;
             }
 
-            SolverDecision tool = ChooseBestToolAction(state, context, "DQN tool policy");
-            SolverDecision best = tool.HasMove
-                ? new SolverDecision(true, tool.ActionKind, tool.StackIndex, tool.BlockIndex, tool.Score * (0.55 + skill * 1.65), tool.Reason)
-                : SolverDecision.NoMove;
-
-            foreach (int move in legalMoves)
-            {
-                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
-                long beforeScore = copy.Score;
-                MoveResult result = copy.PlaceNext(move);
-                if (!result.Accepted)
-                {
-                    continue;
-                }
-
-                long scoreDelta = copy.Score - beforeScore;
-                double score = ScorePolicy(copy, result, scoreDelta, context, skill);
-                if (skill >= 0.18f)
-                {
-                    score += EstimateBestFollowUp(copy, context, skill, skill >= 0.72f ? 2 : 1) * (0.18 + skill * 0.58);
-                }
-
-                score += context.Random.NextDouble() * Math.Max(1.0, (1.0 - skill) * 520.0);
-                if (!best.HasMove || score > best.Score)
-                {
-                    string reason = skill < 0.28f
-                        ? "DQN learning policy"
-                        : skill < 0.72f
-                            ? "DQN value policy"
-                            : "DQN trained policy";
-                    best = new SolverDecision(true, move, score, reason);
-                }
-            }
-
-            return best;
-        }
-
-        private static double EstimateBestFollowUp(StackMergeGameState state, SolverContext context, float skill, int depth)
-        {
-            if (depth <= 0 || state.IsGameOver)
-            {
-                return BoardValue(state, skill);
-            }
-
-            double best = double.NegativeInfinity;
-            SolverDecision tool = ChooseBestToolAction(state, context, "DQN follow-up tool");
-            if (tool.HasMove)
-            {
-                StackMergeGameState toolCopy = state.CreateSimulationCopy(context.Random.Next());
-                long beforeScore = toolCopy.Score;
-                MoveResult toolResult = ApplyDecision(toolCopy, tool);
-                if (toolResult.Accepted)
-                {
-                    double score = ScorePolicy(toolCopy, toolResult, toolCopy.Score - beforeScore, context, skill) * 0.70;
-                    score += EstimateBestFollowUp(toolCopy, context, skill, depth - 1) * 0.36;
-                    best = score;
-                }
-            }
-
-            foreach (int move in state.GetLegalMoveIndices())
-            {
-                StackMergeGameState copy = state.CreateSimulationCopy(context.Random.Next());
-                long beforeScore = copy.Score;
-                MoveResult result = copy.PlaceNext(move);
-                if (!result.Accepted)
-                {
-                    continue;
-                }
-
-                double score = ScorePolicy(copy, result, copy.Score - beforeScore, context, skill);
-                score += EstimateBestFollowUp(copy, context, skill, depth - 1) * 0.36;
-                if (score > best)
-                {
-                    best = score;
-                }
-            }
-
-            return double.IsNegativeInfinity(best) ? BoardValue(state, skill) - 2000 : best;
-        }
-
-        private static double ScorePolicy(StackMergeGameState state, MoveResult result, long scoreDelta, SolverContext context, float skill)
-        {
-            int topLog = FloorLog2(Math.Max(1, result.ResultingTopValue));
-            int highLog = FloorLog2(Math.Max(1, state.HighestBlock));
-            int freeSlots = FreeSlots(state);
-            int legalMoves = state.GetLegalMoveIndices().Length;
-            int maxHeight = MaxHeight(state);
-            int minHeight = state.Stacks.Min(stack => stack.Count);
-            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
-            int queueMatches = CountQueueTopMatches(state);
-            int pairSetups = CountAdjacentEqualPairs(state);
-
-            double early = 1.0 - skill;
-            double trained = skill * skill;
-            double score = 0;
-            score += scoreDelta * (0.22 + trained * 0.95);
-            score += result.MergeCount * (140 + trained * 1280);
-            score += topLog * (28 + trained * 210);
-            score += highLog * (20 + trained * 155);
-            score += freeSlots * (10 + skill * 58);
-            score += legalMoves * (48 + skill * 240);
-            score += queueMatches * (34 + trained * 260);
-            score += pairSetups * (30 + trained * 210);
-            score += QueuePlannerStackMergeSolver.EvaluateBoard(state) * (0.08 + trained * 0.34);
-            score += ComboFocusedStackMergeSolver.ScoreComboMove(state, result, scoreDelta) * (0.05 + trained * 0.30);
-            score += AntiStallStackMergeSolver.ScoreAntiStall(state, result, scoreDelta) * (0.04 + skill * 0.20);
-            score += ToolBoardScore(state, context) * trained * 0.22;
-            score += TuningScore(state, result, scoreDelta, context) * 0.20;
-            score -= dangerStacks * (80 + skill * 560);
-            score -= (maxHeight - minHeight) * (24 + skill * 92);
-            score -= maxHeight * maxHeight * (2 + skill * 9);
-            score -= state.IsGameOver ? 12000 + skill * 18000 : 0;
-            score -= early * maxHeight * 18;
-            return score;
-        }
-
-        private static double BoardValue(StackMergeGameState state, float skill)
-        {
-            int dangerStacks = state.Stacks.Count(stack => stack.Count >= state.StackCapacity - 1);
-            return QueuePlannerStackMergeSolver.EvaluateBoard(state) * (0.35 + skill * 0.45)
-                + FreeSlots(state) * (20 + skill * 45)
-                + state.GetLegalMoveIndices().Length * (80 + skill * 180)
-                + CountQueueTopMatches(state) * (60 + skill * 150)
-                + CountAdjacentEqualPairs(state) * (50 + skill * 130)
-                + FloorLog2(Math.Max(1, state.HighestBlock)) * (70 + skill * 180)
-                - dangerStacks * (220 + skill * 480)
-                - (state.IsGameOver ? 8000 + skill * 12000 : 0);
+            int randomMove = legalMoves[context.Random.Next(legalMoves.Length)];
+            return new SolverDecision(true, randomMove, 0, "PPO uninitialized fallback");
         }
     }
 

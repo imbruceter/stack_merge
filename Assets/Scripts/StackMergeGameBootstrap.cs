@@ -756,7 +756,7 @@ namespace StackMerge
             {
                 progression.ToggleMachineLearningTrainingMode();
                 progression.Save();
-                SetText(feedbackText, progression.MachineLearningTrainingMode ? "DQN training mode enabled: chips paused" : "DQN normal mode enabled");
+                SetText(feedbackText, progression.MachineLearningTrainingMode ? "PPO training mode enabled: chips paused" : "PPO normal mode enabled");
                 RefreshEverything();
                 return;
             }
@@ -874,7 +874,8 @@ namespace StackMerge
                         ? progression.GetSolverTuning(progression.SelectedSolver)
                         : SolverTuningSettings.Neutral(progression.SelectedSolver),
                     highTierSpeedTuningAccelerator: progression.NeuralAcceleratorActive,
-                    machineLearningSkill: progression.MachineLearningSkill));
+                    machineLearningAgent: progression.MachineLearningAgent,
+                    machineLearningTrainingMode: progression.IsMachineLearningTrainingActive));
 
             if (decision.HasMove)
             {
@@ -937,6 +938,11 @@ namespace StackMerge
         {
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             long chipsGained = progression.AwardMove(result, machineLearningTraining);
+            if (progression.SelectedSolver == SolverId.MachineLearning && autoSolverMove)
+            {
+                progression.ObserveMachineLearningMove(result, gameState, machineLearningTraining);
+            }
+
             if (autoSolverMove)
             {
                 currentRunUsedAutoSolve = true;
@@ -947,7 +953,6 @@ namespace StackMerge
             }
 
             long runBonus = 0;
-            float learningGain = 0f;
             if (!wasGameOver && result.IsGameOver)
             {
                 bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
@@ -962,7 +967,7 @@ namespace StackMerge
                     machineLearningTraining);
                 if (progression.SelectedSolver == SolverId.MachineLearning)
                 {
-                    learningGain = progression.AwardMachineLearningRun(
+                    progression.AwardMachineLearningRun(
                         gameState.Score,
                         gameState.BlocksDropped,
                         gameState.TotalMerges,
@@ -990,7 +995,9 @@ namespace StackMerge
                 : string.IsNullOrWhiteSpace(reason)
                     ? result.Reason
                     : $"{reason}; {result.Reason}";
-            string learningText = learningGain > 0f ? $" | +{learningGain:0} ML XP" : string.Empty;
+            string learningText = progression.SelectedSolver == SolverId.MachineLearning
+                ? $" | PPO U{progression.MachineLearningAgent.Metrics.Updates}"
+                : string.Empty;
             SetText(feedbackText, $"{moveText} | {chipText}{learningText} | {resultReason}");
 
             RefreshEverything();
@@ -1049,7 +1056,7 @@ namespace StackMerge
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
             bool changed = progression.SelectOrUnlockSolver(selectedSolverId);
             string failure = selectedSolverId == SolverId.MachineLearning && !progression.CanUnlockMachineLearning
-                ? "DQN requires every Modifier maxed"
+                ? "PPO requires every Modifier maxed"
                 : "Not enough chips";
             SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : failure);
             progression.Save();
@@ -1847,11 +1854,11 @@ namespace StackMerge
                     : !progression.ModifiersMenuUnlocked ? "Stage 2 - Agent acceleration"
                     : !progression.AllModifiersMaxed ? "Stage 3 - Modifier Lab"
                     : !progression.IsSolverUnlocked(SolverId.MachineLearning) ? "Stage 4 - Machine Learning"
-                    : "Endgame - DQN training";
+                    : "Endgame - PPO training";
                 string nextGoal = progression.IsSolverUnlocked(SolverId.MachineLearning)
                     ? progression.GetMachineLearningStatus()
                     : progression.ModifiersMenuUnlocked
-                    ? progression.AllModifiersMaxed ? "DQN is ready to unlock in Algorithms." : "Max every Modifier to open the Machine Learning layer."
+                    ? progression.AllModifiersMaxed ? "PPO is ready to unlock in Algorithms." : "Max every Modifier to open the Machine Learning layer."
                     : progression.GetModifiersGateStatus();
                 SetText(progressionStageText, $"{stageName}\n{nextGoal}");
             }
