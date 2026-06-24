@@ -742,8 +742,9 @@ namespace StackMerge.Editor
             buttons[(int)SolverId.Moca] = CreateSolverButton(monteCarlo, SolverId.Moca, 0, 2);
             buttons[(int)SolverId.MocaPlus] = CreateSolverButton(monteCarlo, SolverId.MocaPlus, 1, 2);
 
-            RectTransform treeSearch = CreateCategoryPanel(panel, "Tree Search", 1074f, 112f);
-            buttons[(int)SolverId.Mcts] = CreateSolverButton(treeSearch, SolverId.Mcts, 0, 1);
+            RectTransform treeSearch = CreateCategoryPanel(panel, "Tree / Learning", 1074f, 112f);
+            buttons[(int)SolverId.Mcts] = CreateSolverButton(treeSearch, SolverId.Mcts, 0, 2);
+            buttons[(int)SolverId.MachineLearning] = CreateSolverButton(treeSearch, SolverId.MachineLearning, 1, 2);
 
             tunePanel = BuildSolverTunePanel(
                 panel,
@@ -978,11 +979,12 @@ namespace StackMerge.Editor
         private static Button[] CreateModifierGrid(RectTransform category)
         {
             Button[] buttons = new Button[StackMergeProgression.Modifiers.Length];
+            int rows = Mathf.CeilToInt(buttons.Length / 3f);
             for (int i = 0; i < buttons.Length; i++)
             {
                 ModifierDefinition definition = StackMergeProgression.Modifiers[i];
                 buttons[i] = CreateButton(category, $"{definition.DisplayName}\nLocked", HexColor("#92400E"), 16);
-                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, 2, 12f);
+                SetGridCell(buttons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 12f);
             }
 
             return buttons;

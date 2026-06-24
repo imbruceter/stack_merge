@@ -27,8 +27,11 @@ namespace StackMerge.Editor
         private int maxSecondsPerRun = 3;
         private int maxSecondsPerSolver = 30;
         private int seed = 12345;
+        private bool mlBenchmarkTrainingMode = true;
+        private float mlBenchmarkStartExperience;
         private Vector2 scroll;
         private string lastOutput = "No benchmark run yet.";
+        private readonly List<MlBenchmarkRunLine> lastMlRunLines = new();
 
         [MenuItem("Tools/Stack Merge/Solver Benchmark")]
         public static void Open()
@@ -47,6 +50,7 @@ namespace StackMerge.Editor
             benchmarkEnabled = EditorGUILayout.Toggle("Demo benchmark mode", benchmarkEnabled);
             using (new EditorGUI.DisabledScope(!benchmarkEnabled))
             {
+                EnsureBenchmarkModifierArray();
                 runAllSolvers = EditorGUILayout.Toggle("Run all solvers", runAllSolvers);
                 if (!runAllSolvers)
                 {
@@ -92,6 +96,15 @@ namespace StackMerge.Editor
                     }
                 }
 
+                if (!runAllSolvers && selectedSolver == SolverId.MachineLearning)
+                {
+                    EditorGUILayout.Space(4f);
+                    EditorGUILayout.LabelField("Machine Learning benchmark", EditorStyles.boldLabel);
+                    mlBenchmarkTrainingMode = EditorGUILayout.Toggle("Training mode learning", mlBenchmarkTrainingMode);
+                    mlBenchmarkStartExperience = EditorGUILayout.FloatField("Start ML experience", Mathf.Max(0f, mlBenchmarkStartExperience));
+                    EditorGUILayout.HelpBox("When benchmarking only DQN, the output includes one line per run so learning speed and stability are visible.", MessageType.Info);
+                }
+
                 EditorGUILayout.Space(4f);
                 EditorGUILayout.LabelField("Run modifiers", EditorStyles.boldLabel);
                 for (int i = 0; i < StackMergeProgression.Modifiers.Length; i++)
@@ -120,6 +133,8 @@ namespace StackMerge.Editor
 
         private void RunBenchmark()
         {
+            EnsureBenchmarkModifierArray();
+            lastMlRunLines.Clear();
             SolverId[] solverIds = runAllSolvers
                 ? StackMergeSolverCatalog.Definitions.Select(definition => definition.Id).ToArray()
                 : new[] { selectedSolver };
@@ -153,6 +168,25 @@ namespace StackMerge.Editor
             UnityEngine.Debug.Log(lastOutput);
         }
 
+        private void EnsureBenchmarkModifierArray()
+        {
+            if (benchmarkModifierLevels != null && benchmarkModifierLevels.Length == StackMergeProgression.Modifiers.Length)
+            {
+                return;
+            }
+
+            int[] migrated = new int[StackMergeProgression.Modifiers.Length];
+            if (benchmarkModifierLevels != null)
+            {
+                for (int i = 0; i < benchmarkModifierLevels.Length && i < migrated.Length; i++)
+                {
+                    migrated[i] = benchmarkModifierLevels[i];
+                }
+            }
+
+            benchmarkModifierLevels = migrated;
+        }
+
         private BenchmarkSummary RunSolverBenchmark(SolverId solverId, System.Random seedRandom, int solverIndex, int solverCount, out bool canceled)
         {
             IStackMergeSolver solver = StackMergeSolverFactory.Create(solverId);
@@ -160,6 +194,7 @@ namespace StackMerge.Editor
             Stopwatch solverStopwatch = Stopwatch.StartNew();
             canceled = false;
             bool solverTimedOut = false;
+            float mlExperience = solverId == SolverId.MachineLearning ? Math.Max(0f, mlBenchmarkStartExperience) : 0f;
 
             for (int i = 0; i < runCount; i++)
             {
@@ -181,8 +216,29 @@ namespace StackMerge.Editor
                 }
 
                 int runSeed = seedRandom.Next();
-                BenchmarkRunResult result = RunSingleGame(solver, runSeed, solverStopwatch);
+                float skillBefore = solverId == SolverId.MachineLearning ? StackMergeProgression.ComputeMachineLearningSkill(mlExperience) : 0f;
+                BenchmarkRunResult result = RunSingleGame(solver, runSeed, solverStopwatch, skillBefore);
                 results.Add(result);
+                if (solverId == SolverId.MachineLearning)
+                {
+                    float gainedExperience = StackMergeProgression.ComputeMachineLearningExperienceGain(
+                        result.Score,
+                        result.Moves,
+                        result.Merges,
+                        result.HighestMergedBlock,
+                        mlBenchmarkTrainingMode);
+                    mlExperience += gainedExperience;
+                    float skillAfter = StackMergeProgression.ComputeMachineLearningSkill(mlExperience);
+                    if (!runAllSolvers)
+                    {
+                        lastMlRunLines.Add(new MlBenchmarkRunLine(
+                            i + 1,
+                            skillBefore,
+                            skillAfter,
+                            gainedExperience,
+                            result));
+                    }
+                }
 
                 if (result.SolverTimedOut)
                 {
@@ -195,7 +251,7 @@ namespace StackMerge.Editor
             return BenchmarkSummary.Create(solverId, results, solverStopwatch.Elapsed, solverTimedOut, canceled, runCount);
         }
 
-        private BenchmarkRunResult RunSingleGame(IStackMergeSolver solver, int runSeed, Stopwatch solverStopwatch)
+        private BenchmarkRunResult RunSingleGame(IStackMergeSolver solver, int runSeed, Stopwatch solverStopwatch, float machineLearningSkill = 0f)
         {
             var state = new StackMergeGameState(
                 stackCapacity: stackCapacity,
@@ -210,7 +266,9 @@ namespace StackMerge.Editor
                 rolloutDepth,
                 fastBenchmarkMode,
                 fastBenchmarkMode ? planningDepthLimit : int.MaxValue,
-                BuildBenchmarkTuning(solver.Id));
+                BuildBenchmarkTuning(solver.Id),
+                IsBenchmarkModifierActive(ModifierId.NeuralAccelerator),
+                machineLearningSkill);
 
             Stopwatch runStopwatch = Stopwatch.StartNew();
             int moves = 0;
@@ -255,7 +313,8 @@ namespace StackMerge.Editor
                 state.IsGameOver,
                 moves >= maxMovesPerRun && !state.IsGameOver,
                 runTimedOut,
-                solverTimedOut);
+                solverTimedOut,
+                runStopwatch.Elapsed.TotalSeconds);
         }
 
         private string BuildOutput(IReadOnlyList<BenchmarkSummary> rows, TimeSpan elapsed, bool canceled)
@@ -287,6 +346,19 @@ namespace StackMerge.Editor
                 builder.AppendLine();
                 builder.AppendLine($"Best median: {bestMedian.SolverName} ({bestMedian.MedianScore})");
                 builder.AppendLine($"Best peak: {bestPeak.SolverName} ({bestPeak.MaxScore})");
+            }
+
+            if (!runAllSolvers && selectedSolver == SolverId.MachineLearning && lastMlRunLines.Count > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine("DQN Learning Runs");
+                builder.AppendLine("Run\tSkillBefore\tSkillAfter\tXpGain\tScore\tMoves\tMerges\tHigh\tEnded\tTimed\tMoveCap\tSecs");
+                foreach (MlBenchmarkRunLine line in lastMlRunLines)
+                {
+                    BenchmarkRunResult result = line.Result;
+                    builder.AppendLine(
+                        $"{line.RunIndex}\t{line.SkillBefore * 100f:0.0}%\t{line.SkillAfter * 100f:0.0}%\t{line.ExperienceGain:0}\t{result.Score}\t{result.Moves}\t{result.Merges}\t{result.HighestMergedBlock}\t{(result.GameOver ? "Y" : "N")}\t{(result.RunTimedOut || result.SolverTimedOut ? "Y" : "N")}\t{(result.HitMoveCap ? "Y" : "N")}\t{result.ElapsedSeconds:0.000}");
+                }
             }
 
             return builder.ToString();
@@ -326,6 +398,12 @@ namespace StackMerge.Editor
                 benchmarkModifierLevels[(int)ModifierId.QueueScrubber]);
         }
 
+        private bool IsBenchmarkModifierActive(ModifierId modifierId)
+        {
+            int index = (int)modifierId;
+            return index >= 0 && index < benchmarkModifierLevels.Length && benchmarkModifierLevels[index] > 0;
+        }
+
         private string BuildModifierSummary()
         {
             return string.Join(", ", StackMergeProgression.Modifiers.Select((modifier, index) => $"{modifier.DisplayName} L{benchmarkModifierLevels[index]}"));
@@ -341,7 +419,8 @@ namespace StackMerge.Editor
                 bool gameOver,
                 bool hitMoveCap,
                 bool runTimedOut,
-                bool solverTimedOut)
+                bool solverTimedOut,
+                double elapsedSeconds)
             {
                 Score = score;
                 Moves = moves;
@@ -351,6 +430,7 @@ namespace StackMerge.Editor
                 HitMoveCap = hitMoveCap;
                 RunTimedOut = runTimedOut;
                 SolverTimedOut = solverTimedOut;
+                ElapsedSeconds = elapsedSeconds;
             }
 
             public long Score { get; }
@@ -368,6 +448,30 @@ namespace StackMerge.Editor
             public bool RunTimedOut { get; }
 
             public bool SolverTimedOut { get; }
+
+            public double ElapsedSeconds { get; }
+        }
+
+        private readonly struct MlBenchmarkRunLine
+        {
+            public MlBenchmarkRunLine(int runIndex, float skillBefore, float skillAfter, float experienceGain, BenchmarkRunResult result)
+            {
+                RunIndex = runIndex;
+                SkillBefore = skillBefore;
+                SkillAfter = skillAfter;
+                ExperienceGain = experienceGain;
+                Result = result;
+            }
+
+            public int RunIndex { get; }
+
+            public float SkillBefore { get; }
+
+            public float SkillAfter { get; }
+
+            public float ExperienceGain { get; }
+
+            public BenchmarkRunResult Result { get; }
         }
 
         private readonly struct BenchmarkSummary

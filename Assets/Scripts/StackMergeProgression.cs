@@ -42,6 +42,11 @@ namespace StackMerge
         public int highestBlockEver;
         public long bestRunScore;
         public int mergeTokenProgress;
+        public bool machineLearningTrainingMode;
+        public float machineLearningExperience;
+        public int machineLearningRuns;
+        public long machineLearningBestScore;
+        public int machineLearningBestHigh;
     }
 
     [Serializable]
@@ -108,7 +113,8 @@ namespace StackMerge
         MirrorStack = 2,
         Joker = 3,
         MinersPickaxe = 4,
-        QueueScrubber = 5
+        QueueScrubber = 5,
+        NeuralAccelerator = 6
     }
 
     public readonly struct ModifierDefinition
@@ -173,6 +179,9 @@ namespace StackMerge
         private const int ModifierGateBestScore = 8000;
         private const int ModifierGateMerges = 1000;
         private const int ModifierGateHighestBlock = 1024;
+        private const float MachineLearningExperienceScale = 5200f;
+        private const float MachineLearningTrainingMultiplier = 8f;
+        private const float MachineLearningNormalMultiplier = 1.15f;
 
         private const int TokenProspectorMergeTarget = 8;
 
@@ -205,7 +214,8 @@ namespace StackMerge
             new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 2400),
             new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 3600),
             new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one solver-controlled pickaxe use per run. The solver may delete any block in any stack, including middle blocks, to open space or trigger merges.", 1600, 3200, 6400, 12800, 25600),
-            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1400, 2800, 5600, 11200, 22400)
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1400, 2800, 5600, 11200, 22400),
+            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "Permanent unlock: MOCA, MOCA+, and MCTS run about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 48000)
         };
 
         public static readonly AchievementDefinition[] Achievements =
@@ -294,6 +304,34 @@ namespace StackMerge
 
         public bool ModifiersMenuUnlocked => data.modifiersMenuUnlocked;
 
+        public bool AllModifiersMaxed => data.modifiersMenuUnlocked && Modifiers.All(modifier => IsModifierMaxed(modifier.Id));
+
+        public bool NeuralAcceleratorActive => data.modifiersMenuUnlocked && GetModifierLevel(ModifierId.NeuralAccelerator) > 0;
+
+        public bool CanUnlockMachineLearning => AllModifiersMaxed;
+
+        public bool MachineLearningTrainingMode
+        {
+            get => data.machineLearningTrainingMode;
+            set => data.machineLearningTrainingMode = value;
+        }
+
+        public bool IsMachineLearningTrainingActive => SelectedSolver == SolverId.MachineLearning
+            && IsSolverUnlocked(SolverId.MachineLearning)
+            && data.machineLearningTrainingMode;
+
+        public float MachineLearningExperience => Math.Max(0f, data.machineLearningExperience);
+
+        public float MachineLearningSkill => ComputeMachineLearningSkill(data.machineLearningExperience);
+
+        public int MachineLearningLevel => ComputeMachineLearningLevel(data.machineLearningExperience);
+
+        public int MachineLearningRuns => data.machineLearningRuns;
+
+        public long MachineLearningBestScore => data.machineLearningBestScore;
+
+        public int MachineLearningBestHigh => data.machineLearningBestHigh;
+
         public bool CanUnlockModifiersMenu => data.agentsMenuUnlocked
             && UnlockedSolverCount >= ModifierGateSolvers
             && data.runsCompleted >= ModifierGateRuns
@@ -342,7 +380,9 @@ namespace StackMerge
         public float GetMoveInterval(SolverId solverId)
         {
             float baseInterval = MoveIntervals[Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1)];
-            return Mathf.Max(0.012f, baseInterval * GetSolverPacingMultiplier(solverId) * AgentMoveIntervalMultiplier);
+            float minInterval = solverId == SolverId.MachineLearning ? 0.006f : 0.012f;
+            float trainingMultiplier = solverId == SolverId.MachineLearning && data.machineLearningTrainingMode ? 0.70f : 1f;
+            return Mathf.Max(minInterval, baseInterval * GetSolverPacingMultiplier(solverId) * AgentMoveIntervalMultiplier * trainingMultiplier);
         }
 
         public double GetHighestBlockRewardMultiplier(int highestBlock)
@@ -393,6 +433,31 @@ namespace StackMerge
         {
             int index = (int)solverId;
             return index >= 0 && index < data.solverUnlocked.Length && data.solverUnlocked[index];
+        }
+
+        public string GetMachineLearningGateStatus()
+        {
+            if (IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                return GetMachineLearningStatus();
+            }
+
+            return CanUnlockMachineLearning
+                ? "Ready: every Modifier is fully purchased."
+                : $"Requires every Modifier maxed: {Modifiers.Count(modifier => IsModifierMaxed(modifier.Id))}/{Modifiers.Length}";
+        }
+
+        public string GetMachineLearningStatus()
+        {
+            return $"Training Lv {MachineLearningLevel} | Skill {MachineLearningSkill * 100f:0}% | Runs {MachineLearningRuns} | Best {FormatNumber(data.machineLearningBestScore)} | Mode {(data.machineLearningTrainingMode ? "Training: no chips, fast learning" : "Normal: earns chips, slow learning")}";
+        }
+
+        public void ToggleMachineLearningTrainingMode()
+        {
+            if (IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                data.machineLearningTrainingMode = !data.machineLearningTrainingMode;
+            }
         }
 
         public SolverTuningSettings GetSolverTuning(SolverId solverId)
@@ -491,6 +556,11 @@ namespace StackMerge
             {
                 data.selectedSolver = index;
                 return true;
+            }
+
+            if (solverId == SolverId.MachineLearning && !CanUnlockMachineLearning)
+            {
+                return false;
             }
 
             long cost = GetSolverUnlockCost(solverId);
@@ -862,6 +932,15 @@ namespace StackMerge
             return value ? "yes" : "no";
         }
 
+        private static string FormatNumber(long value)
+        {
+            return value >= 1_000_000
+                ? $"{value / 1_000_000d:0.##}M"
+                : value >= 1_000
+                    ? $"{value / 1_000d:0.##}K"
+                    : value.ToString();
+        }
+
         public AgentDefinition GetAgentDefinition(AgentId agentId)
         {
             return Agents[(int)agentId];
@@ -963,7 +1042,7 @@ namespace StackMerge
             return TryEquipAgent(agentId);
         }
 
-        public long AwardMove(MoveResult result)
+        public long AwardMove(MoveResult result, bool suppressChips = false)
         {
             if (!result.Accepted)
             {
@@ -982,12 +1061,16 @@ namespace StackMerge
             long gained = placement;
             gained += (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
             gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
-            if (gained > 0)
+            if (gained > 0 && !suppressChips)
             {
                 gained = ApplyStageMultiplier(gained);
                 gained = ApplyIncomeMultiplier(gained);
                 data.chips += gained;
                 data.totalChipsEarned += gained;
+            }
+            else if (suppressChips)
+            {
+                gained = 0;
             }
 
             if (result.ActionKind == SolverActionKind.Place)
@@ -997,7 +1080,11 @@ namespace StackMerge
 
             data.totalMerges += Math.Max(0, result.MergeCount);
             data.highestBlockEver = Math.Max(data.highestBlockEver, result.HighestBlock);
-            AwardMergeTokens(result.MergeCount);
+            if (!suppressChips)
+            {
+                AwardMergeTokens(result.MergeCount);
+            }
+
             return gained;
         }
 
@@ -1016,7 +1103,7 @@ namespace StackMerge
             return AwardRunCompleted(runScore, solverId, moves, merges, highestMergedBlock, manualRun, 0f);
         }
 
-        public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun, float elapsedSeconds)
+        public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun, float elapsedSeconds, bool suppressChips = false)
         {
             data.runsCompleted++;
             if (manualRun)
@@ -1035,12 +1122,30 @@ namespace StackMerge
                 ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18)
                 : 0;
             long bonus = Math.Max(1, (long)Math.Ceiling(scoreBonus + moveBonus + speedBonus));
-            bonus = ApplyStageMultiplier(bonus);
-            bonus = ApplyIncomeMultiplier(bonus);
-            data.chips += bonus;
-            data.totalChipsEarned += bonus;
+            if (!suppressChips)
+            {
+                bonus = ApplyStageMultiplier(bonus);
+                bonus = ApplyIncomeMultiplier(bonus);
+                data.chips += bonus;
+                data.totalChipsEarned += bonus;
+            }
+            else
+            {
+                bonus = 0;
+            }
+
             RecordRunHistory(runScore, solverId, moves, merges, highestMergedBlock);
             return bonus;
+        }
+
+        public float AwardMachineLearningRun(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)
+        {
+            float gained = ComputeMachineLearningExperienceGain(runScore, moves, merges, highestMergedBlock, trainingMode);
+            data.machineLearningExperience = Math.Max(0f, data.machineLearningExperience + gained);
+            data.machineLearningRuns++;
+            data.machineLearningBestScore = Math.Max(data.machineLearningBestScore, Math.Max(0, runScore));
+            data.machineLearningBestHigh = Math.Max(data.machineLearningBestHigh, Math.Max(0, highestMergedBlock));
+            return gained;
         }
 
         public long GetAchievementProgress(AchievementDefinition achievement)
@@ -1205,8 +1310,31 @@ namespace StackMerge
                 SolverId.Moca => 0.92f,
                 SolverId.MocaPlus => 1.05f,
                 SolverId.Mcts => 1.12f,
+                SolverId.MachineLearning => 0.20f,
                 _ => 1f
             };
+        }
+
+        public static float ComputeMachineLearningExperienceGain(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)
+        {
+            double scoreValue = Math.Sqrt(Math.Max(0, runScore)) * 1.6;
+            double moveValue = Math.Max(0, moves) * 0.55;
+            double mergeValue = Math.Max(0, merges) * 2.8;
+            double highValue = FloorLog2(Math.Max(1, highestMergedBlock)) * 42.0;
+            double baseGain = Math.Max(8.0, scoreValue + moveValue + mergeValue + highValue);
+            double multiplier = trainingMode ? MachineLearningTrainingMultiplier : MachineLearningNormalMultiplier;
+            return (float)Math.Min(25000.0, baseGain * multiplier);
+        }
+
+        public static float ComputeMachineLearningSkill(float experience)
+        {
+            experience = Math.Max(0f, experience);
+            return Mathf.Clamp01(1f - Mathf.Exp(-experience / MachineLearningExperienceScale));
+        }
+
+        public static int ComputeMachineLearningLevel(float experience)
+        {
+            return Mathf.Clamp(Mathf.FloorToInt(ComputeMachineLearningSkill(experience) * 100f), 0, 100);
         }
 
         private bool Spend(long cost)
@@ -1350,6 +1478,15 @@ namespace StackMerge
             data.totalBlocksDropped = Math.Max(0, data.totalBlocksDropped);
             data.totalMerges = Math.Max(data.totalMerges, data.runHistory.Sum(entry => Math.Max(0, entry.merges)));
             data.highestBlockEver = Math.Max(2, data.highestBlockEver);
+            data.machineLearningExperience = Math.Max(0f, data.machineLearningExperience);
+            data.machineLearningRuns = Math.Max(0, data.machineLearningRuns);
+            data.machineLearningBestScore = Math.Max(0, data.machineLearningBestScore);
+            data.machineLearningBestHigh = Math.Max(0, data.machineLearningBestHigh);
+            if (!IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                data.machineLearningTrainingMode = false;
+            }
+
             if (data.runHistory.Length > 0)
             {
                 data.highestBlockEver = Math.Max(data.highestBlockEver, data.runHistory.Max(entry => Math.Max(0, entry.highestMergedBlock)));

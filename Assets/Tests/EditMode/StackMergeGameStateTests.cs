@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using NUnit.Framework;
 
 namespace StackMerge.Tests
@@ -109,9 +110,9 @@ namespace StackMerge.Tests
         }
 
         [Test]
-        public void SolverCatalog_OffersTwelveUnlockableAlgorithms()
+        public void SolverCatalog_OffersThirteenUnlockableAlgorithms()
         {
-            Assert.That(StackMergeSolverCatalog.Definitions.Length, Is.EqualTo(12));
+            Assert.That(StackMergeSolverCatalog.Definitions.Length, Is.EqualTo(13));
             Assert.That(StackMergeSolverCatalog.Definitions[0].Id, Is.EqualTo(SolverId.Rand));
             Assert.That(StackMergeSolverCatalog.Definitions[5].Id, Is.EqualTo(SolverId.Moca));
             Assert.That(StackMergeSolverCatalog.Definitions[6].Id, Is.EqualTo(SolverId.Plan3));
@@ -120,6 +121,7 @@ namespace StackMerge.Tests
             Assert.That(StackMergeSolverCatalog.Definitions[9].Id, Is.EqualTo(SolverId.Mcts));
             Assert.That(StackMergeSolverCatalog.Definitions[10].Id, Is.EqualTo(SolverId.AntiStall));
             Assert.That(StackMergeSolverCatalog.Definitions[11].Id, Is.EqualTo(SolverId.Combo));
+            Assert.That(StackMergeSolverCatalog.Definitions[12].Id, Is.EqualTo(SolverId.MachineLearning));
         }
 
         [Test]
@@ -132,6 +134,27 @@ namespace StackMerge.Tests
             {
                 Assert.That(solvers[i].Id, Is.EqualTo(StackMergeSolverCatalog.Definitions[i].Id));
             }
+        }
+
+        [Test]
+        public void HighTierAccelerator_HalvesExpensiveSolverCompute()
+        {
+            var neutral = new SolverContext(
+                new Random(1),
+                8,
+                6,
+                tuning: SolverTuningSettings.Neutral(SolverId.Mcts));
+            var accelerated = new SolverContext(
+                new Random(1),
+                8,
+                6,
+                tuning: SolverTuningSettings.Neutral(SolverId.Mcts),
+                highTierSpeedTuningAccelerator: true);
+
+            Assert.That(accelerated.TunedTreeIterations(12), Is.EqualTo(6));
+            Assert.That(accelerated.TunedRolloutDepth(), Is.EqualTo(3));
+            Assert.That(accelerated.TunedSimulationCount(), Is.EqualTo(4));
+            Assert.That(neutral.TunedTreeIterations(12), Is.EqualTo(12));
         }
 
         [Test]
@@ -485,6 +508,32 @@ namespace StackMerge.Tests
 
             Assert.That(modifiers.UnstableSaves, Is.EqualTo(1));
             Assert.That(modifiers.JokerBlocks, Is.True);
+        }
+
+        [Test]
+        public void Progression_GatesMachineLearningBehindMaxedModifiers()
+        {
+            var lockedProgression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 1_000_000,
+                modifiersMenuUnlocked = true,
+                modifierLevels = new int[StackMergeProgression.Modifiers.Length]
+            });
+
+            Assert.That(lockedProgression.CanUnlockMachineLearning, Is.False);
+            Assert.That(lockedProgression.SelectOrUnlockSolver(SolverId.MachineLearning), Is.False);
+
+            int[] maxedModifiers = StackMergeProgression.Modifiers.Select(modifier => modifier.MaxLevel).ToArray();
+            var unlockedProgression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 1_000_000,
+                modifiersMenuUnlocked = true,
+                modifierLevels = maxedModifiers
+            });
+
+            Assert.That(unlockedProgression.CanUnlockMachineLearning, Is.True);
+            Assert.That(unlockedProgression.SelectOrUnlockSolver(SolverId.MachineLearning), Is.True);
+            Assert.That(unlockedProgression.SelectedSolver, Is.EqualTo(SolverId.MachineLearning));
         }
 
         [Test]

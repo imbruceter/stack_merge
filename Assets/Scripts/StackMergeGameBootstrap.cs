@@ -752,6 +752,15 @@ namespace StackMerge
             }
 
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            if (selectedSolverId == SolverId.MachineLearning && progression.IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                progression.ToggleMachineLearningTrainingMode();
+                progression.Save();
+                SetText(feedbackText, progression.MachineLearningTrainingMode ? "DQN training mode enabled: chips paused" : "DQN normal mode enabled");
+                RefreshEverything();
+                return;
+            }
+
             if (!progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId) || !tuningDefinition.HasParameters)
             {
                 return;
@@ -863,7 +872,9 @@ namespace StackMerge
                     progression.MonteCarloRolloutDepth,
                     tuning: progression.SolverTuningUnlocked
                         ? progression.GetSolverTuning(progression.SelectedSolver)
-                        : SolverTuningSettings.Neutral(progression.SelectedSolver)));
+                        : SolverTuningSettings.Neutral(progression.SelectedSolver),
+                    highTierSpeedTuningAccelerator: progression.NeuralAcceleratorActive,
+                    machineLearningSkill: progression.MachineLearningSkill));
 
             if (decision.HasMove)
             {
@@ -924,7 +935,8 @@ namespace StackMerge
 
         private void HandleAcceptedMove(MoveResult result, string reason, bool autoSolverMove, bool wasGameOver)
         {
-            long chipsGained = progression.AwardMove(result);
+            bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
+            long chipsGained = progression.AwardMove(result, machineLearningTraining);
             if (autoSolverMove)
             {
                 currentRunUsedAutoSolve = true;
@@ -935,6 +947,7 @@ namespace StackMerge
             }
 
             long runBonus = 0;
+            float learningGain = 0f;
             if (!wasGameOver && result.IsGameOver)
             {
                 bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
@@ -945,13 +958,25 @@ namespace StackMerge
                     gameState.TotalMerges,
                     gameState.HighestMergedBlock,
                     manualRun,
-                    currentRunElapsed);
+                    currentRunElapsed,
+                    machineLearningTraining);
+                if (progression.SelectedSolver == SolverId.MachineLearning)
+                {
+                    learningGain = progression.AwardMachineLearningRun(
+                        gameState.Score,
+                        gameState.BlocksDropped,
+                        gameState.TotalMerges,
+                        gameState.HighestMergedBlock,
+                        machineLearningTraining);
+                }
             }
 
             progression.Save();
             UpdateHighScore();
 
-            string chipText = runBonus > 0 ? $"+{chipsGained + runBonus} chips" : $"+{chipsGained} chips";
+            string chipText = machineLearningTraining
+                ? "training: +0 chips"
+                : runBonus > 0 ? $"+{chipsGained + runBonus} chips" : $"+{chipsGained} chips";
             string moveText = result.ActionKind switch
             {
                 SolverActionKind.Pickaxe => $"Pickaxe -{FormatNumber(result.RemovedValue)}",
@@ -965,7 +990,8 @@ namespace StackMerge
                 : string.IsNullOrWhiteSpace(reason)
                     ? result.Reason
                     : $"{reason}; {result.Reason}";
-            SetText(feedbackText, $"{moveText} | {chipText} | {resultReason}");
+            string learningText = learningGain > 0f ? $" | +{learningGain:0} ML XP" : string.Empty;
+            SetText(feedbackText, $"{moveText} | {chipText}{learningText} | {resultReason}");
 
             RefreshEverything();
         }
@@ -1022,7 +1048,10 @@ namespace StackMerge
 
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
             bool changed = progression.SelectOrUnlockSolver(selectedSolverId);
-            SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
+            string failure = selectedSolverId == SolverId.MachineLearning && !progression.CanUnlockMachineLearning
+                ? "DQN requires every Modifier maxed"
+                : "Not enough chips";
+            SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : failure);
             progression.Save();
             RefreshEverything();
         }
@@ -1354,13 +1383,29 @@ namespace StackMerge
                 return;
             }
 
+            bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)}");
-            SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
-            SetText(speedText, $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
+            SetText(solverText, progression.SelectedSolver == SolverId.MachineLearning
+                ? $"Solver: {GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}"
+                : $"Solver: {GetSelectedSolver().DisplayName}");
+            SetText(speedText, machineLearningTraining
+                ? $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.000}s | training"
+                : $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
 
             if (gameState != null && !gameState.IsGameOver)
             {
-                SetText(runStatusText, progression.AutoSolveEnabled ? "Auto solving" : "Manual mode");
+                SetText(runStatusText, machineLearningTraining
+                    ? "ML TRAINING - chips paused"
+                    : progression.AutoSolveEnabled ? "Auto solving" : "Manual mode");
+                if (runStatusText != null)
+                {
+                    runStatusText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#D1D5DB");
+                }
+            }
+
+            if (feedbackText != null)
+            {
+                feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#5EEAD4");
             }
 
             RefreshSolverButtons();
@@ -1395,11 +1440,16 @@ namespace StackMerge
                 bool unlocked = progression.IsSolverUnlocked(definition.Id);
                 bool selectedInPanel = selectedSolverId == definition.Id;
                 bool active = progression.SelectedSolver == definition.Id;
+                bool machineLearningGateReady = definition.Id != SolverId.MachineLearning || progression.CanUnlockMachineLearning;
 
                 string label = selectedInPanel ? $"> {definition.DisplayName}" : definition.DisplayName;
                 if (unlocked)
                 {
                     label += active ? "\nActive" : "\nUnlocked";
+                }
+                else if (definition.Id == SolverId.MachineLearning && !machineLearningGateReady)
+                {
+                    label += "\nNeeds modifiers";
                 }
                 else
                 {
@@ -1419,27 +1469,37 @@ namespace StackMerge
             bool active = progression.SelectedSolver == definition.Id;
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
             bool canTune = unlocked && progression.SolverTuningUnlocked && tuningDefinition.HasParameters;
+            bool isMachineLearning = definition.Id == SolverId.MachineLearning;
+            bool machineLearningGateReady = !isMachineLearning || progression.CanUnlockMachineLearning;
 
             SetText(solverDetailNameText, definition.DisplayName);
-            SetText(solverDetailInfoText, unlocked ? definition.Description : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips");
-            SetButtonText(solverDetailTuneButton, !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
+            string lockedInfo = isMachineLearning
+                ? $"{progression.GetMachineLearningGateStatus()}\nCost: {FormatNumber(definition.Cost)} chips"
+                : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips";
+            SetText(solverDetailInfoText, unlocked
+                ? isMachineLearning ? $"{definition.Description}\n\n{progression.GetMachineLearningStatus()}" : definition.Description
+                : lockedInfo);
+            SetButtonText(solverDetailTuneButton,
+                isMachineLearning && unlocked
+                    ? progression.MachineLearningTrainingMode ? "Training\nON" : "Training\nOFF"
+                    : !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
             if (solverDetailTuneButton != null)
             {
-                solverDetailTuneButton.interactable = canTune;
+                solverDetailTuneButton.interactable = isMachineLearning && unlocked || canTune;
             }
 
             if (!unlocked)
             {
-                SetText(solverDetailStatusText, "Locked");
-                SetButtonText(solverDetailActionButton, $"Unlock\n{FormatNumber(definition.Cost)}");
+                SetText(solverDetailStatusText, isMachineLearning && !machineLearningGateReady ? "Stage locked" : "Locked");
+                SetButtonText(solverDetailActionButton, isMachineLearning && !machineLearningGateReady ? "Needs all\nModifiers" : $"Unlock\n{FormatNumber(definition.Cost)}");
                 if (solverDetailActionButton != null)
                 {
-                    solverDetailActionButton.interactable = progression.Chips >= definition.Cost;
+                    solverDetailActionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
                 }
                 return;
             }
 
-            SetText(solverDetailStatusText, active ? "Active" : "Unlocked");
+            SetText(solverDetailStatusText, isMachineLearning ? active ? $"Active | Lv {progression.MachineLearningLevel}" : $"Unlocked | Lv {progression.MachineLearningLevel}" : active ? "Active" : "Unlocked");
             SetButtonText(solverDetailActionButton, active ? "Selected" : "Select");
             if (solverDetailActionButton != null)
             {
@@ -1522,6 +1582,16 @@ namespace StackMerge
             builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
             builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
             builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
+            if (solverId == SolverId.MachineLearning)
+            {
+                builder.AppendLine(progression.GetMachineLearningStatus());
+            }
+
+            if (progression.NeuralAcceleratorActive)
+            {
+                builder.AppendLine("Neural Accelerator: MOCA/MOCA+/MCTS speed boost active");
+            }
+
             if (gameState != null)
             {
                 builder.AppendLine($"Run modifiers: Unstable {gameState.UnstableSavesRemaining}, Pickaxe {gameState.PickaxeUsesRemaining}, Queue skip {gameState.QueueSkipsRemaining}");
@@ -1775,9 +1845,13 @@ namespace StackMerge
             {
                 string stageName = !progression.AgentsMenuUnlocked ? "Stage 1 - Core automation"
                     : !progression.ModifiersMenuUnlocked ? "Stage 2 - Agent acceleration"
-                    : "Stage 3 - Modifier Lab";
-                string nextGoal = progression.ModifiersMenuUnlocked
-                    ? "Modifiers are active. Next long-term layer can build on modifier milestones."
+                    : !progression.AllModifiersMaxed ? "Stage 3 - Modifier Lab"
+                    : !progression.IsSolverUnlocked(SolverId.MachineLearning) ? "Stage 4 - Machine Learning"
+                    : "Endgame - DQN training";
+                string nextGoal = progression.IsSolverUnlocked(SolverId.MachineLearning)
+                    ? progression.GetMachineLearningStatus()
+                    : progression.ModifiersMenuUnlocked
+                    ? progression.AllModifiersMaxed ? "DQN is ready to unlock in Algorithms." : "Max every Modifier to open the Machine Learning layer."
                     : progression.GetModifiersGateStatus();
                 SetText(progressionStageText, $"{stageName}\n{nextGoal}");
             }
