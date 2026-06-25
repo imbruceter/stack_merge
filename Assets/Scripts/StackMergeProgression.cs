@@ -315,9 +315,25 @@ namespace StackMerge
             set => data.machineLearningTrainingMode = value;
         }
 
+        // Normal ("Playing") mode for PPO unlocks only after this many trained frames; until then the
+        // agent can only be run in Training mode.
+        public const long PlayingModeFrameRequirement = 500000;
+
+        public long MachineLearningFrames => machineLearningAgent?.Metrics.Steps ?? Math.Max(0, (long)data.machineLearningExperience);
+
+        public bool MachineLearningPlayingModeUnlocked => MachineLearningFrames >= PlayingModeFrameRequirement;
+
+        // PPO runs in Training mode whenever it hasn't unlocked Playing mode yet, or when the player
+        // has explicitly chosen Training. Once Playing mode is unlocked the player can switch it off.
         public bool IsMachineLearningTrainingActive => SelectedSolver == SolverId.MachineLearning
             && IsSolverUnlocked(SolverId.MachineLearning)
-            && data.machineLearningTrainingMode;
+            && (!MachineLearningPlayingModeUnlocked || data.machineLearningTrainingMode);
+
+        public void SetMachineLearningTrainingMode(bool training)
+        {
+            // Playing (normal) mode can only be selected once it has been unlocked.
+            data.machineLearningTrainingMode = training || !MachineLearningPlayingModeUnlocked;
+        }
 
         public StackMergePpoAgent MachineLearningAgent => machineLearningAgent;
 
@@ -492,7 +508,7 @@ namespace StackMerge
         public string GetMachineLearningStatus()
         {
             return machineLearningAgent != null
-                ? machineLearningAgent.BuildStatus(MachineLearningBestScore, MachineLearningBestHigh, data.machineLearningTrainingMode)
+                ? machineLearningAgent.BuildStatus(MachineLearningBestScore, MachineLearningBestHigh, IsMachineLearningTrainingActive)
                 : "PPO model is not initialized yet.";
         }
 

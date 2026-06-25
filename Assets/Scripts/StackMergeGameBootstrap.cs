@@ -125,6 +125,14 @@ namespace StackMerge
         private float autoRestartTimer;
         private float saveFlushTimer;
         private const float SaveFlushInterval = 4f;
+        private float trainingEvalTimer;
+        private const float TrainingEvalDuration = 2.5f;
+        private RectTransform trainingOverlay;
+        private TMP_Text trainingOverlayText;
+        private RectTransform ppoModeModal;
+        private Button ppoTrainingButton;
+        private Button ppoNormalButton;
+        private TMP_Text ppoModeHintText;
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -760,10 +768,9 @@ namespace StackMerge
             SetActive(gameplayInfoOverlay, false);
             RefreshTabButtons();
 
-            if (gameState != null)
-            {
-                RefreshGameOver();
-            }
+            // Update the board / training-overlay visibility immediately on tab change so the
+            // PPO matrix view appears/disappears at once instead of lagging until the next move.
+            RefreshGameView();
         }
 
         private void OpenHistoryPanel()
@@ -784,7 +791,7 @@ namespace StackMerge
             SetActive(gameplayInfoOverlay, false);
             RefreshHistory();
             RefreshTabButtons();
-            RefreshGameOver();
+            RefreshGameView();
         }
 
         private void CloseHistoryPanel()
@@ -810,7 +817,7 @@ namespace StackMerge
             SetActive(gameplayInfoOverlay, false);
             RefreshAchievements();
             RefreshTabButtons();
-            RefreshGameOver();
+            RefreshGameView();
         }
 
         private void CloseAchievementsPanel()
@@ -839,15 +846,6 @@ namespace StackMerge
             }
 
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
-            if (selectedSolverId == SolverId.MachineLearning && progression.IsSolverUnlocked(SolverId.MachineLearning))
-            {
-                progression.ToggleMachineLearningTrainingMode();
-                progression.Save();
-                SetText(feedbackText, progression.MachineLearningTrainingMode ? "PPO training mode enabled: chips paused" : "PPO normal mode enabled");
-                RefreshEverything();
-                return;
-            }
-
             if (!progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId) || !tuningDefinition.HasParameters)
             {
                 return;
@@ -915,6 +913,29 @@ namespace StackMerge
 
             if (gameState.IsGameOver)
             {
+                // Training: a short artificial "result evaluation" pause between runs so the very
+                // fast PPO advances at a watchable pace, then auto-restart for free (no tokens, no
+                // game-over menu).
+                if (progression.IsMachineLearningTrainingActive)
+                {
+                    trainingEvalTimer += Time.deltaTime;
+                    float percent = Mathf.Clamp01(trainingEvalTimer / TrainingEvalDuration) * 100f;
+                    string status = $"Result evaluation {percent:0}%";
+                    SetText(runStatusText, status);
+                    if (selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
+                    {
+                        UpdateTrainingOverlay(status);
+                    }
+
+                    if (trainingEvalTimer >= TrainingEvalDuration)
+                    {
+                        trainingEvalTimer = 0f;
+                        StartNewGame();
+                    }
+
+                    return;
+                }
+
                 if (progression.AutoRestartUnlocked && progression.AutoRestartEnabled)
                 {
                     autoRestartTimer += Time.deltaTime;
@@ -939,7 +960,9 @@ namespace StackMerge
             }
 
             autoRestartTimer = 0f;
-            if (!progression.AutoSolveEnabled)
+            trainingEvalTimer = 0f;
+            // Training always auto-runs even if the player hasn't enabled auto-solve.
+            if (!progression.AutoSolveEnabled && !progression.IsMachineLearningTrainingActive)
             {
                 return;
             }
@@ -1155,13 +1178,166 @@ namespace StackMerge
             }
 
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+
+            // PPO: unlock if needed, then let the player pick Training / Normal mode in a popup.
+            if (selectedSolverId == SolverId.MachineLearning)
+            {
+                if (!progression.IsSolverUnlocked(SolverId.MachineLearning))
+                {
+                    if (!progression.SelectOrUnlockSolver(SolverId.MachineLearning))
+                    {
+                        SetText(feedbackText, progression.CanUnlockMachineLearning ? "Not enough chips" : "PPO requires every Modifier maxed");
+                        RefreshEverything();
+                        return;
+                    }
+
+                    progression.Save();
+                }
+
+                ShowPpoModeModal();
+                return;
+            }
+
             bool changed = progression.SelectOrUnlockSolver(selectedSolverId);
-            string failure = selectedSolverId == SolverId.MachineLearning && !progression.CanUnlockMachineLearning
-                ? "PPO requires every Modifier maxed"
-                : "Not enough chips";
-            SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : failure);
+            SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
             progression.Save();
             RefreshEverything();
+        }
+
+        private void ChoosePpoMode(bool training)
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            if (!training && !progression.MachineLearningPlayingModeUnlocked)
+            {
+                SetText(feedbackText, "Normal mode is still locked.");
+                return;
+            }
+
+            progression.SetMachineLearningTrainingMode(training);
+            progression.SelectOrUnlockSolver(SolverId.MachineLearning);
+            progression.Save();
+            HidePpoModeModal();
+            SetText(feedbackText, training ? "PPO: Training mode" : "PPO: Normal mode");
+            RefreshEverything();
+        }
+
+        private void HidePpoModeModal()
+        {
+            if (ppoModeModal != null)
+            {
+                SetActive(ppoModeModal.gameObject, false);
+            }
+        }
+
+        private void ShowPpoModeModal()
+        {
+            EnsurePpoModeModal();
+            bool playingUnlocked = progression.MachineLearningPlayingModeUnlocked;
+            long frames = progression.MachineLearningFrames;
+
+            if (ppoNormalButton != null)
+            {
+                ppoNormalButton.interactable = playingUnlocked;
+                SetButtonText(ppoNormalButton, playingUnlocked ? "Normal Mode" : "Normal Mode\n(Locked)");
+                SetButtonColor(ppoNormalButton, playingUnlocked ? HexColor("#2563EB") : HexColor("#334155"));
+            }
+
+            if (ppoModeHintText != null)
+            {
+                SetText(ppoModeHintText, playingUnlocked
+                    ? "Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."
+                    : $"Normal mode unlocks after {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)}");
+            }
+
+            SetActive(ppoModeModal.gameObject, true);
+        }
+
+        private void EnsurePpoModeModal()
+        {
+            if (ppoModeModal != null || canvas == null)
+            {
+                return;
+            }
+
+            ppoModeModal = CreateRuntimePanel("PPO Mode Modal", canvas.transform, HexColor("#020617", 0.78f));
+            Stretch(ppoModeModal, 0f, 0f, 0f, 0f);
+            Button backdrop = ppoModeModal.gameObject.AddComponent<Button>();
+            backdrop.transition = Selectable.Transition.None;
+            backdrop.targetGraphic = ppoModeModal.GetComponent<Image>();
+            backdrop.onClick.AddListener(HidePpoModeModal);
+
+            RectTransform card = CreateRuntimePanel("Card", ppoModeModal, HexColor("#111A2E", 1f));
+            card.anchorMin = new Vector2(0.5f, 0.5f);
+            card.anchorMax = new Vector2(0.5f, 0.5f);
+            card.pivot = new Vector2(0.5f, 0.5f);
+            card.anchoredPosition = Vector2.zero;
+            card.sizeDelta = new Vector2(440f, 340f);
+            Image cardImage = card.GetComponent<Image>();
+            if (cardImage != null)
+            {
+                cardImage.sprite = GetRoundedSprite(Color.white, Color.white, 28);
+                cardImage.type = Image.Type.Sliced;
+                cardImage.color = HexColor("#111A2E");
+            }
+
+            CreateCardChildText("Title", card, "PPO Mode", 30, new Vector2(0f, 128f), new Vector2(400f, 52f), HexColor("#F8FAFC"));
+
+            ppoTrainingButton = CreateRuntimeButton("Training Btn", card, "Training Mode", HexColor("#0F766E"), new Vector2(0f, 56f), new Vector2(360f, 64f));
+            ppoTrainingButton.onClick.AddListener(() => ChoosePpoMode(true));
+
+            ppoNormalButton = CreateRuntimeButton("Normal Btn", card, "Normal Mode", HexColor("#2563EB"), new Vector2(0f, -24f), new Vector2(360f, 64f));
+            ppoNormalButton.onClick.AddListener(() => ChoosePpoMode(false));
+
+            ppoModeHintText = CreateCardChildText("Hint", card, string.Empty, 16, new Vector2(0f, -110f), new Vector2(400f, 80f), HexColor("#94A3B8"));
+
+            ppoModeModal.gameObject.SetActive(false);
+        }
+
+        private TMP_Text CreateCardChildText(string name, Transform parent, string label, int fontSize, Vector2 anchoredPosition, Vector2 size, Color color)
+        {
+            TMP_Text text = CreateRuntimeText(name, parent, label, fontSize, FontStyles.Bold, TextAlignmentOptions.Center, color);
+            RectTransform rect = text.rectTransform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = size;
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 12;
+            text.fontSizeMax = fontSize;
+            return text;
+        }
+
+        private Button CreateRuntimeButton(string name, Transform parent, string label, Color color, Vector2 anchoredPosition, Vector2 size)
+        {
+            RectTransform rect = CreateRuntimePanel(name, parent, color);
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = size;
+
+            Image image = rect.GetComponent<Image>();
+            if (image != null)
+            {
+                image.sprite = GetRoundedSprite(Color.white, Color.white, 18);
+                image.type = Image.Type.Sliced;
+                image.color = color;
+            }
+
+            Button button = rect.gameObject.AddComponent<Button>();
+            button.targetGraphic = image;
+
+            TMP_Text text = CreateRuntimeText(name + " Label", rect, label, 24, FontStyles.Bold, TextAlignmentOptions.Center, Color.white);
+            Stretch(text.rectTransform, 12f, 6f, 12f, 6f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 12;
+            text.fontSizeMax = 24;
+            return button;
         }
 
         private void SetSelectedSolverTuningFromDisplay(int slotIndex, float displayValue)
@@ -1491,10 +1667,152 @@ namespace StackMerge
             SetText(scoreText, FormatNumber(gameState.Score));
             SetText(droppedText, $"Dobasok: {FormatNumber(gameState.BlocksDropped)}");
 
-            RefreshNextBlocks();
-            RefreshColumns();
+            bool trainingView = progression != null
+                && progression.IsMachineLearningTrainingActive
+                && selectedTabIndex == 0
+                && !historyOpen
+                && !achievementsOpen;
+
+            SetTrainingView(trainingView);
+            if (trainingView)
+            {
+                UpdateTrainingOverlay(gameState.IsGameOver ? null : "Auto solving");
+            }
+            else
+            {
+                RefreshNextBlocks();
+                RefreshColumns();
+            }
+
             RefreshGameOver();
             RefreshHud();
+        }
+
+        private void SetTrainingView(bool active)
+        {
+            EnsureTrainingOverlay();
+            if (trainingOverlay != null)
+            {
+                SetActive(trainingOverlay.gameObject, active);
+            }
+
+            // While the simplified matrix view is up, hide the graphical board and queue.
+            if (boardRoot != null)
+            {
+                SetActive(boardRoot.gameObject, !active);
+            }
+
+            if (nextBlocksRoot != null && nextBlocksRoot.parent is RectTransform nextPanel)
+            {
+                SetActive(nextPanel.gameObject, !active);
+            }
+        }
+
+        private void EnsureTrainingOverlay()
+        {
+            if (trainingOverlay != null || canvas == null)
+            {
+                return;
+            }
+
+            trainingOverlay = CreateRuntimePanel("Training Overlay", canvas.transform, HexColor("#0E1626", 0.98f));
+            trainingOverlay.anchorMin = new Vector2(0.04f, 0.12f);
+            trainingOverlay.anchorMax = new Vector2(0.96f, 0.82f);
+            trainingOverlay.offsetMin = Vector2.zero;
+            trainingOverlay.offsetMax = Vector2.zero;
+
+            Image background = trainingOverlay.GetComponent<Image>();
+            if (background != null)
+            {
+                background.sprite = GetRoundedSprite(Color.white, Color.white, 28);
+                background.type = Image.Type.Sliced;
+                background.color = HexColor("#0E1626", 0.98f);
+            }
+
+            trainingOverlayText = CreateRuntimeText(
+                "Training Text",
+                trainingOverlay,
+                string.Empty,
+                26,
+                FontStyles.Bold,
+                TextAlignmentOptions.Top,
+                HexColor("#E2E8F0"));
+            Stretch(trainingOverlayText.rectTransform, 30f, 26f, 30f, 26f);
+            trainingOverlayText.richText = true;
+            trainingOverlayText.enableAutoSizing = true;
+            trainingOverlayText.fontSizeMin = 12;
+            trainingOverlayText.fontSizeMax = 30;
+
+            trainingOverlay.gameObject.SetActive(false);
+        }
+
+        private void UpdateTrainingOverlay(string statusLine)
+        {
+            EnsureTrainingOverlay();
+            if (trainingOverlayText == null || gameState == null || progression == null)
+            {
+                return;
+            }
+
+            StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
+            var builder = new StringBuilder();
+            builder.AppendLine("<b>PPO TRAINING</b>");
+            builder.AppendLine();
+            builder.Append("<mspace=0.62em>");
+            builder.Append(BuildTrainingMatrix());
+            builder.Append("</mspace>");
+            builder.AppendLine();
+
+            builder.Append("Next  ");
+            builder.Append("<mspace=0.62em>");
+            for (int i = 0; i < gameState.NextBlocks.Count; i++)
+            {
+                builder.Append(FormatMatrixCell(gameState.NextBlocks[i]).PadLeft(6));
+            }
+            builder.Append("</mspace>");
+            builder.AppendLine();
+            builder.AppendLine();
+
+            builder.AppendLine($"Iteration  {metrics.Updates}");
+            builder.AppendLine($"Frames  {metrics.Steps}   (run {gameState.BlocksDropped})");
+            builder.AppendLine($"Score  {FormatNumber(gameState.Score)}   High  {FormatNumber(Math.Max(1, gameState.HighestMergedBlock))}");
+            builder.AppendLine($"Policy loss  {metrics.LastPolicyLoss:0.000}   Entropy  {metrics.LastEntropy:0.000}");
+            if (!string.IsNullOrEmpty(statusLine))
+            {
+                builder.AppendLine();
+                builder.AppendLine($"<color=#F0ABFC>{statusLine}</color>");
+            }
+
+            trainingOverlayText.text = builder.ToString();
+        }
+
+        private string BuildTrainingMatrix()
+        {
+            if (gameState == null)
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder();
+            int capacity = gameState.StackCapacity;
+            for (int row = capacity - 1; row >= 0; row--)
+            {
+                for (int stackIndex = 0; stackIndex < gameState.StackCount; stackIndex++)
+                {
+                    IReadOnlyList<int> stack = gameState.Stacks[stackIndex];
+                    string cell = row < stack.Count ? FormatMatrixCell(stack[row]) : ".";
+                    builder.Append(cell.PadLeft(6));
+                }
+
+                builder.AppendLine();
+            }
+
+            return builder.ToString();
+        }
+
+        private static string FormatMatrixCell(int value)
+        {
+            return value == StackMergeGameState.JokerBlockValue ? "J" : value.ToString();
         }
 
         private void RefreshHud()
@@ -1611,12 +1929,10 @@ namespace StackMerge
                 ? isMachineLearning ? $"{definition.Description}\n\n{progression.GetMachineLearningStatus()}" : definition.Description
                 : lockedInfo);
             SetButtonText(solverDetailTuneButton,
-                isMachineLearning && unlocked
-                    ? progression.MachineLearningTrainingMode ? "Training\nON" : "Training\nOFF"
-                    : !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
+                !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
             if (solverDetailTuneButton != null)
             {
-                solverDetailTuneButton.interactable = isMachineLearning && unlocked || canTune;
+                solverDetailTuneButton.interactable = canTune;
             }
 
             if (!unlocked)
@@ -2718,7 +3034,8 @@ namespace StackMerge
                 return;
             }
 
-            gameOverOverlay.SetActive(gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen);
+            bool trainingActive = progression != null && progression.IsMachineLearningTrainingActive;
+            gameOverOverlay.SetActive(gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen && !trainingActive);
             if (!gameState.IsGameOver)
             {
                 return;

@@ -44,12 +44,15 @@ namespace StackMerge
         PriorBias,
         TreeVisits,
         SafetyCushion,
-        FutureDepth
+        FutureDepth,
+        Gamma,
+        Lambda,
+        ClipEpsilon
     }
 
     public readonly struct SolverTuningParameterDefinition
     {
-        public SolverTuningParameterDefinition(SolverTuneParameterId id, string displayName, string description, int minValue, int maxValue, float displayStep)
+        public SolverTuningParameterDefinition(SolverTuneParameterId id, string displayName, string description, int minValue, int maxValue, float displayStep, float displayBase = 0f)
         {
             Id = id;
             DisplayName = displayName;
@@ -57,6 +60,7 @@ namespace StackMerge
             MinValue = minValue;
             MaxValue = maxValue;
             DisplayStep = Math.Max(0.001f, displayStep);
+            DisplayBase = displayBase;
         }
 
         public SolverTuneParameterId Id { get; }
@@ -71,25 +75,42 @@ namespace StackMerge
 
         public float DisplayStep { get; }
 
+        /// <summary>
+        /// When non-zero, the parameter represents an ABSOLUTE value (base + raw * step) rather than
+        /// a relative offset, and is formatted as that absolute value (e.g. Gamma "0.94"). Offset
+        /// parameters keep DisplayBase = 0 and format as "+2" / "-1".
+        /// </summary>
+        public float DisplayBase { get; }
+
         public bool WholeNumbers => DisplayStep >= 0.999f;
 
-        public float MinDisplayValue => MinValue * DisplayStep;
+        public bool IsAbsolute => Math.Abs(DisplayBase) > 0.0001f;
 
-        public float MaxDisplayValue => MaxValue * DisplayStep;
+        public float MinDisplayValue => DisplayBase + MinValue * DisplayStep;
+
+        public float MaxDisplayValue => DisplayBase + MaxValue * DisplayStep;
 
         public float ToDisplayValue(int rawValue)
         {
-            return rawValue * DisplayStep;
+            return DisplayBase + rawValue * DisplayStep;
         }
 
         public int FromDisplayValue(float displayValue)
         {
-            int rawValue = (int)Math.Round(displayValue / DisplayStep, MidpointRounding.AwayFromZero);
+            int rawValue = (int)Math.Round((displayValue - DisplayBase) / DisplayStep, MidpointRounding.AwayFromZero);
             return Math.Min(MaxValue, Math.Max(MinValue, rawValue));
         }
 
         public string FormatValue(int rawValue)
         {
+            // Absolute parameters always show their real value; the neutral (raw 0) entry also
+            // labels itself as the default, e.g. "0.99 (Default)".
+            if (IsAbsolute)
+            {
+                string formatted = WholeNumbers ? $"{ToDisplayValue(rawValue):0}" : $"{ToDisplayValue(rawValue):0.00}";
+                return rawValue == 0 ? $"{formatted} (Default)" : formatted;
+            }
+
             if (rawValue == 0)
             {
                 return "Default";
@@ -336,7 +357,10 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Changes how much immediate merging competes with setup."),
                 TuneWhole(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through.", -2, 2),
                 Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Keeps some space open while building combos.")),
-            new(SolverId.MachineLearning, "PPO has no manual sliders. It trains its own actor and critic networks: Training mode updates faster with no chip output, normal mode updates slower while earning.")
+            new(SolverId.MachineLearning, "PPO trains its own actor-critic network. These nudge the learning hyperparameters within safe bounds only — small changes, so the agent cannot be broken.",
+                TuneAbsolute(SolverTuneParameterId.Gamma, "Gamma (discount)", "How far ahead future reward is valued. Higher plans longer-term, lower is greedier.", 0.99f, 0.01f, 0.80f, 0.99f),
+                TuneAbsolute(SolverTuneParameterId.Lambda, "Lambda (GAE)", "Advantage estimation bias/variance trade-off. Higher = lower bias, more variance.", 0.95f, 0.01f, 0.80f, 0.99f),
+                TuneAbsolute(SolverTuneParameterId.ClipEpsilon, "Clip epsilon", "How big a policy update each step may make. Smaller is more conservative and stable.", 0.20f, 0.01f, 0.10f, 0.30f))
         };
 
         public static SolverDefinition GetDefinition(SolverId id)
@@ -393,6 +417,15 @@ namespace StackMerge
         private static SolverTuningParameterDefinition TuneWhole(SolverTuneParameterId id, string displayName, string description, int minValue, int maxValue)
         {
             return new SolverTuningParameterDefinition(id, displayName, description, minValue, maxValue, 1f);
+        }
+
+        // An absolute-valued parameter: the slider shows the real value (e.g. 0.80 .. 0.99) and raw 0
+        // maps to the supplied default, so "neutral" is the default and tuning nudges around it.
+        private static SolverTuningParameterDefinition TuneAbsolute(SolverTuneParameterId id, string displayName, string description, float defaultValue, float step, float minValue, float maxValue)
+        {
+            int min = (int)Math.Round((minValue - defaultValue) / step);
+            int max = (int)Math.Round((maxValue - defaultValue) / step);
+            return new SolverTuningParameterDefinition(id, displayName, description, min, max, step, defaultValue);
         }
     }
 
@@ -1005,6 +1038,7 @@ namespace StackMerge
         {
             if (context.MachineLearningAgent != null)
             {
+                context.MachineLearningAgent.ApplyTuning(context.Tuning);
                 return context.MachineLearningAgent.ChooseMove(state, context.Random, context.MachineLearningTrainingMode);
             }
 
@@ -1092,8 +1126,10 @@ namespace StackMerge
         {
             int[] legalMoves = state.GetLegalMoveIndices();
             SolverDecision best = ChooseBestToolAction(state, context, "Enhanced Monte Carlo tool");
-            int simulations = context.LightweightMode ? context.TunedSimulationCount() : Math.Max(4, context.TunedSimulationCount());
-            int rolloutDepth = context.LightweightMode ? context.TunedRolloutDepth() : Math.Min(4, Math.Max(2, context.TunedRolloutDepth() + 1));
+            // Real-time (lightweight) play caps the sample/rollout budget so MOCA+ stays smooth;
+            // the benchmark (full mode) keeps the larger budget for measured strength.
+            int simulations = context.LightweightMode ? Math.Min(5, context.TunedSimulationCount()) : Math.Max(4, context.TunedSimulationCount());
+            int rolloutDepth = context.LightweightMode ? Math.Min(3, context.TunedRolloutDepth()) : Math.Min(4, Math.Max(2, context.TunedRolloutDepth() + 1));
             int smartPlanningDepth = context.LightweightMode ? 1 : context.TunedRolloutPlanningDepth(3);
 
             foreach (int firstMove in legalMoves)

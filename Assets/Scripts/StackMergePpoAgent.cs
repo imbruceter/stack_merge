@@ -116,9 +116,11 @@ namespace StackMerge
         private const int PickaxeActionStart = QueueSkipAction + 1;
         private const int ActionCount = PickaxeActionStart + MaxStacks * MaxStackCapacity;
 
-        private const float Gamma = 0.99f;
-        private const float Lambda = 0.95f;
-        private const float ClipEpsilon = 0.2f;
+        // Learning hyperparameters — defaults match standard PPO. Adjustable within safe bounds via
+        // solver tuning (see ApplyTuning); kept as fields rather than consts for that reason.
+        private float Gamma = 0.99f;
+        private float Lambda = 0.95f;
+        private float ClipEpsilon = 0.2f;
 
         private readonly StackMergePpoTrainingData data;
         private readonly List<Transition> trajectory = new(1024);
@@ -246,6 +248,39 @@ namespace StackMerge
             {
                 UpdatePolicy(trainingMode);
             }
+        }
+
+        /// <summary>
+        /// Applies the player's PPO solver-tuning to the learning hyperparameters. Values are read as
+        /// absolute numbers and clamped to safe bounds so tuning can nudge behaviour without ever
+        /// putting the agent into a broken regime.
+        /// </summary>
+        public void ApplyTuning(SolverTuningSettings tuning)
+        {
+            Gamma = ResolveHyper(tuning, SolverTuneParameterId.Gamma, 0.99f, 0.80f, 0.999f);
+            Lambda = ResolveHyper(tuning, SolverTuneParameterId.Lambda, 0.95f, 0.80f, 0.999f);
+            ClipEpsilon = ResolveHyper(tuning, SolverTuneParameterId.ClipEpsilon, 0.20f, 0.05f, 0.40f);
+        }
+
+        private static float ResolveHyper(SolverTuningSettings tuning, SolverTuneParameterId id, float fallback, float min, float max)
+        {
+            if (tuning.SolverId != SolverId.MachineLearning)
+            {
+                return fallback;
+            }
+
+            if (StackMergeSolverCatalog.GetTuningParameterIndex(SolverId.MachineLearning, id) < 0)
+            {
+                return fallback;
+            }
+
+            double value = tuning.GetTunedValue(id); // absolute value (base + raw * step)
+            if (value <= 0)
+            {
+                return fallback;
+            }
+
+            return (float)Math.Min(max, Math.Max(min, value));
         }
 
         public string BuildStatus(long bestScore, int bestHigh, bool trainingMode)
