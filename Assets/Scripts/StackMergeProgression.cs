@@ -169,51 +169,59 @@ namespace StackMerge
     {
         private const string PlayerPrefsKey = "StackMerge.Progression.v2";
         private const int BaseAgentSlots = 2;
-        private const int AutoSolveUnlockCost = 140;
-        private const int AutoRestartUnlockCost = 220;
-        private const int SolverTuningUnlockCost = 700;
+        // Global income calibration knob. Lower = chips accrue slower. Tuned against the progression
+        // simulator to hit the intended run-count curve (manual runs ~150 chips each, etc.).
+        private const double IncomeScale = 0.25;
+
+        private const int AutoSolveUnlockCost = 1200;
+        private const int AutoRestartUnlockCost = 8000;
+        private const int SolverTuningUnlockCost = 30000;
         private const int TokenPackCost = 300;
         private const int TokenPackSize = 50;
-        private const int ExtraAgentSlotUpgradeCost = 1800;
-        private const int ModifiersMenuUnlockCost = 5000;
+        private const int ExtraAgentSlotUpgradeCost = 1500000;
+        private const int ModifiersMenuUnlockCost = 3000000;
+        // The Modifier gate must be reachable WITHOUT modifiers (they come after it). Reaching 2048 /
+        // a 40k run needs the longer runs that modifiers enable, so those are impossible pre-gate.
+        // 1024 / ~6k are the realistic ceiling of a strong solver at max capacity without modifiers;
+        // the real "late game" pacing comes from the chip cost of the upgrades + Modifiers menu (3M).
         private const int ModifierGateRuns = 20;
         private const int ModifierGateSolvers = 7;
-        private const int ModifierGateBestScore = 8000;
-        private const int ModifierGateMerges = 1000;
+        private const int ModifierGateBestScore = 6000;
+        private const int ModifierGateMerges = 3000;
         private const int ModifierGateHighestBlock = 1024;
         private const int TokenProspectorMergeTarget = 8;
 
-        private static readonly int[] SpeedUpgradeCosts = { 20, 55, 130, 300, 680 };
+        private static readonly int[] SpeedUpgradeCosts = { 6000, 30000, 150000, 800000, 4000000 };
         private static readonly float[] MoveIntervals = { 0.18f, 0.12f, 0.08f, 0.055f, 0.035f, 0.022f };
-        private static readonly int[] StackCapacityCosts = { 60, 140, 320, 720, 1600 };
-        private static readonly int[] QueuePreviewUpgradeCosts = { 260, 900 };
-        private static readonly int[] IncomeUpgradeCosts = { 90, 220, 520, 1200, 2800 };
-        private static readonly int[] DifficultyUpgradeCosts = { 350, 1200, 3600 };
-        private const int AgentsMenuUnlockCost = 650;
+        private static readonly int[] StackCapacityCosts = { 12000, 70000, 400000, 2200000, 11000000 };
+        private static readonly int[] QueuePreviewUpgradeCosts = { 40000, 400000 };
+        private static readonly int[] IncomeUpgradeCosts = { 4000, 40000, 350000, 2500000, 15000000 };
+        private static readonly int[] DifficultyUpgradeCosts = { 60000, 600000, 6000000 };
+        private const int AgentsMenuUnlockCost = 120000;
         private const int MaxHistoryEntries = 250;
 
         public static readonly AgentDefinition[] Agents =
         {
-            new(AgentId.MergeBroker, "Merge Broker", 120, "Boosts merge income.", "+75% chips from merge rewards."),
-            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 240, "Rewards new highs.", "+140% chips from new highest-block rewards."),
-            new(AgentId.ScoreAuditor, "Score Auditor", 420, "Turns score into chips.", "+60% chips from end-of-run score bonus."),
-            new(AgentId.Overclocker, "Overclocker", 680, "Runs the solver faster.", "Solver move interval is 25% shorter."),
-            new(AgentId.Quartermaster, "Quartermaster", 950, "Improves baseline income.", "+4 chips on every successful placement."),
-            new(AgentId.RestartSponsor, "Restart Sponsor", 1500, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
-            new(AgentId.TokenProspector, "Token Prospector", 1800, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
-            new(AgentId.MoveDividend, "Move Dividend", 2200, "Rewards long, stable runs.", "End-of-run chips gain a bonus from total moves completed."),
-            new(AgentId.VelocityTrader, "Velocity Trader", 3000, "Rewards fast solvers.", "End-of-run chips gain a throughput bonus from moves per second.")
+            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% chips from merge rewards."),
+            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% chips from new highest-block rewards."),
+            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into chips.", "+60% chips from end-of-run score bonus."),
+            new(AgentId.Overclocker, "Overclocker", 400000, "Runs the solver faster.", "Solver move interval is 25% shorter."),
+            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 chips on every successful placement."),
+            new(AgentId.RestartSponsor, "Restart Sponsor", 1000000, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
+            new(AgentId.TokenProspector, "Token Prospector", 1500000, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
+            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run chips gain a bonus from total moves completed."),
+            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run chips gain a throughput bonus from moves per second.")
         };
 
         public static readonly ModifierDefinition[] Modifiers =
         {
-            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run: if a full stack receives a non-merge block, its bottom block is removed without reducing score.", 650, 1300, 2600, 5200, 10400),
-            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Permanent unlock: merge rewards are doubled on every run after purchase.", 2400),
-            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 2400),
-            new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 3600),
-            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one solver-controlled pickaxe use per run. The solver may delete any block in any stack, including middle blocks, to open space or trigger merges.", 1600, 3200, 6400, 12800, 25600),
-            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1400, 2800, 5600, 11200, 22400),
-            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "Permanent unlock: MOCA, MOCA+, and MCTS run about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 48000)
+            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run: if a full stack receives a non-merge block, its bottom block is removed without reducing score.", 800000, 1600000, 3200000, 6400000, 12800000),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Permanent unlock: merge rewards are doubled on every run after purchase.", 3000000),
+            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 3000000),
+            new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 4500000),
+            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one solver-controlled pickaxe use per run. The solver may delete any block in any stack, including middle blocks, to open space or trigger merges.", 2000000, 4000000, 8000000, 16000000, 32000000),
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1800000, 3600000, 7200000, 14400000, 28800000),
+            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "Permanent unlock: MOCA, MOCA+, and MCTS run about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 6000000)
         };
 
         public static readonly AchievementDefinition[] Achievements =
@@ -256,7 +264,7 @@ namespace StackMerge
 
         public int SpeedLevel => data.speedLevel;
 
-        public bool HasPurchasedSolver => data.solverUnlocked != null && data.solverUnlocked.Skip(1).Any(unlocked => unlocked);
+        public bool HasPurchasedSolver => data.solverUnlocked != null && data.solverUnlocked.Any(unlocked => unlocked);
 
         public int UnlockedSolverCount => data.solverUnlocked?.Count(unlocked => unlocked) ?? 1;
 
@@ -407,20 +415,23 @@ namespace StackMerge
 
         public double GetHighestBlockRewardMultiplier(int highestBlock)
         {
-            int value = Math.Max(1, highestBlock);
-            int log = FloorLog2(value);
-            if (log >= 10)
-            {
-                return Math.Min(1_000_000_000.0, Math.Pow(10.0, log - 9));
-            }
-
+            // Gentle, BOUNDED growth. The old curve went exponential past 1024 (up to 1e9x), which —
+            // multiplied by the raw tile value in the income formula — made chips explode into the
+            // quadrillions once modifiers let runs reach huge tiles. A capped curve keeps the high
+            // blocks worthwhile without breaking the economy.
+            int log = FloorLog2(Math.Max(1, highestBlock));
             return log switch
             {
-                >= 9 => 7.5,
-                >= 8 => 5.0,
-                >= 7 => 3.0,
-                >= 6 => 2.0,
-                >= 5 => 1.45,
+                >= 14 => 6.0,
+                >= 13 => 5.5,
+                >= 12 => 5.0,
+                >= 11 => 4.4,
+                >= 10 => 3.8,
+                >= 9 => 3.0,
+                >= 8 => 2.4,
+                >= 7 => 1.9,
+                >= 6 => 1.5,
+                >= 5 => 1.2,
                 _ => 1.0
             };
         }
@@ -1122,6 +1133,7 @@ namespace StackMerge
             long gained = placement;
             gained += (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
             gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
+            gained = (long)Math.Ceiling(gained * IncomeScale);
             if (gained > 0 && !suppressChips)
             {
                 gained = ApplyStageMultiplier(gained);
@@ -1182,7 +1194,7 @@ namespace StackMerge
             double speedBonus = IsAgentActive(AgentId.VelocityTrader) && elapsedSeconds > 0.01f
                 ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18)
                 : 0;
-            long bonus = Math.Max(1, (long)Math.Ceiling(scoreBonus + moveBonus + speedBonus));
+            long bonus = Math.Max(1, (long)Math.Ceiling((scoreBonus + moveBonus + speedBonus) * IncomeScale));
             if (!suppressChips)
             {
                 bonus = ApplyStageMultiplier(bonus);
@@ -1454,13 +1466,9 @@ namespace StackMerge
             int solverCount = StackMergeSolverCatalog.Definitions.Length;
             if (data.solverUnlocked == null || data.solverUnlocked.Length != solverCount)
             {
+                // Fresh saves start with NO solver unlocked — RAND is the first purchasable solver.
+                // Existing saves keep whatever they had unlocked (copied below).
                 bool[] migrated = new bool[solverCount];
-                migrated[0] = true;
-                for (int i = 0; i <= data.highestUnlockedSolver && i < migrated.Length; i++)
-                {
-                    migrated[i] = true;
-                }
-
                 if (data.solverUnlocked != null)
                 {
                     for (int i = 0; i < data.solverUnlocked.Length && i < migrated.Length; i++)
@@ -1472,7 +1480,7 @@ namespace StackMerge
                 data.solverUnlocked = migrated;
             }
 
-            data.solverUnlocked[0] = true;
+            // RAND is no longer free — it is the first purchasable solver (see progression plan).
             data.solverMergeTuning = NormalizeSolverTuningArray(data.solverMergeTuning, solverCount);
             data.solverSafetyTuning = NormalizeSolverTuningArray(data.solverSafetyTuning, solverCount);
             data.solverLookaheadTuning = NormalizeSolverTuningArray(data.solverLookaheadTuning, solverCount);

@@ -588,7 +588,7 @@ namespace StackMerge
         {
             if (jokerBlocksEnabled)
             {
-                double jokerChance = 0.055 + Math.Min(0.035, DifficultyLevel * 0.01);
+                double jokerChance = 0.025 + Math.Min(0.012, DifficultyLevel * 0.004);
                 if (random.NextDouble() < jokerChance)
                 {
                     return JokerBlockValue;

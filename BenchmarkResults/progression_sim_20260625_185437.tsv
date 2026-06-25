@@ -1,0 +1,105 @@
+# Progression simulation
+# runs=389 seed=12345 moveCap=1000 manualProxy=Rand
+# Purchases:
+Run	Label	Cost	ChipsAfter	TotalEarnedAfter
+1	Speed L1	20	600	620
+1	Speed L2	55	545	620
+1	Stack Cap L1	60	485	620
+1	Solver MERG	75	410	620
+1	Chip Yield	90	320	620
+1	Speed L3	130	190	620
+1	Auto Solve	140	50	620
+2	Stack Cap L2	140	4045	4755
+2	Solver BAL	160	3885	4755
+2	Auto Restart	220	3665	4755
+2	Chip Yield	220	3445	4755
+2	Queue Preview	260	3185	4755
+2	Speed L4	300	2885	4755
+2	Solver HEUR	320	2565	4755
+2	Stack Cap L3	320	2245	4755
+2	Difficulty L1	350	1895	4755
+2	Chip Yield	520	1375	4755
+2	Agents Menu	650	725	4755
+2	Agent Merge Broker	120	605	4755
+2	Agent Highwater Analyst	240	365	4755
+3	Agent Score Auditor	420	89361	94171
+3	Speed L5	680	88681	94171
+3	Agent Overclocker	680	88001	94171
+3	Solver LOOK	700	87301	94171
+3	Solver Tuning	700	86601	94171
+3	Stack Cap L4	720	85881	94171
+3	Queue Preview	900	84981	94171
+3	Solver PLAN-3	950	84031	94171
+3	Agent Quartermaster	950	83081	94171
+3	Chip Yield	1200	81881	94171
+3	Difficulty L2	1200	80681	94171
+3	Solver STALL	1250	79431	94171
+3	Solver MOCA	1400	78031	94171
+3	Agent Restart Sponsor	1500	76531	94171
+3	Stack Cap L5	1600	74931	94171
+3	Solver COMBO	1800	73131	94171
+3	Extra Agent Slot	1800	71331	94171
+3	Agent Token Prospector	1800	69531	94171
+3	Agent Move Dividend	2200	67331	94171
+3	Solver PLAN-5	2400	64931	94171
+3	Chip Yield	2800	62131	94171
+3	Agent Velocity Trader	3000	59131	94171
+3	Solver MOCA+	3600	55531	94171
+3	Difficulty L3	3600	51931	94171
+3	Solver MCTS	6200	45731	94171
+389	Modifiers Menu	5000	118873654	118927094
+389	Modifier Unstable Stack L1	650	118873004	118927094
+389	Modifier Unstable Stack L2	1300	118871704	118927094
+389	Modifier Queue Scrubber L1	1400	118870304	118927094
+389	Modifier Miner's Pickaxe L1	1600	118868704	118927094
+389	Modifier Catalyst Stack L1	2400	118866304	118927094
+389	Modifier Mirror Stack L1	2400	118863904	118927094
+389	Modifier Unstable Stack L3	2600	118861304	118927094
+389	Modifier Queue Scrubber L2	2800	118858504	118927094
+389	Modifier Miner's Pickaxe L2	3200	118855304	118927094
+389	Modifier Joker L1	3600	118851704	118927094
+389	Modifier Unstable Stack L4	5200	118846504	118927094
+389	Modifier Queue Scrubber L3	5600	118840904	118927094
+389	Modifier Miner's Pickaxe L3	6400	118834504	118927094
+389	Modifier Unstable Stack L5	10400	118824104	118927094
+389	Modifier Queue Scrubber L4	11200	118812904	118927094
+389	Modifier Miner's Pickaxe L4	12800	118800104	118927094
+389	Modifier Queue Scrubber L5	22400	118777704	118927094
+389	Modifier Miner's Pickaxe L5	25600	118752104	118927094
+389	Modifier Neural Accelerator L1	48000	118704104	118927094
+389	Solver PPO	250000	118454104	118927094
+
+# Per-run economy (sampled):
+Run	Chips	GrossIncome	CumEarned	Solver	Score	Moves	High	Bought
+1	50	620	620	Rand	430	80	16	Speed L1, Speed L2, Stack Cap L1, Solver MERG, Chip Yield, Speed L3, Auto Solve
+2	365	4135	4755	Merge	1474	160	64	Stack Cap L2, Solver BAL, Auto Restart, Chip Yield, Queue Preview, Speed L4, Solver HEUR, Stack Cap L3, Difficulty L1, Chip Yield, Agents Menu, Agent Merge Broker, Agent Highwater Analyst
+3	45731	89416	94171	Heur	2401	178	128	Agent Score Auditor, Speed L5, Agent Overclocker, Solver LOOK, Solver Tuning, Stack Cap L4, Queue Preview, Solver PLAN-3, Agent Quartermaster, Chip Yield, Difficulty L2, Solver STALL, Solver MOCA, Agent Restart Sponsor, Stack Cap L5, Solver COMBO, Extra Agent Slot, Agent Token Prospector, Agent Move Dividend, Solver PLAN-5, Chip Yield, Agent Velocity Trader, Solver MOCA+, Difficulty L3, Solver MCTS
+4	209983	164252	258423	Combo	3510	176	128	
+5	1211468	1001485	1259908	Combo	6194	142	1024	
+6	1349160	137692	1397600	Combo	2706	121	128	
+7	1769098	419938	1817538	Combo	4298	101	512	
+8	1951168	182070	1999608	Combo	2929	147	256	
+9	2070243	119075	2118683	Combo	3071	130	128	
+10	3123435	1053192	3171875	Combo	6435	159	1024	
+11	3495546	372111	3543986	Combo	4260	127	512	
+12	3812101	316555	3860541	Combo	4203	165	256	
+20	6314139	404287	6362579	Combo	4237	151	512	
+40	12645016	225988	12693456	Combo	3732	134	256	
+60	20207345	231164	20255785	Combo	3117	123	256	
+80	25606127	130962	25654567	Combo	2885	151	128	
+100	32600555	107924	32648995	Combo	2529	122	128	
+120	40177247	101184	40225687	Combo	2477	131	128	
+140	45896820	120721	45945260	Combo	2798	118	128	
+160	52248754	201890	52297194	Combo	4263	155	128	
+180	57803695	443584	57852135	Combo	5975	198	256	
+200	63270444	170818	63318884	Combo	3876	142	128	
+220	70024349	211409	70072789	Combo	2754	152	256	
+240	76665101	1059791	76713541	Combo	6365	158	1024	
+260	81583101	168709	81631541	Combo	3301	150	128	
+280	89670894	329838	89719334	Combo	5213	143	256	
+300	95453601	206284	95502041	Combo	3487	137	256	
+320	100354969	181101	100403409	Combo	3246	126	256	
+340	104892359	282266	104940799	Combo	4807	147	256	
+360	110241541	429510	110289981	Combo	4762	168	256	
+380	115210398	346770	115258838	Combo	5265	191	256	
+389	118454104	1426886	118927094	Combo	8790	182	1024	Modifiers Menu, Modifier Unstable Stack L1, Modifier Unstable Stack L2, Modifier Queue Scrubber L1, Modifier Miner's Pickaxe L1, Modifier Catalyst Stack L1, Modifier Mirror Stack L1, Modifier Unstable Stack L3, Modifier Queue Scrubber L2, Modifier Miner's Pickaxe L2, Modifier Joker L1, Modifier Unstable Stack L4, Modifier Queue Scrubber L3, Modifier Miner's Pickaxe L3, Modifier Unstable Stack L5, Modifier Queue Scrubber L4, Modifier Miner's Pickaxe L4, Modifier Queue Scrubber L5, Modifier Miner's Pickaxe L5, Modifier Neural Accelerator L1, Solver PPO
