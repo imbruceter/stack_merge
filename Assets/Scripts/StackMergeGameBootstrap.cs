@@ -155,8 +155,60 @@ namespace StackMerge
             highScore = PlayerPrefs.GetInt(HighScoreKey, 0);
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
+            ApplyModernTheme();
             CreateFreshGame();
             RefreshEverything();
+        }
+
+        /// <summary>
+        /// Runtime visual modernization that works on the existing scene without a rebuild: gives
+        /// every button and card panel soft rounded corners (a white rounded sprite tinted by the
+        /// element's own colour, so existing colour semantics and hover states are preserved). The
+        /// layout is untouched — only the look.
+        /// </summary>
+        private void ApplyModernTheme()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            Sprite roundedButton = GetRoundedSprite(Color.white, Color.white, 22);
+            Sprite roundedCard = GetRoundedSprite(Color.white, Color.white, 30);
+
+            foreach (Button button in canvas.GetComponentsInChildren<Button>(true))
+            {
+                Image image = button.image != null ? button.image : button.GetComponent<Image>();
+                ApplyRoundedSprite(image, roundedButton);
+            }
+
+            // Card-like surfaces get a softer radius.
+            ApplyRoundedSprite(GetImage(nextBlocksRoot), roundedCard);
+            foreach (RectTransform layer in stackBlockLayers)
+            {
+                if (layer != null)
+                {
+                    ApplyRoundedSprite(GetImage(layer.parent as RectTransform), roundedCard);
+                }
+            }
+        }
+
+        private static Image GetImage(RectTransform rect)
+        {
+            return rect != null ? rect.GetComponent<Image>() : null;
+        }
+
+        private static void ApplyRoundedSprite(Image image, Sprite rounded)
+        {
+            // Only restyle flat solid-colour fills; never override something that already draws a
+            // sprite (e.g. the generated tile blocks).
+            if (image == null || image.sprite != null)
+            {
+                return;
+            }
+
+            image.sprite = rounded;
+            image.type = Image.Type.Sliced;
         }
 
         private void Update()

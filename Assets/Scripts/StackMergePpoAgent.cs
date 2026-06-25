@@ -622,23 +622,30 @@ namespace StackMerge
                 return -1.5f;
             }
 
-            float reward = 0.02f; // small alive bonus — longer runs mean more chances to build high tiles
+            // Tiny alive bonus + a small dense nudge toward productive moves. Deliberately small:
+            // a flat per-merge reward (what this used to have) makes "churn many tiny 2->4 merges"
+            // the most rewarding behaviour, which is exactly why runs had high moves/merges but a
+            // low highest tile. The dominant signal must come from reaching higher tiers instead.
+            float reward = 0.005f;
             float scoreDelta = Math.Max(0, nextState.Score - scoreBefore);
-            reward += (float)Math.Log(1.0 + scoreDelta, 2.0) * 0.10f;
-            reward += result.MergeCount * 0.25f;
+            reward += (float)Math.Log(1.0 + scoreDelta, 2.0) * 0.015f;
 
-            // Core objective: reward strictly raising the highest merged tile.
+            // THE core objective: reaching a NEW highest tier. Rewarded densely (the moment it
+            // happens, so credit assignment isn't discounted away over a 400-step episode) and
+            // CONVEXLY in the tier, so climbing 1024 -> 2048 -> 4096 is worth far more than churning
+            // small merges. A churned board that never beats its own record earns almost nothing.
             int highAfter = Math.Max(1, nextState.HighestMergedBlock);
             int high = Math.Max(1, highBefore);
             if (highAfter > high)
             {
-                reward += (LogBlock(highAfter) - LogBlock(high)) * 1.6f;
+                float tier = LogBlock(highAfter);
+                reward += tier * tier * 0.06f;
             }
 
-            // Light positional shaping — deliberately small so it cannot outweigh the high objective.
-            reward += result.UnstableSaveUsed ? 0.15f : 0f;
-            reward -= result.ActionKind == SolverActionKind.QueueSkip ? 0.05f : 0f;
-            reward -= result.ActionKind == SolverActionKind.Pickaxe ? 0.05f : 0f;
+            // Light positional shaping.
+            reward += result.UnstableSaveUsed ? 0.1f : 0f;
+            reward -= result.ActionKind == SolverActionKind.QueueSkip ? 0.04f : 0f;
+            reward -= result.ActionKind == SolverActionKind.Pickaxe ? 0.04f : 0f;
 
             int danger = 0;
             foreach (IReadOnlyList<int> stack in nextState.Stacks)
@@ -649,19 +656,22 @@ namespace StackMerge
                 }
             }
 
-            reward -= danger * 0.04f;
+            reward -= danger * 0.05f;
 
             if (result.IsGameOver)
             {
+                // Superlinear in the final tier so the end-of-run signal sharply separates a weak
+                // finish (high 128 -> ~7) from a strong one (high 2048 -> ~18, high 16384 -> ~29).
+                // That gap is what teaches the agent which runs were genuinely good rather than
+                // merely long — i.e. how to learn from a bad run.
                 float highLog = LogBlock(highAfter);
-                float survival = Math.Min(1f, nextState.BlocksDropped / 400f);
-                reward += highLog * 1.3f;
-                reward += survival * 1.5f;
-                reward += (float)Math.Log(1.0 + Math.Max(0, nextState.Score), 2.0) * 0.25f;
-                reward -= (1f - survival) * 1.0f;
+                float survival = Math.Min(1f, nextState.BlocksDropped / 450f);
+                reward += highLog * highLog * 0.15f;
+                reward += survival * 0.6f;
+                reward -= (1f - survival) * 1.2f;
             }
 
-            return Math.Min(30f, Math.Max(-6f, reward));
+            return Math.Min(40f, Math.Max(-6f, reward));
         }
 
         private void EnsureInitialized(Random random)
