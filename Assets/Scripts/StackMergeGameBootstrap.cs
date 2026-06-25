@@ -133,6 +133,7 @@ namespace StackMerge
         private Button ppoTrainingButton;
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
+        private RectTransform[] solverTuneSegmentContainers;
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -1990,17 +1991,36 @@ namespace StackMerge
                     SetText(solverTuneDescriptionTexts[i], parameter.Description);
                 }
 
+                // Small whole-number parameters become a row of buttons (one per value) showing the
+                // real resolved value, which is far clearer than a slider snapping to "-3".
+                bool useSegments = parameter.WholeNumbers
+                    && parameter.MaxValue > parameter.MinValue
+                    && (parameter.MaxValue - parameter.MinValue) <= 6;
+
                 if (i < solverTuneValueTexts.Length)
                 {
-                    SetText(solverTuneValueTexts[i], parameter.FormatValue(value));
+                    SetText(solverTuneValueTexts[i], useSegments
+                        ? FormatWholeParamValue(selectedSolverId, parameter.Id, value)
+                        : parameter.FormatValue(value));
                 }
 
-                if (i < solverTuneSliders.Length && solverTuneSliders[i] != null)
+                Slider slider = i < solverTuneSliders.Length ? solverTuneSliders[i] : null;
+                if (useSegments && slider != null)
                 {
-                    solverTuneSliders[i].minValue = parameter.MinDisplayValue;
-                    solverTuneSliders[i].maxValue = parameter.MaxDisplayValue;
-                    solverTuneSliders[i].wholeNumbers = parameter.WholeNumbers;
-                    solverTuneSliders[i].SetValueWithoutNotify(parameter.ToDisplayValue(value));
+                    SetActive(slider.gameObject, false);
+                    BuildTuneSegments(i, slider.GetComponent<RectTransform>(), parameter, value);
+                }
+                else
+                {
+                    HideTuneSegments(i);
+                    if (slider != null)
+                    {
+                        SetActive(slider.gameObject, true);
+                        slider.minValue = parameter.MinDisplayValue;
+                        slider.maxValue = parameter.MaxDisplayValue;
+                        slider.wholeNumbers = parameter.WholeNumbers;
+                        slider.SetValueWithoutNotify(parameter.ToDisplayValue(value));
+                    }
                 }
             }
 
@@ -2008,6 +2028,157 @@ namespace StackMerge
             {
                 solverTuneResetButton.interactable = !tuning.IsNeutral;
             }
+        }
+
+        private string FormatWholeParamValue(SolverId solverId, SolverTuneParameterId param, int offset)
+        {
+            int real = ResolveWholeParamValue(solverId, param, offset);
+            return offset == 0 ? $"{real} (Default)" : real.ToString();
+        }
+
+        // Maps an offset-style whole-number tuning value to the real quantity the player gets in
+        // real-time (lightweight) play, so the UI can show "60" iterations instead of "-3".
+        private int ResolveWholeParamValue(SolverId solverId, SolverTuneParameterId param, int offset)
+        {
+            int sims = progression != null ? progression.MonteCarloSimulationCount : 5;
+            int depth = progression != null ? progression.MonteCarloRolloutDepth : 4;
+            switch (param)
+            {
+                case SolverTuneParameterId.TreeVisits:
+                    return Math.Max(2, Math.Max(24, sims * 3) + offset * 2);
+                case SolverTuneParameterId.SimulationRounds:
+                    return Math.Max(1, sims + offset);
+                case SolverTuneParameterId.RolloutMoves:
+                    return Math.Max(1, depth + offset);
+                case SolverTuneParameterId.PlanningDepth:
+                    return Math.Max(1, (solverId == SolverId.Plan5 ? 5 : 3) + offset);
+                case SolverTuneParameterId.RolloutPlanning:
+                    return Math.Max(1, 3 + offset);
+                case SolverTuneParameterId.FutureDepth:
+                    return Math.Max(1, 3 + offset);
+                default:
+                    return offset;
+            }
+        }
+
+        private void BuildTuneSegments(int rowIndex, RectTransform sliderRect, SolverTuningParameterDefinition parameter, int currentValue)
+        {
+            if (sliderRect == null)
+            {
+                return;
+            }
+
+            solverTuneSegmentContainers ??= new RectTransform[solverTuneRows.Length];
+            RectTransform container = rowIndex < solverTuneSegmentContainers.Length ? solverTuneSegmentContainers[rowIndex] : null;
+            if (container == null)
+            {
+                container = CreateRuntimePanel($"Tune Segments {rowIndex}", sliderRect.parent, new Color(0f, 0f, 0f, 0f));
+                Image containerImage = container.GetComponent<Image>();
+                if (containerImage != null)
+                {
+                    containerImage.raycastTarget = false;
+                }
+
+                HorizontalLayoutGroup layout = container.gameObject.AddComponent<HorizontalLayoutGroup>();
+                layout.spacing = 4f;
+                layout.childControlWidth = true;
+                layout.childControlHeight = true;
+                layout.childForceExpandWidth = true;
+                layout.childForceExpandHeight = true;
+                layout.childAlignment = TextAnchor.MiddleCenter;
+                if (rowIndex < solverTuneSegmentContainers.Length)
+                {
+                    solverTuneSegmentContainers[rowIndex] = container;
+                }
+            }
+
+            // Occupy exactly the slider's slot.
+            container.anchorMin = sliderRect.anchorMin;
+            container.anchorMax = sliderRect.anchorMax;
+            container.pivot = sliderRect.pivot;
+            container.offsetMin = sliderRect.offsetMin;
+            container.offsetMax = sliderRect.offsetMax;
+            SetActive(container.gameObject, true);
+
+            for (int c = container.childCount - 1; c >= 0; c--)
+            {
+                Destroy(container.GetChild(c).gameObject);
+            }
+
+            Sprite rounded = GetRoundedSprite(Color.white, Color.white, 12);
+            for (int raw = parameter.MinValue; raw <= parameter.MaxValue; raw++)
+            {
+                int captured = raw;
+                bool selected = raw == currentValue;
+                string label = ResolveWholeParamValue(selectedSolverId, parameter.Id, raw).ToString();
+                CreateSegmentButton(container, label, selected, rounded, () => SetSelectedSolverTuningRaw(rowIndex, captured));
+            }
+        }
+
+        private void HideTuneSegments(int rowIndex)
+        {
+            if (solverTuneSegmentContainers == null || rowIndex >= solverTuneSegmentContainers.Length)
+            {
+                return;
+            }
+
+            RectTransform container = solverTuneSegmentContainers[rowIndex];
+            if (container != null)
+            {
+                SetActive(container.gameObject, false);
+            }
+        }
+
+        private void CreateSegmentButton(RectTransform container, string label, bool selected, Sprite rounded, UnityEngine.Events.UnityAction onClick)
+        {
+            Color color = selected ? HexColor("#2563EB") : HexColor("#1E293B");
+            RectTransform rect = CreateRuntimePanel("Seg", container, color);
+            Image image = rect.GetComponent<Image>();
+            if (image != null)
+            {
+                image.sprite = rounded;
+                image.type = Image.Type.Sliced;
+                image.color = color;
+            }
+
+            Button button = rect.gameObject.AddComponent<Button>();
+            button.targetGraphic = image;
+            button.onClick.AddListener(onClick);
+
+            LayoutElement layoutElement = rect.gameObject.AddComponent<LayoutElement>();
+            layoutElement.flexibleWidth = 1f;
+            layoutElement.minWidth = 24f;
+
+            TMP_Text text = CreateRuntimeText("Label", rect, label, 15, FontStyles.Bold, TextAlignmentOptions.Center, selected ? Color.white : HexColor("#CBD5E1"));
+            Stretch(text.rectTransform, 1f, 1f, 1f, 1f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 9;
+            text.fontSizeMax = 15;
+        }
+
+        private void SetSelectedSolverTuningRaw(int slotIndex, int rawValue)
+        {
+            if (progression == null || !progression.SolverTuningUnlocked || !progression.IsSolverUnlocked(selectedSolverId))
+            {
+                RefreshSolverTunePanel();
+                return;
+            }
+
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(selectedSolverId);
+            if (slotIndex < 0 || slotIndex >= tuningDefinition.Parameters.Length)
+            {
+                RefreshSolverTunePanel();
+                return;
+            }
+
+            progression.SetSolverTuningValue(selectedSolverId, slotIndex, rawValue);
+            progression.Save();
+
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+            SetText(feedbackText, $"{definition.DisplayName} tuning updated");
+            RefreshSolverTunePanel();
+            RefreshSolverDetails();
+            RefreshGameplayInfo();
         }
 
         private void RefreshGameplayInfo()
