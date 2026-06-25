@@ -15,6 +15,7 @@ namespace StackMerge
         public int[] solverSafetyTuning;
         public int[] solverLookaheadTuning;
         public int[] solverTuningValues;
+        public int[] solverLifetimeRuns;
         public bool solverTuningUnlocked;
         public long tokens;
         public int speedLevel;
@@ -1194,8 +1195,40 @@ namespace StackMerge
                 bonus = 0;
             }
 
+            EnsureSolverLifetimeRuns();
+            int solverIndex = (int)solverId;
+            if (solverIndex >= 0 && solverIndex < data.solverLifetimeRuns.Length)
+            {
+                data.solverLifetimeRuns[solverIndex]++;
+            }
+
             RecordRunHistory(runScore, solverId, moves, merges, highestMergedBlock);
             return bonus;
+        }
+
+        /// <summary>Lifetime (uncapped) number of completed runs for a solver.</summary>
+        public int GetSolverLifetimeRuns(SolverId solverId)
+        {
+            EnsureSolverLifetimeRuns();
+            int index = (int)solverId;
+            return index >= 0 && index < data.solverLifetimeRuns.Length ? data.solverLifetimeRuns[index] : 0;
+        }
+
+        private void EnsureSolverLifetimeRuns()
+        {
+            int count = StackMergeSolverCatalog.Definitions.Length;
+            if (data.solverLifetimeRuns != null && data.solverLifetimeRuns.Length >= count)
+            {
+                return;
+            }
+
+            int[] resized = new int[count];
+            if (data.solverLifetimeRuns != null)
+            {
+                Array.Copy(data.solverLifetimeRuns, resized, Math.Min(data.solverLifetimeRuns.Length, count));
+            }
+
+            data.solverLifetimeRuns = resized;
         }
 
         public float AwardMachineLearningRun(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)

@@ -1034,11 +1034,11 @@ namespace StackMerge.Editor
             insightText.fontSizeMin = 11;
             insightText.fontSizeMax = 18;
 
-            RectTransform solverTable = CreateCategoryPanel(panel, "Algorithm Comparison", 296f, 282f);
+            RectTransform solverTable = CreateCategoryPanel(panel, "Solvers - tap i for detail & score history", 296f, 282f);
             solverTableRoot = CreateRect("Algorithm Table", solverTable);
             Stretch(solverTableRoot);
 
-            RectTransform chart = CreateCategoryPanel(panel, "Median Score Chart", 594f, 220f);
+            RectTransform chart = CreateCategoryPanel(panel, "Recent Score Trend", 594f, 220f);
             chartRoot = CreateRect("History Chart", chart);
             Stretch(chartRoot);
             Image chartBackground = chartRoot.gameObject.AddComponent<Image>();

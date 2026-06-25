@@ -134,6 +134,11 @@ namespace StackMerge
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
         private RectTransform[] solverTuneSegmentContainers;
+        private RectTransform solverInfoModal;
+        private TMP_Text solverInfoTitle;
+        private TMP_Text solverInfoStatsText;
+        private TMP_Text solverInfoTuningText;
+        private RectTransform solverInfoChartRoot;
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -2744,8 +2749,8 @@ namespace StackMerge
             {
                 SetText(historySummaryText, "No completed runs yet. Let a run end to start collecting solver stats.");
                 SetText(historyInsightText, "Tip: use the editor benchmark window for large balance samples without touching player progression.");
-                RefreshHistoryChart(Array.Empty<HistorySolverStats>());
-                CreateTable(historySolverTableRoot, new[] { "Solver", "Runs", "Median", "Avg", "Min", "Max", "High" }, Array.Empty<string[]>(), "No solver data yet.");
+                DrawTrendChart(history);
+                BuildSolverList(Array.Empty<HistorySolverStats>());
                 CreateTable(historyRecentRunsRoot, new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" }, Array.Empty<string[]>(), "Recent runs will appear here.");
 
                 return;
@@ -2756,23 +2761,155 @@ namespace StackMerge
             HistorySolverStats[] solverStats = BuildHistorySolverStats(history);
             HistorySolverStats bestMedian = solverStats.OrderByDescending(stats => stats.MedianScore).First();
             HistorySolverStats bestPeak = solverStats.OrderByDescending(stats => stats.MaxScore).First();
-            HistorySolverStats mostStable = solverStats
-                .Where(stats => stats.Runs >= 2)
-                .OrderBy(stats => stats.ScoreRange)
-                .ThenByDescending(stats => stats.MedianScore)
-                .DefaultIfEmpty(bestMedian)
-                .First();
+            int trendCount = Math.Min(history.Length, 40);
 
             SetText(
                 historySummaryText,
-                $"Stored runs: {history.Length}/{250} | Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)}) | Best run: {FormatNumber(best.score)} ({SolverName(best.solverId)})");
+                $"Stored runs: {history.Length}/250 | Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)}) | Best: {FormatNumber(best.score)} ({SolverName(best.solverId)})  —  tap a solver's  i  for its detail & score history");
 
             SetText(
                 historyInsightText,
-                $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Most stable: {mostStable.SolverName} ({FormatNumber(mostStable.MinScore)}-{FormatNumber(mostStable.MaxScore)})");
+                $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Trend = last {trendCount} runs (chronological), more honest than a single aggregate median");
 
-            RefreshHistoryChart(solverStats);
-            RefreshHistoryTables(solverStats, history);
+            DrawTrendChart(history);
+            BuildSolverList(solverStats);
+            RefreshRecentRunsTable(history);
+        }
+
+        // Recent score trend: the last runs in chronological order. This reflects how the player's
+        // setup is actually performing right now, instead of an all-time aggregate that jumps every
+        // time an upgrade is bought.
+        private void DrawTrendChart(RunHistoryEntry[] history)
+        {
+            int take = Math.Min(history.Length, 40);
+            var values = new List<double>(take);
+            for (int i = take - 1; i >= 0; i--)
+            {
+                values.Add(history[i].score);
+            }
+
+            DrawLineChart(historyChartRoot, values, HexColor("#38BDF8"), "No runs yet");
+        }
+
+        private void RefreshRecentRunsTable(RunHistoryEntry[] history)
+        {
+            string[][] recentRows = history
+                .Take(12)
+                .Select(entry => new[]
+                {
+                    $"#{entry.runIndex}",
+                    SolverName(entry.solverId),
+                    FormatNumber(entry.score),
+                    entry.moves.ToString(),
+                    entry.merges.ToString(),
+                    FormatNumber(entry.highestMergedBlock),
+                    $"L{entry.difficultyLevel}"
+                })
+                .ToArray();
+
+            CreateTable(
+                historyRecentRunsRoot,
+                new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" },
+                recentRows,
+                "Recent runs will appear here.");
+        }
+
+        // Per-solver list with an info button on each row that opens a detail window.
+        private void BuildSolverList(HistorySolverStats[] stats)
+        {
+            RectTransform root = historySolverTableRoot;
+            if (root == null)
+            {
+                return;
+            }
+
+            ClearChildren(root);
+            float width = Mathf.Max(620f, root.rect.width);
+            float rowHeight = 40f;
+            float y = 0f;
+
+            CreateSolverListRow(root, width, y, rowHeight, "Solver", "Runs", "Median", "Best", "High", true, SolverId.Rand);
+            y += rowHeight + 4f;
+
+            if (stats.Length == 0)
+            {
+                TMP_Text empty = CreateRuntimeText("Empty", root, "No solver data yet.", 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
+                RectTransform emptyRect = empty.rectTransform;
+                emptyRect.anchorMin = new Vector2(0f, 1f);
+                emptyRect.anchorMax = new Vector2(0f, 1f);
+                emptyRect.pivot = new Vector2(0f, 1f);
+                emptyRect.anchoredPosition = new Vector2(0f, -y - 18f);
+                emptyRect.sizeDelta = new Vector2(width, 44f);
+                return;
+            }
+
+            foreach (HistorySolverStats stat in stats.OrderByDescending(s => s.MedianScore))
+            {
+                CreateSolverListRow(
+                    root, width, y, rowHeight,
+                    stat.SolverName,
+                    FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)),
+                    FormatNumber(stat.MedianScore),
+                    FormatNumber(stat.MaxScore),
+                    FormatNumber(stat.BestHighestMerged),
+                    false,
+                    (SolverId)stat.SolverId);
+                y += rowHeight + 3f;
+            }
+        }
+
+        private void CreateSolverListRow(RectTransform root, float width, float y, float height, string c0, string c1, string c2, string c3, string c4, bool header, SolverId solverId)
+        {
+            RectTransform row = CreateRuntimePanel("Solver Row", root, header ? HexColor("#0B1322") : HexColor("#141C2B"));
+            row.anchorMin = new Vector2(0f, 1f);
+            row.anchorMax = new Vector2(0f, 1f);
+            row.pivot = new Vector2(0f, 1f);
+            row.anchoredPosition = new Vector2(0f, -y);
+            row.sizeDelta = new Vector2(width, height);
+
+            float[] frac = { 0.30f, 0.15f, 0.18f, 0.18f, 0.11f };
+            string[] cells = { c0, c1, c2, c3, c4 };
+            float x = 10f;
+            for (int i = 0; i < cells.Length; i++)
+            {
+                float columnWidth = width * frac[i];
+                TMP_Text text = CreateRuntimeText($"Cell{i}", row, cells[i], header ? 15 : 14, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, header ? HexColor("#FDE68A") : HexColor("#E5E7EB"));
+                text.enableAutoSizing = true;
+                text.fontSizeMin = 9;
+                text.fontSizeMax = header ? 15 : 14;
+                RectTransform rect = text.rectTransform;
+                rect.anchorMin = new Vector2(0f, 0f);
+                rect.anchorMax = new Vector2(0f, 1f);
+                rect.pivot = new Vector2(0f, 0.5f);
+                rect.offsetMin = new Vector2(x, 0f);
+                rect.offsetMax = new Vector2(x + columnWidth - 6f, 0f);
+                x += columnWidth;
+            }
+
+            if (!header)
+            {
+                RectTransform infoRect = CreateRuntimePanel("Info", row, HexColor("#2563EB"));
+                infoRect.anchorMin = new Vector2(1f, 0.5f);
+                infoRect.anchorMax = new Vector2(1f, 0.5f);
+                infoRect.pivot = new Vector2(1f, 0.5f);
+                infoRect.anchoredPosition = new Vector2(-10f, 0f);
+                infoRect.sizeDelta = new Vector2(40f, height - 12f);
+                Image infoImage = infoRect.GetComponent<Image>();
+                if (infoImage != null)
+                {
+                    infoImage.sprite = GetRoundedSprite(Color.white, Color.white, 12);
+                    infoImage.type = Image.Type.Sliced;
+                    infoImage.color = HexColor("#2563EB");
+                }
+
+                Button infoButton = infoRect.gameObject.AddComponent<Button>();
+                infoButton.targetGraphic = infoImage;
+                SolverId captured = solverId;
+                infoButton.onClick.AddListener(() => ShowSolverInfoModal(captured));
+
+                TMP_Text infoLabel = CreateRuntimeText("i", infoRect, "i", 18, FontStyles.Bold, TextAlignmentOptions.Center, Color.white);
+                Stretch(infoLabel.rectTransform, 2f, 2f, 2f, 2f);
+            }
         }
 
         private void RefreshAchievements()
@@ -2810,47 +2947,126 @@ namespace StackMerge
                 "No achievements configured.");
         }
 
-        private void RefreshHistoryTables(HistorySolverStats[] solverStats, RunHistoryEntry[] history)
+        // Simple runtime line chart: connects the values with rotated thin segments, draws dots for
+        // small series, and labels the min / max. Used both for the History trend and the per-solver
+        // detail window.
+        private void DrawLineChart(RectTransform root, IReadOnlyList<double> values, Color lineColor, string emptyText)
         {
-            string[][] solverRows = solverStats
-                .OrderByDescending(stats => stats.MedianScore)
-                .Select(stats => new[]
+            if (root == null)
+            {
+                return;
+            }
+
+            ClearChildren(root);
+            if (values == null || values.Count == 0)
+            {
+                TMP_Text empty = CreateRuntimeText("Empty Chart", root, emptyText, 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
+                Stretch(empty.rectTransform, 0f, 0f, 0f, 0f);
+                return;
+            }
+
+            float width = Mathf.Max(320f, root.rect.width);
+            float height = Mathf.Max(150f, root.rect.height);
+            float padLeft = 10f;
+            float padRight = 12f;
+            float padTop = 26f;
+            float padBottom = 26f;
+            float plotWidth = Mathf.Max(1f, width - padLeft - padRight);
+            float plotHeight = Mathf.Max(1f, height - padTop - padBottom);
+
+            double min = values.Min();
+            double max = values.Max();
+            double range = max - min;
+            if (range < 1e-6)
+            {
+                range = Math.Max(1.0, Math.Abs(max));
+            }
+
+            int count = values.Count;
+
+            Vector2 PointAt(int index)
+            {
+                float px = padLeft + (count == 1 ? plotWidth * 0.5f : plotWidth * index / (count - 1));
+                float norm = (float)((values[index] - min) / range);
+                float py = padBottom + norm * plotHeight;
+                return new Vector2(px, py);
+            }
+
+            // baseline
+            RectTransform baseline = CreateRuntimePanel("Baseline", root, HexColor("#1E293B"));
+            baseline.anchorMin = new Vector2(0f, 0f);
+            baseline.anchorMax = new Vector2(0f, 0f);
+            baseline.pivot = new Vector2(0f, 0.5f);
+            baseline.anchoredPosition = new Vector2(padLeft, padBottom);
+            baseline.sizeDelta = new Vector2(plotWidth, 2f);
+            Image baselineImage = baseline.GetComponent<Image>();
+            if (baselineImage != null)
+            {
+                baselineImage.raycastTarget = false;
+            }
+
+            for (int i = 1; i < count; i++)
+            {
+                CreateLineSegment(root, PointAt(i - 1), PointAt(i), lineColor, 3f);
+            }
+
+            if (count <= 30)
+            {
+                for (int i = 0; i < count; i++)
                 {
-                    stats.SolverName,
-                    stats.Runs.ToString(),
-                    FormatNumber(stats.MedianScore),
-                    FormatNumber(stats.AverageScore),
-                    FormatNumber(stats.MinScore),
-                    FormatNumber(stats.MaxScore),
-                    FormatNumber(stats.BestHighestMerged)
-                })
-                .ToArray();
+                    Vector2 point = PointAt(i);
+                    RectTransform dot = CreateRuntimePanel("Dot", root, lineColor);
+                    dot.anchorMin = new Vector2(0f, 0f);
+                    dot.anchorMax = new Vector2(0f, 0f);
+                    dot.pivot = new Vector2(0.5f, 0.5f);
+                    dot.anchoredPosition = point;
+                    dot.sizeDelta = new Vector2(7f, 7f);
+                    Image dotImage = dot.GetComponent<Image>();
+                    if (dotImage != null)
+                    {
+                        dotImage.sprite = GetRoundedSprite(Color.white, Color.white, 3);
+                        dotImage.type = Image.Type.Sliced;
+                        dotImage.color = lineColor;
+                        dotImage.raycastTarget = false;
+                    }
+                }
+            }
 
-            CreateTable(
-                historySolverTableRoot,
-                new[] { "Solver", "Runs", "Median", "Avg", "Min", "Max", "High" },
-                solverRows,
-                "No solver data yet.");
+            CreateChartLabel(root, $"max {FormatNumber((long)Math.Round(max))}", new Vector2(padLeft, height - padTop + 2f), 220f, TextAlignmentOptions.Left);
+            CreateChartLabel(root, $"min {FormatNumber((long)Math.Round(min))}", new Vector2(padLeft, 2f), 220f, TextAlignmentOptions.Left);
+            CreateChartLabel(root, $"{count} runs", new Vector2(width - padRight - 140f, height - padTop + 2f), 140f, TextAlignmentOptions.Right);
+        }
 
-            string[][] recentRows = history
-                .Take(12)
-                .Select(entry => new[]
-                {
-                    $"#{entry.runIndex}",
-                    SolverName(entry.solverId),
-                    FormatNumber(entry.score),
-                    entry.moves.ToString(),
-                    entry.merges.ToString(),
-                    FormatNumber(entry.highestMergedBlock),
-                    $"L{entry.difficultyLevel}"
-                })
-                .ToArray();
+        private void CreateLineSegment(RectTransform root, Vector2 from, Vector2 to, Color color, float thickness)
+        {
+            Vector2 delta = to - from;
+            float length = delta.magnitude;
+            float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
 
-            CreateTable(
-                historyRecentRunsRoot,
-                new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" },
-                recentRows,
-                "Recent runs will appear here.");
+            RectTransform segment = CreateRuntimePanel("Seg", root, color);
+            segment.anchorMin = new Vector2(0f, 0f);
+            segment.anchorMax = new Vector2(0f, 0f);
+            segment.pivot = new Vector2(0f, 0.5f);
+            segment.anchoredPosition = from;
+            segment.sizeDelta = new Vector2(length, thickness);
+            segment.localRotation = Quaternion.Euler(0f, 0f, angle);
+            Image image = segment.GetComponent<Image>();
+            if (image != null)
+            {
+                image.color = color;
+                image.raycastTarget = false;
+            }
+        }
+
+        private void CreateChartLabel(RectTransform root, string text, Vector2 anchoredPosition, float width, TextAlignmentOptions alignment)
+        {
+            TMP_Text label = CreateRuntimeText("Chart Label", root, text, 13, FontStyles.Bold, alignment, HexColor("#94A3B8"));
+            RectTransform rect = label.rectTransform;
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(0f, 0f);
+            rect.pivot = new Vector2(0f, 0f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = new Vector2(width, 22f);
         }
 
         private static HistorySolverStats[] BuildHistorySolverStats(RunHistoryEntry[] history)
@@ -2873,68 +3089,166 @@ namespace StackMerge
                 .ToArray();
         }
 
-        private void RefreshHistoryChart(HistorySolverStats[] solverStats)
+        private void ShowSolverInfoModal(SolverId solverId)
         {
-            if (historyChartRoot == null)
+            if (progression == null)
             {
                 return;
             }
 
-            ClearChildren(historyChartRoot);
-            HistorySolverStats[] entries = solverStats
-                .OrderByDescending(stats => stats.MedianScore)
-                .Take(8)
-                .ToArray();
-            if (entries.Length == 0)
+            EnsureSolverInfoModal();
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(solverId);
+            RunHistoryEntry[] solverRuns = progression.RunHistory.Where(entry => entry.solverId == (int)solverId).ToArray();
+            int lifetime = progression.GetSolverLifetimeRuns(solverId);
+
+            SetText(solverInfoTitle, $"{definition.DisplayName}  •  detail");
+
+            var stats = new StringBuilder();
+            stats.AppendLine(definition.Description);
+            stats.AppendLine();
+            stats.AppendLine($"Lifetime runs: {FormatNumber(lifetime)}    (stored history: {solverRuns.Length})");
+            if (solverRuns.Length > 0)
             {
-                TMP_Text empty = CreateRuntimeText("Empty Chart", historyChartRoot, "No median data yet", 22, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
-                Stretch(empty.rectTransform, 0f, 0f, 0f, 0f);
+                long[] scores = solverRuns.Select(entry => entry.score).OrderBy(value => value).ToArray();
+                stats.AppendLine($"Best {FormatNumber(scores[^1])}   Median {FormatNumber(Median(scores))}   Avg {FormatNumber((long)scores.Average())}");
+                stats.AppendLine($"Range {FormatNumber(scores[0])} – {FormatNumber(scores[^1])}");
+                stats.AppendLine($"Best high tile {FormatNumber(solverRuns.Max(entry => entry.highestMergedBlock))}   Avg moves {solverRuns.Average(entry => entry.moves):0}");
+            }
+            else
+            {
+                stats.AppendLine("No stored runs for this solver yet.");
+            }
+
+            if (solverId == SolverId.MachineLearning)
+            {
+                StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
+                stats.AppendLine();
+                stats.AppendLine("<b>PPO training</b>");
+                stats.AppendLine($"Updates {metrics.Updates}   Frames {metrics.Steps}   Lv {progression.MachineLearningLevel}");
+                stats.AppendLine($"Avg high {metrics.RecentAverageHigh:0}   Avg score {metrics.RecentAverageScore:0}");
+                stats.AppendLine($"Policy loss {metrics.LastPolicyLoss:0.000}   Entropy {metrics.LastEntropy:0.000}");
+                stats.AppendLine(progression.MachineLearningPlayingModeUnlocked
+                    ? "Playing mode: unlocked"
+                    : $"Playing mode unlocks at {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
+            }
+
+            SetText(solverInfoStatsText, stats.ToString());
+            SetText(solverInfoTuningText, BuildTuningSummary(solverId));
+
+            int take = Math.Min(solverRuns.Length, 50);
+            var values = new List<double>(take);
+            for (int i = take - 1; i >= 0; i--)
+            {
+                values.Add(solverRuns[i].score);
+            }
+
+            DrawLineChart(solverInfoChartRoot, values, HexColor("#34D399"), "No score history for this solver yet");
+
+            SetActive(solverInfoModal.gameObject, true);
+        }
+
+        private string BuildTuningSummary(SolverId solverId)
+        {
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
+            if (!tuningDefinition.HasParameters)
+            {
+                return "<b>Tuning</b>\nThis solver has no tunable parameters.";
+            }
+
+            if (!progression.SolverTuningUnlocked)
+            {
+                return "<b>Tuning</b>\nLocked — unlock Solver Tuning in Upgrades.";
+            }
+
+            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
+            var builder = new StringBuilder();
+            builder.AppendLine("<b>Tuning</b>");
+            for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
+            {
+                SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
+                int raw = tuning.GetSlotValue(i);
+                bool useSegments = parameter.WholeNumbers && parameter.MaxValue > parameter.MinValue && (parameter.MaxValue - parameter.MinValue) <= 6;
+                string value = useSegments ? FormatWholeParamValue(solverId, parameter.Id, raw) : parameter.FormatValue(raw);
+                builder.AppendLine($"{parameter.DisplayName}: {value}");
+            }
+
+            return builder.ToString();
+        }
+
+        private void EnsureSolverInfoModal()
+        {
+            if (solverInfoModal != null || canvas == null)
+            {
                 return;
             }
 
-            float chartWidth = Mathf.Max(480f, historyChartRoot.rect.width);
-            float chartHeight = Mathf.Max(180f, historyChartRoot.rect.height);
-            float gap = 8f;
-            float bottomLabelHeight = 42f;
-            float barWidth = Mathf.Max(22f, (chartWidth - gap * (entries.Length - 1)) / entries.Length);
-            long maxScore = Math.Max(1, entries.Max(entry => entry.MedianScore));
+            solverInfoModal = CreateRuntimePanel("Solver Info Modal", canvas.transform, HexColor("#020617", 0.8f));
+            Stretch(solverInfoModal, 0f, 0f, 0f, 0f);
+            Button backdrop = solverInfoModal.gameObject.AddComponent<Button>();
+            backdrop.transition = Selectable.Transition.None;
+            backdrop.targetGraphic = solverInfoModal.GetComponent<Image>();
+            backdrop.onClick.AddListener(HideSolverInfoModal);
 
-            for (int i = 0; i < entries.Length; i++)
+            RectTransform card = CreateRuntimePanel("Card", solverInfoModal, HexColor("#111A2E", 1f));
+            card.anchorMin = new Vector2(0.5f, 0.5f);
+            card.anchorMax = new Vector2(0.5f, 0.5f);
+            card.pivot = new Vector2(0.5f, 0.5f);
+            card.anchoredPosition = Vector2.zero;
+            card.sizeDelta = new Vector2(460f, 700f);
+            Image cardImage = card.GetComponent<Image>();
+            if (cardImage != null)
             {
-                HistorySolverStats entry = entries[i];
-                float normalized = Mathf.Clamp01(entry.MedianScore / (float)maxScore);
-                float barHeight = Mathf.Lerp(16f, chartHeight - bottomLabelHeight - 14f, normalized);
-                float x = i * (barWidth + gap);
+                cardImage.sprite = GetRoundedSprite(Color.white, Color.white, 28);
+                cardImage.type = Image.Type.Sliced;
+                cardImage.color = HexColor("#111A2E");
+            }
 
-                RectTransform bar = CreateRuntimePanel($"{entry.SolverName} Median Bar", historyChartRoot, HexColor("#2563EB"));
-                bar.anchorMin = new Vector2(0f, 0f);
-                bar.anchorMax = new Vector2(0f, 0f);
-                bar.pivot = new Vector2(0f, 0f);
-                bar.anchoredPosition = new Vector2(x, bottomLabelHeight);
-                bar.sizeDelta = new Vector2(barWidth, barHeight);
-                Image barImage = bar.GetComponent<Image>();
-                if (barImage != null)
-                {
-                    barImage.color = Color.Lerp(HexColor("#0F766E"), HexColor("#2563EB"), i / Mathf.Max(1f, entries.Length - 1f));
-                }
+            solverInfoTitle = CreateCardChildText("Title", card, "Solver", 26, new Vector2(0f, 308f), new Vector2(420f, 40f), HexColor("#F8FAFC"));
 
-                TMP_Text valueLabel = CreateRuntimeText(
-                    $"{entry.SolverName} Median Label",
-                    historyChartRoot,
-                    $"{entry.SolverName}\n{FormatNumber(entry.MedianScore)}",
-                    14,
-                    FontStyles.Bold,
-                    TextAlignmentOptions.Center,
-                    HexColor("#CBD5E1"));
-                valueLabel.enableAutoSizing = true;
-                valueLabel.fontSizeMin = 9;
-                valueLabel.fontSizeMax = 14;
-                RectTransform labelRect = valueLabel.rectTransform;
-                labelRect.anchorMin = new Vector2(0f, 0f);
-                labelRect.anchorMax = new Vector2(0f, 0f);
-                labelRect.pivot = new Vector2(0f, 0f);
-                labelRect.anchoredPosition = new Vector2(x, 0f);
-                labelRect.sizeDelta = new Vector2(barWidth, bottomLabelHeight - 4f);
+            solverInfoStatsText = CreateInfoBlockText("Stats", card, new Vector2(0f, 138f), new Vector2(420f, 280f), 17);
+            solverInfoTuningText = CreateInfoBlockText("Tuning", card, new Vector2(0f, -78f), new Vector2(420f, 148f), 16);
+
+            RectTransform chartHolder = CreateRuntimePanel("Chart", card, HexColor("#0B1322", 1f));
+            chartHolder.anchorMin = new Vector2(0.5f, 0.5f);
+            chartHolder.anchorMax = new Vector2(0.5f, 0.5f);
+            chartHolder.pivot = new Vector2(0.5f, 0.5f);
+            chartHolder.anchoredPosition = new Vector2(0f, -232f);
+            chartHolder.sizeDelta = new Vector2(420f, 180f);
+            Image chartImage = chartHolder.GetComponent<Image>();
+            if (chartImage != null)
+            {
+                chartImage.sprite = GetRoundedSprite(Color.white, Color.white, 14);
+                chartImage.type = Image.Type.Sliced;
+                chartImage.color = HexColor("#0B1322");
+            }
+
+            solverInfoChartRoot = chartHolder;
+
+            Button close = CreateRuntimeButton("Close", card, "Close", HexColor("#334155"), new Vector2(0f, -322f), new Vector2(200f, 44f));
+            close.onClick.AddListener(HideSolverInfoModal);
+
+            solverInfoModal.gameObject.SetActive(false);
+        }
+
+        private TMP_Text CreateInfoBlockText(string name, Transform parent, Vector2 anchoredPosition, Vector2 size, int fontSize)
+        {
+            TMP_Text text = CreateRuntimeText(name, parent, string.Empty, fontSize, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            RectTransform rect = text.rectTransform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = size;
+            text.richText = true;
+            text.overflowMode = TextOverflowModes.Overflow;
+            return text;
+        }
+
+        private void HideSolverInfoModal()
+        {
+            if (solverInfoModal != null)
+            {
+                SetActive(solverInfoModal.gameObject, false);
             }
         }
 
