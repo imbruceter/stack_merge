@@ -673,6 +673,26 @@ namespace StackMerge.Tests
         }
 
         [Test]
+        public void PpoNormalRuns_EarnInsightAfterFirstPrestige()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                prestigeCount = 1,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 100, 10, 12_000, 4096)
+            });
+
+            progression.AwardMachineLearningRun(12_000, 260, 210, 4096, trainingMode: false);
+
+            Assert.That(progression.ResearchInsight, Is.GreaterThan(0));
+            Assert.That(progression.ResearchInsightEarnedThisPrestige, Is.EqualTo(progression.ResearchInsight));
+            Assert.That(progression.PreviewPrestigeInsightGain(), Is.GreaterThan(1));
+        }
+
+        [Test]
         public void Prestige_PpoMemoryWarmStartsAfterReset()
         {
             bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];

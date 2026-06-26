@@ -99,7 +99,7 @@ namespace StackMerge
 
             var purchases = new List<PurchaseRecord>();
             var details = new StringBuilder();
-            details.AppendLine("Run\tChips\tInsight\tPrestiges\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
+            details.AppendLine("Run\tChips\tInsight\tCycleInsight\tPrestiges\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
 
             int run = 0;
             bool ppoUnlocked = false;
@@ -127,7 +127,7 @@ namespace StackMerge
                 if (run % sampleEvery == 0 || bought.Length > 0 || run <= 12)
                 {
                     long earned = progression.TotalChipsEarned;
-                    details.AppendLine($"{run}\t{progression.Chips}\t{progression.ResearchInsight}\t{progression.PrestigeCount}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
+                    details.AppendLine($"{run}\t{progression.Chips}\t{progression.ResearchInsight}\t{progression.ResearchInsightEarnedThisPrestige}\t{progression.PrestigeCount}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
                 }
 
                 if (stopwatch.Elapsed.TotalSeconds > 600)
@@ -489,7 +489,7 @@ namespace StackMerge
         {
             var sb = new StringBuilder();
             sb.AppendLine($"Simulated {runs} runs  |  final chips {progression.Chips:N0}  |  total earned {progression.TotalChipsEarned:N0}");
-            sb.AppendLine($"Prestiges: {progression.PrestigeCount:N0}  |  Insight {progression.ResearchInsight:N0}  |  Lifetime Insight {progression.LifetimeResearchInsight:N0}  |  Last prestige {progression.LastPrestigeInsight:N0}");
+            sb.AppendLine($"Prestiges: {progression.PrestigeCount:N0}  |  Insight {progression.ResearchInsight:N0}  |  Cycle Insight {progression.ResearchInsightEarnedThisPrestige:N0}  |  Lifetime Insight {progression.LifetimeResearchInsight:N0}  |  Last prestige {progression.LastPrestigeInsight:N0}");
             sb.AppendLine($"PPO unlocked: {(ppoUnlocked ? $"YES at run {FirstRun(purchases, "Solver PPO")}" : "no")}");
             sb.AppendLine($"Highest block ever: {progression.HighestBlockEver}  |  best run score: {progression.BestRunScore:N0}");
             sb.AppendLine();
@@ -554,7 +554,7 @@ namespace StackMerge
                 var sb = new StringBuilder();
                 sb.AppendLine("# Progression simulation");
                 sb.AppendLine($"# runs={runs} seed={seed} moveCap={moveCap} manualProxy={manualProxy} stopAtPpo={stopAtPpo} simulateResearch={simulateResearch} targetPrestiges={targetPrestiges} ppoNormalRunsPerPrestige={ppoNormalRunsPerPrestige}");
-                sb.AppendLine($"# finalChips={progression.Chips} totalEarned={progression.TotalChipsEarned} prestiges={progression.PrestigeCount} insight={progression.ResearchInsight} lifetimeInsight={progression.LifetimeResearchInsight}");
+                sb.AppendLine($"# finalChips={progression.Chips} totalEarned={progression.TotalChipsEarned} prestiges={progression.PrestigeCount} insight={progression.ResearchInsight} cycleInsight={progression.ResearchInsightEarnedThisPrestige} lifetimeInsight={progression.LifetimeResearchInsight}");
                 sb.AppendLine("# Purchases:");
                 sb.AppendLine("Run\tLabel\tCost\tCurrency\tBalanceAfter\tTotalEarnedAfter");
                 foreach (PurchaseRecord record in purchases)
