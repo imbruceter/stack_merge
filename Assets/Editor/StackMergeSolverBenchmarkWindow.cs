@@ -33,6 +33,7 @@ namespace StackMerge.Editor
         private int ppoEvaluationInterval = 100;
         private int ppoEvaluationRuns = 3;
         private int ppoLogEveryNthRun = 1;
+        private int ppoHiddenSize = 64;
         private Vector2 scroll;
         private string lastOutput = "No benchmark run yet.";
         private string lastPpoDetailPath = string.Empty;
@@ -107,6 +108,7 @@ namespace StackMerge.Editor
                     EditorGUILayout.Space(4f);
                     EditorGUILayout.LabelField("PPO benchmark", EditorStyles.boldLabel);
                     mlBenchmarkTrainingMode = EditorGUILayout.Toggle("Training mode learning", mlBenchmarkTrainingMode);
+                    ppoHiddenSize = Mathf.Clamp(EditorGUILayout.IntField("PPO brain size (hidden)", ppoHiddenSize), 16, 512);
                     ppoEvaluationEnabled = EditorGUILayout.Toggle("Greedy evaluation", ppoEvaluationEnabled);
                     using (new EditorGUI.DisabledScope(!ppoEvaluationEnabled))
                     {
@@ -209,7 +211,7 @@ namespace StackMerge.Editor
             canceled = false;
             bool solverTimedOut = false;
             StackMergePpoAgent ppoAgent = solverId == SolverId.MachineLearning
-                ? new StackMergePpoAgent(new StackMergePpoTrainingData(), seedRandom.Next())
+                ? new StackMergePpoAgent(new StackMergePpoTrainingData { hiddenSize = ppoHiddenSize }, seedRandom.Next())
                 : null;
             StringBuilder ppoDetails = ppoAgent != null && !runAllSolvers ? CreatePpoDetailBuilder() : null;
 

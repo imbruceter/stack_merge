@@ -9,6 +9,7 @@ namespace StackMerge
     public sealed class StackMergePpoTrainingData
     {
         public int version;
+        public int hiddenSize;
         public int updates;
         public int episodes;
         public int steps;
@@ -110,7 +111,12 @@ namespace StackMerge
         private const int MaxStackCapacity = StackMergeGameState.MaxStackCapacity;
         private const int MaxQueueLength = StackMergeGameState.DefaultQueueLength + 2;
         private const int InputSize = 112;
-        private const int Hidden = 64;
+        // Brain width. Configurable (stored in the training data) so the research tree can grow the
+        // PPO's capacity across prestiges, and so the benchmark can measure learnability per size.
+        private const int DefaultHidden = 64;
+        private const int MinHidden = 16;
+        private const int MaxHidden = 512;
+        private int hidden = DefaultHidden;
         private const int PlaceActionCount = MaxStacks;
         private const int QueueSkipAction = PlaceActionCount;
         private const int PickaxeActionStart = QueueSkipAction + 1;
@@ -340,10 +346,10 @@ namespace StackMerge
                 ? 0.02f * (float)Math.Exp(-Math.Max(0, data.updates) / 30000f) + 0.004f
                 : 0.003f;
 
-            // One pass per update keeps training cheap (a full run stays well under ~0.1s). A
-            // single-hidden-layer net + 1 epoch is a clipped policy-gradient step; sample
-            // efficiency is traded for raw speed, which matters because training spans many runs.
-            int epochs = 1;
+            // Multiple epochs per batch make the PPO clip actually matter and dramatically improve
+            // sample efficiency / consistency (1 epoch behaves like noisy vanilla policy gradient).
+            // Training runs in the background so the extra cost is acceptable.
+            int epochs = trainingMode ? 3 : 1;
             int[] order = new int[count];
             for (int i = 0; i < count; i++)
             {
@@ -712,15 +718,18 @@ namespace StackMerge
         private void EnsureInitialized(Random random)
         {
             random ??= new Random(24681357);
+            hidden = data.hiddenSize > 0 ? Math.Min(MaxHidden, Math.Max(MinHidden, data.hiddenSize)) : DefaultHidden;
+            data.hiddenSize = hidden;
+
             bool versionMismatch = data.version != Version;
             bool invalid = versionMismatch
-                || !HasSize(data.actorW1, InputSize * Hidden)
-                || !HasSize(data.actorB1, Hidden)
-                || !HasSize(data.actorW2, Hidden * ActionCount)
+                || !HasSize(data.actorW1, InputSize * hidden)
+                || !HasSize(data.actorB1, hidden)
+                || !HasSize(data.actorW2, hidden * ActionCount)
                 || !HasSize(data.actorB2, ActionCount)
-                || !HasSize(data.criticW1, InputSize * Hidden)
-                || !HasSize(data.criticB1, Hidden)
-                || !HasSize(data.criticW2, Hidden * 1)
+                || !HasSize(data.criticW1, InputSize * hidden)
+                || !HasSize(data.criticB1, hidden)
+                || !HasSize(data.criticW2, hidden * 1)
                 || !HasSize(data.criticB2, 1);
 
             if (invalid)
@@ -746,24 +755,25 @@ namespace StackMerge
                 }
 
                 data.version = Version;
+                data.hiddenSize = hidden;
                 // Xavier-style scaling for tanh layers keeps activations in a sane range.
-                data.actorW1 = CreateWeights(InputSize * Hidden, random, (float)Math.Sqrt(1.0 / InputSize));
-                data.actorB1 = new float[Hidden];
-                data.actorW2 = CreateWeights(Hidden * ActionCount, random, 0.01f);
+                data.actorW1 = CreateWeights(InputSize * hidden, random, (float)Math.Sqrt(1.0 / InputSize));
+                data.actorB1 = new float[hidden];
+                data.actorW2 = CreateWeights(hidden * ActionCount, random, 0.01f);
                 data.actorB2 = new float[ActionCount];
                 InitializeActionPriors(data.actorB2);
-                data.criticW1 = CreateWeights(InputSize * Hidden, random, (float)Math.Sqrt(1.0 / InputSize));
-                data.criticB1 = new float[Hidden];
-                data.criticW2 = CreateWeights(Hidden * 1, random, 0.01f);
+                data.criticW1 = CreateWeights(InputSize * hidden, random, (float)Math.Sqrt(1.0 / InputSize));
+                data.criticB1 = new float[hidden];
+                data.criticW2 = CreateWeights(hidden * 1, random, 0.01f);
                 data.criticB2 = new float[1];
             }
 
             actor = new DenseNet(
-                new[] { InputSize, Hidden, ActionCount },
+                new[] { InputSize, hidden, ActionCount },
                 new[] { data.actorW1, data.actorW2 },
                 new[] { data.actorB1, data.actorB2 });
             critic = new DenseNet(
-                new[] { InputSize, Hidden, 1 },
+                new[] { InputSize, hidden, 1 },
                 new[] { data.criticW1, data.criticW2 },
                 new[] { data.criticB1, data.criticB2 });
         }
