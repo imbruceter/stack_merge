@@ -309,19 +309,19 @@ namespace StackMerge
 
         public static readonly ResearchDefinition[] Research =
         {
-            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the root research: every branch starts here.", 1, 0, 1, 2, 4, 8, 16),
-            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 0, 1, 1, 2, 4, 8, 16),
-            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 0, 2, 2, 5, 12),
-            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 3, 3, 8, 18, 40),
-            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 0, 4, 2, 4, 9, 18, 36),
-            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 4, 9, 18, 36, 72),
-            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 2, 6, 14, 30, 65, 140),
-            new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 3, 8, 18, 38, 80, 170),
-            new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 4, 10, 24, 52, 110, 230),
-            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 5, 14, 32, 70, 150, 320),
-            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 1, 3, 7, 15, 32, 68),
-            new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 2, 4, 10, 22, 48, 100),
-            new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 3, 5, 12, 28, 60, 130)
+            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the root research: every branch starts here.", 1, 0, 50, 130, 300, 700, 1600),
+            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 0, 1, 200, 500, 1200, 2800, 6500),
+            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 0, 2, 1000, 2500, 6000),
+            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 3, 6000, 14000, 32000, 75000),
+            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 0, 4, 30000, 70000, 160000, 380000, 850000),
+            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 200, 500, 1200, 2800, 6500),
+            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 2, 1000, 2500, 6000, 14000, 32000),
+            new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 3, 6000, 14000, 32000, 75000, 170000),
+            new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 4, 30000, 70000, 160000, 380000, 850000),
+            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 5, 150000, 350000, 800000, 1800000, 4000000),
+            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 1, 200, 500, 1200, 2800, 6500),
+            new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 2, 1000, 2500, 6000, 14000, 32000),
+            new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 3, 6000, 14000, 32000, 75000, 170000)
         };
 
         private readonly StackMergeProgressionData data;
