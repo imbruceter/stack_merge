@@ -256,6 +256,42 @@ namespace StackMerge
             }
         }
 
+        public void ResetForPrestige(int seed = 24681357)
+        {
+            rng = new Random(seed);
+            trajectory.Clear();
+            hasPendingTransition = false;
+            pendingTransition = default;
+            episodeReward = 0f;
+
+            data.version = 0;
+            data.hiddenSize = DefaultHidden;
+            data.updates = 0;
+            data.episodes = 0;
+            data.steps = 0;
+            data.totalReward = 0f;
+            data.recentAverageReward = 0f;
+            data.recentAverageScore = 0f;
+            data.recentAverageMoves = 0f;
+            data.recentAverageMerges = 0f;
+            data.recentAverageHigh = 0f;
+            data.bestEpisodeReward = 0f;
+            data.bestScore = 0;
+            data.bestHigh = 0;
+            data.lastPolicyLoss = 0f;
+            data.lastValueLoss = 0f;
+            data.lastEntropy = 0f;
+            data.actorW1 = null;
+            data.actorB1 = null;
+            data.actorW2 = null;
+            data.actorB2 = null;
+            data.criticW1 = null;
+            data.criticB1 = null;
+            data.criticW2 = null;
+            data.criticB2 = null;
+            EnsureInitialized(rng);
+        }
+
         /// <summary>
         /// Applies the player's PPO solver-tuning to the learning hyperparameters. Values are read as
         /// absolute numbers and clamped to safe bounds so tuning can nudge behaviour without ever

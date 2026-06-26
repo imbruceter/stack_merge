@@ -189,7 +189,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_RevealsSolverDescriptionAfterUnlock()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 1000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 100000 });
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(SolverId.Look);
 
             Assert.That(progression.IsSolverUnlocked(SolverId.Look), Is.False);
@@ -202,7 +202,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_UnlocksSpeedRestartAndStackCapacity()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 1000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 120000 });
 
             Assert.That(progression.StackCapacity, Is.EqualTo(5));
             Assert.That(progression.SelectOrUnlockSolver(SolverId.Heur), Is.True);
@@ -224,7 +224,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_UnlocksDifficultyAndRecordsRunHistory()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 100000 });
 
             Assert.That(progression.DifficultyLevel, Is.EqualTo(0));
             Assert.That(progression.BuyDifficultyUpgrade(), Is.True);
@@ -264,7 +264,7 @@ namespace StackMerge.Tests
             Assert.That(chipsGained, Is.GreaterThan(0));
             Assert.That(runBonus, Is.GreaterThan(0));
             Assert.That(progression.TotalChipsEarned, Is.GreaterThanOrEqualTo(chipsGained + runBonus));
-            Assert.That(progression.TotalChipsSpent, Is.EqualTo(20));
+            Assert.That(progression.TotalChipsSpent, Is.EqualTo(6000));
             Assert.That(progression.TotalBlocksDropped, Is.EqualTo(1));
             Assert.That(progression.TotalMerges, Is.EqualTo(50));
             Assert.That(progression.HighestBlockEver, Is.EqualTo(1024));
@@ -437,7 +437,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_AgentsUnlockEquipAndExtraSlotUpgradeAddsSlot()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 5000000 });
             AgentDefinition quartermaster = progression.GetAgentDefinition(AgentId.Quartermaster);
 
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
@@ -474,7 +474,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_AutomationRequiresPurchasedSolverAndAutoRestartUsesTokens()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 2000000 });
 
             Assert.That(progression.ToggleOrBuyAutoSolve(), Is.False);
             Assert.That(progression.ToggleOrBuyAutoRestart(), Is.False);
@@ -504,7 +504,7 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_UnlocksSolverTuningAndModifiers()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 50000 });
 
             Assert.That(progression.SolverTuningUnlocked, Is.False);
             Assert.That(progression.BuySolverTuningUnlock(), Is.True);
@@ -520,11 +520,11 @@ namespace StackMerge.Tests
 
             progression = new StackMergeProgression(new StackMergeProgressionData
             {
-                chips = 20000,
+                chips = 10000000,
                 solverUnlocked = unlockedSolvers,
                 agentsMenuUnlocked = true,
                 runsCompleted = 20,
-                totalMerges = 1000,
+                totalMerges = 3000,
                 bestRunScore = 8000,
                 highestBlockEver = 1024
             });
@@ -544,7 +544,7 @@ namespace StackMerge.Tests
         {
             var lockedProgression = new StackMergeProgression(new StackMergeProgressionData
             {
-                chips = 1_000_000,
+                chips = 101_000_000,
                 modifiersMenuUnlocked = true,
                 modifierLevels = new int[StackMergeProgression.Modifiers.Length]
             });
@@ -555,7 +555,7 @@ namespace StackMerge.Tests
             int[] maxedModifiers = StackMergeProgression.Modifiers.Select(modifier => modifier.MaxLevel).ToArray();
             var unlockedProgression = new StackMergeProgression(new StackMergeProgressionData
             {
-                chips = 1_000_000,
+                chips = 101_000_000,
                 modifiersMenuUnlocked = true,
                 modifierLevels = maxedModifiers
             });
@@ -563,6 +563,85 @@ namespace StackMerge.Tests
             Assert.That(unlockedProgression.CanUnlockMachineLearning, Is.True);
             Assert.That(unlockedProgression.SelectOrUnlockSolver(SolverId.MachineLearning), Is.True);
             Assert.That(unlockedProgression.SelectedSolver, Is.EqualTo(SolverId.MachineLearning));
+        }
+
+        [Test]
+        public void Prestige_StartsAtOneInsightAndResetsPpoBrain()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 554_918,
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                bestRunScore = 33_908,
+                highestBlockEver = 8192,
+                machineLearningPolicy = new StackMergePpoTrainingData
+                {
+                    steps = 12_000,
+                    updates = 25,
+                    episodes = 4,
+                    bestScore = 0,
+                    bestHigh = 0
+                }
+            });
+
+            Assert.That(progression.PrestigeAvailable, Is.True);
+            Assert.That(progression.PreviewPrestigeInsightGain(), Is.EqualTo(1));
+
+            long gained = progression.ExecutePrestige();
+
+            Assert.That(gained, Is.EqualTo(1));
+            Assert.That(progression.ResearchInsight, Is.EqualTo(1));
+            Assert.That(progression.PrestigeCount, Is.EqualTo(1));
+            Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
+            Assert.That(progression.MachineLearningFrames, Is.EqualTo(0));
+            Assert.That(progression.Chips, Is.EqualTo(0));
+            Assert.That(progression.BestRunScore, Is.EqualTo(0));
+            Assert.That(progression.HighestBlockEver, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void Prestige_PreservesResearchAndAppliesStartBonuses()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            int[] researchLevels = new int[StackMergeProgression.Research.Length];
+            researchLevels[(int)ResearchId.SeedCapital] = 1;
+            researchLevels[(int)ResearchId.AutomationMemory] = 1;
+            researchLevels[(int)ResearchId.AlgorithmArchive] = 1;
+
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 1_000_000,
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                bestRunScore = 80_000,
+                highestBlockEver = 16384,
+                prestigeCount = 1,
+                researchInsight = 4,
+                researchLevels = researchLevels,
+                machineLearningPolicy = new StackMergePpoTrainingData
+                {
+                    steps = 500_000,
+                    bestScore = 70_000,
+                    bestHigh = 16384
+                }
+            });
+
+            long gained = progression.ExecutePrestige();
+
+            Assert.That(gained, Is.GreaterThan(1));
+            Assert.That(progression.GetResearchLevel(ResearchId.SeedCapital), Is.EqualTo(1));
+            Assert.That(progression.GetResearchLevel(ResearchId.AutomationMemory), Is.EqualTo(1));
+            Assert.That(progression.GetResearchLevel(ResearchId.AlgorithmArchive), Is.EqualTo(1));
+            Assert.That(progression.Chips, Is.EqualTo(2500));
+            Assert.That(progression.IsSolverUnlocked(SolverId.Rand), Is.True);
+            Assert.That(progression.AutoSolveUnlocked, Is.True);
+            Assert.That(progression.AutoSolveEnabled, Is.True);
+            Assert.That(progression.PrestigeCount, Is.EqualTo(2));
+            Assert.That(progression.ResearchInsight, Is.EqualTo(4 + gained));
         }
 
         [Test]

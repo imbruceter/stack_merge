@@ -49,6 +49,12 @@ namespace StackMerge
         public long machineLearningBestScore;
         public int machineLearningBestHigh;
         public StackMergePpoTrainingData machineLearningPolicy;
+        public long researchInsight;
+        public long lifetimeResearchInsight;
+        public int prestigeCount;
+        public long lastPrestigeInsight;
+        public long bestPrestigeInsight;
+        public int[] researchLevels;
     }
 
     [Serializable]
@@ -165,6 +171,37 @@ namespace StackMerge
         public long Target { get; }
     }
 
+    public enum ResearchId
+    {
+        InsightAmplifier = 0,
+        SeedCapital = 1,
+        AutomationMemory = 2,
+        AlgorithmArchive = 3,
+        YieldTheory = 4,
+        PpoBootcamp = 5
+    }
+
+    public readonly struct ResearchDefinition
+    {
+        public ResearchDefinition(ResearchId id, string displayName, string description, params int[] costs)
+        {
+            Id = id;
+            DisplayName = displayName;
+            Description = description;
+            Costs = costs ?? Array.Empty<int>();
+        }
+
+        public ResearchId Id { get; }
+
+        public string DisplayName { get; }
+
+        public string Description { get; }
+
+        public int[] Costs { get; }
+
+        public int MaxLevel => Costs.Length;
+    }
+
     public sealed class StackMergeProgression
     {
         private const string PlayerPrefsKey = "StackMerge.Progression.v2";
@@ -246,6 +283,16 @@ namespace StackMerge
             new(17, "Stack Singularity", "Reach block 1,024.", AchievementMetric.HighestBlockEver, 1024)
         };
 
+        public static readonly ResearchDefinition[] Research =
+        {
+            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the long-term currency scaler, but it grows linearly so prestige value cannot explode.", 1, 2, 4, 8, 16),
+            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 1, 2, 4, 8, 16),
+            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 2, 5, 12),
+            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 3, 8, 18, 40),
+            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 2, 4, 9, 18, 36),
+            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 4, 9, 18, 36, 72)
+        };
+
         private readonly StackMergeProgressionData data;
         private readonly StackMergePpoAgent machineLearningAgent;
 
@@ -318,6 +365,18 @@ namespace StackMerge
 
         public bool CanUnlockMachineLearning => AllModifiersMaxed;
 
+        public long ResearchInsight => data.researchInsight;
+
+        public long LifetimeResearchInsight => data.lifetimeResearchInsight;
+
+        public int PrestigeCount => data.prestigeCount;
+
+        public long LastPrestigeInsight => data.lastPrestigeInsight;
+
+        public long BestPrestigeInsight => data.bestPrestigeInsight;
+
+        public bool PrestigeAvailable => IsSolverUnlocked(SolverId.MachineLearning);
+
         public bool MachineLearningTrainingMode
         {
             get => data.machineLearningTrainingMode;
@@ -330,7 +389,16 @@ namespace StackMerge
 
         public long MachineLearningFrames => machineLearningAgent?.Metrics.Steps ?? Math.Max(0, (long)data.machineLearningExperience);
 
-        public bool MachineLearningPlayingModeUnlocked => MachineLearningFrames >= PlayingModeFrameRequirement;
+        public long MachineLearningPlayingModeFrameRequirement
+        {
+            get
+            {
+                double multiplier = 1.0 - GetResearchLevel(ResearchId.PpoBootcamp) * 0.08;
+                return Math.Max(250000, (long)Math.Round(PlayingModeFrameRequirement * Math.Max(0.5, multiplier)));
+            }
+        }
+
+        public bool MachineLearningPlayingModeUnlocked => MachineLearningFrames >= MachineLearningPlayingModeFrameRequirement;
 
         // PPO runs in Training mode whenever it hasn't unlocked Playing mode yet, or when the player
         // has explicitly chosen Training. Once Playing mode is unlocked the player can switch it off.
@@ -503,6 +571,165 @@ namespace StackMerge
         {
             int index = (int)solverId;
             return index >= 0 && index < data.solverUnlocked.Length && data.solverUnlocked[index];
+        }
+
+        public ResearchDefinition GetResearchDefinition(ResearchId researchId)
+        {
+            int index = (int)researchId;
+            return index >= 0 && index < Research.Length ? Research[index] : Research[0];
+        }
+
+        public int GetResearchLevel(ResearchId researchId)
+        {
+            int index = (int)researchId;
+            return index >= 0 && index < data.researchLevels.Length ? data.researchLevels[index] : 0;
+        }
+
+        public bool IsResearchMaxed(ResearchId researchId)
+        {
+            ResearchDefinition definition = GetResearchDefinition(researchId);
+            return GetResearchLevel(researchId) >= definition.MaxLevel;
+        }
+
+        public long GetResearchCost(ResearchId researchId)
+        {
+            ResearchDefinition definition = GetResearchDefinition(researchId);
+            int level = GetResearchLevel(researchId);
+            return level >= 0 && level < definition.Costs.Length ? definition.Costs[level] : 0;
+        }
+
+        public bool CanBuyResearch(ResearchId researchId)
+        {
+            return PrestigeCount > 0
+                && !IsResearchMaxed(researchId)
+                && IsResearchPrerequisiteMet(researchId, out _)
+                && ResearchInsight >= GetResearchCost(researchId);
+        }
+
+        public string GetResearchUnavailableReason(ResearchId researchId)
+        {
+            if (PrestigeCount <= 0)
+            {
+                return "Prestige once to open Research.";
+            }
+
+            if (IsResearchMaxed(researchId))
+            {
+                return "Research maxed.";
+            }
+
+            if (!IsResearchPrerequisiteMet(researchId, out string reason))
+            {
+                return reason;
+            }
+
+            return ResearchInsight >= GetResearchCost(researchId) ? string.Empty : "Not enough Insight.";
+        }
+
+        public string GetResearchEffectSummary(ResearchId researchId)
+        {
+            int level = GetResearchLevel(researchId);
+            return researchId switch
+            {
+                ResearchId.InsightAmplifier => $"Prestige Insight x{GetPrestigeInsightMultiplier():0.00}",
+                ResearchId.SeedCapital => $"Start chips: {GetPrestigeStartChips(level)}",
+                ResearchId.AutomationMemory => level switch
+                {
+                    0 => "No automation is remembered yet.",
+                    1 => "Auto Solve unlock remembered.",
+                    2 => "Auto Restart unlock and 50 tokens remembered.",
+                    _ => "Auto Solve, Auto Restart, tokens, and Solver Tuning remembered."
+                },
+                ResearchId.AlgorithmArchive => level switch
+                {
+                    0 => "No algorithms remembered yet.",
+                    1 => "Start with RAND.",
+                    2 => "Start with RAND and MERG.",
+                    3 => "Start with RAND, MERG, and BAL.",
+                    _ => "Start with RAND, MERG, BAL, and HEUR."
+                },
+                ResearchId.YieldTheory => $"Chip rewards x{GetResearchIncomeMultiplier():0.00}",
+                ResearchId.PpoBootcamp => $"PPO Normal mode at {MachineLearningPlayingModeFrameRequirement} frames",
+                _ => string.Empty
+            };
+        }
+
+        public bool BuyResearch(ResearchId researchId)
+        {
+            if (!CanBuyResearch(researchId))
+            {
+                return false;
+            }
+
+            int index = (int)researchId;
+            data.researchInsight -= GetResearchCost(researchId);
+            data.researchLevels[index]++;
+            ApplyImmediateResearchEffects(researchId);
+            return true;
+        }
+
+        public long PreviewPrestigeInsightGain()
+        {
+            if (!PrestigeAvailable)
+            {
+                return 0;
+            }
+
+            long bestScore = Math.Max(data.bestRunScore, MachineLearningBestScore);
+            long ppoBestScore = MachineLearningBestScore;
+            int bestHigh = Math.Max(data.highestBlockEver, MachineLearningBestHigh);
+            long frames = MachineLearningFrames;
+
+            double generalScoreTerm = Math.Pow(Math.Max(0.0, bestScore - 30000.0) / 50000.0, 0.55);
+            double ppoScoreTerm = Math.Pow(Math.Max(0.0, ppoBestScore - 30000.0) / 70000.0, 0.55);
+            double highTerm = Math.Max(0, FloorLog2(Math.Max(1, bestHigh)) - 13) * 0.35;
+            double frameTerm = Math.Log10(1.0 + Math.Max(0, frames) / 500000.0) * 1.15;
+            double raw = 1.0 + generalScoreTerm + ppoScoreTerm + highTerm + frameTerm;
+            return Math.Max(1, (long)Math.Round(raw * GetPrestigeInsightMultiplier(), MidpointRounding.AwayFromZero));
+        }
+
+        public string GetPrestigeSummary()
+        {
+            if (!PrestigeAvailable)
+            {
+                return $"Research locked. Unlock PPO to prestige.\nInsight: {ResearchInsight} | Prestiges: {PrestigeCount}";
+            }
+
+            long gain = PreviewPrestigeInsightGain();
+            long bestScore = Math.Max(data.bestRunScore, MachineLearningBestScore);
+            int bestHigh = Math.Max(data.highestBlockEver, MachineLearningBestHigh);
+            return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount} | Next prestige: +{gain}\nBest score {bestScore} | Best high {bestHigh} | PPO frames {MachineLearningFrames} | Insight x{GetPrestigeInsightMultiplier():0.00}";
+        }
+
+        public long ExecutePrestige()
+        {
+            long gained = PreviewPrestigeInsightGain();
+            if (gained <= 0)
+            {
+                return 0;
+            }
+
+            int[] preservedResearch = NormalizeResearchLevels(data.researchLevels);
+            long preservedInsight = Math.Max(0, data.researchInsight) + gained;
+            long preservedLifetimeInsight = Math.Max(0, data.lifetimeResearchInsight) + gained;
+            int nextPrestigeCount = Math.Max(0, data.prestigeCount) + 1;
+            long bestPrestige = Math.Max(data.bestPrestigeInsight, gained);
+
+            ResetPrestigeProgress();
+
+            data.researchLevels = preservedResearch;
+            data.researchInsight = preservedInsight;
+            data.lifetimeResearchInsight = preservedLifetimeInsight;
+            data.prestigeCount = nextPrestigeCount;
+            data.lastPrestigeInsight = gained;
+            data.bestPrestigeInsight = bestPrestige;
+
+            machineLearningAgent?.ResetForPrestige(24681357 + nextPrestigeCount * 9973);
+            data.machineLearningPolicy = machineLearningAgent?.Data ?? new StackMergePpoTrainingData();
+            ApplyPrestigeStartResearchBonuses();
+            Normalize();
+            Save();
+            return gained;
         }
 
         public string GetMachineLearningGateStatus()
@@ -1381,6 +1608,176 @@ namespace StackMerge
 
         private double ModifierMergeMultiplier => GetModifierLevel(ModifierId.CatalystStack) > 0 ? 2.0 : 1.0;
 
+        private double GetPrestigeInsightMultiplier()
+        {
+            return 1.0 + GetResearchLevel(ResearchId.InsightAmplifier) * 0.35;
+        }
+
+        private double GetResearchIncomeMultiplier()
+        {
+            return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.18;
+        }
+
+        private static long GetPrestigeStartChips(int seedCapitalLevel)
+        {
+            return seedCapitalLevel switch
+            {
+                <= 0 => 0,
+                1 => 2500,
+                2 => 12000,
+                3 => 60000,
+                4 => 250000,
+                _ => 900000
+            };
+        }
+
+        private bool IsResearchPrerequisiteMet(ResearchId researchId, out string reason)
+        {
+            reason = string.Empty;
+            switch (researchId)
+            {
+                case ResearchId.AutomationMemory:
+                    if (GetResearchLevel(ResearchId.SeedCapital) < 1)
+                    {
+                        reason = "Requires Seed Capital L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.AlgorithmArchive:
+                    if (GetResearchLevel(ResearchId.AutomationMemory) < 1)
+                    {
+                        reason = "Requires Automation Memory L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.PpoBootcamp:
+                    if (GetResearchLevel(ResearchId.InsightAmplifier) < 2 || GetResearchLevel(ResearchId.AlgorithmArchive) < 2)
+                    {
+                        reason = "Requires Insight Amplifier L2 and Algorithm Archive L2.";
+                        return false;
+                    }
+
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        private void ApplyImmediateResearchEffects(ResearchId researchId)
+        {
+            // Yield / prestige multiplier research is read dynamically. Unlock-memory research should
+            // also feel good if bought mid-prestige, so it can apply to the current run layer too.
+            if (researchId == ResearchId.AutomationMemory || researchId == ResearchId.AlgorithmArchive)
+            {
+                ApplyPrestigeStartResearchBonuses();
+            }
+        }
+
+        private void ApplyPrestigeStartResearchBonuses()
+        {
+            data.chips = Math.Max(data.chips, GetPrestigeStartChips(GetResearchLevel(ResearchId.SeedCapital)));
+
+            int algorithmArchiveLevel = GetResearchLevel(ResearchId.AlgorithmArchive);
+            UnlockStarterSolver(SolverId.Rand, algorithmArchiveLevel >= 1);
+            UnlockStarterSolver(SolverId.Merge, algorithmArchiveLevel >= 2);
+            UnlockStarterSolver(SolverId.Balance, algorithmArchiveLevel >= 3);
+            UnlockStarterSolver(SolverId.Heur, algorithmArchiveLevel >= 4);
+
+            if (!data.solverUnlocked[data.selectedSolver] && HasPurchasedSolver)
+            {
+                data.selectedSolver = Array.FindIndex(data.solverUnlocked, unlocked => unlocked);
+            }
+
+            int automationLevel = GetResearchLevel(ResearchId.AutomationMemory);
+            if (automationLevel >= 1 && HasPurchasedSolver)
+            {
+                data.autoSolveUnlocked = true;
+                data.autoSolveEnabled = true;
+            }
+
+            if (automationLevel >= 2 && HasPurchasedSolver)
+            {
+                data.autoRestartUnlocked = true;
+                data.autoRestartEnabled = true;
+                data.tokens = Math.Max(data.tokens, TokenPackSize);
+            }
+
+            if (automationLevel >= 3)
+            {
+                data.solverTuningUnlocked = true;
+            }
+        }
+
+        private void UnlockStarterSolver(SolverId solverId, bool shouldUnlock)
+        {
+            if (!shouldUnlock)
+            {
+                return;
+            }
+
+            int index = (int)solverId;
+            if (index < 0 || index >= data.solverUnlocked.Length)
+            {
+                return;
+            }
+
+            data.solverUnlocked[index] = true;
+            data.highestUnlockedSolver = Math.Max(data.highestUnlockedSolver, index);
+            if (!data.solverUnlocked[data.selectedSolver])
+            {
+                data.selectedSolver = index;
+            }
+        }
+
+        private void ResetPrestigeProgress()
+        {
+            int solverCount = StackMergeSolverCatalog.Definitions.Length;
+            data.chips = 0;
+            data.selectedSolver = 0;
+            data.highestUnlockedSolver = 0;
+            data.solverUnlocked = new bool[solverCount];
+            data.solverMergeTuning = new int[solverCount];
+            data.solverSafetyTuning = new int[solverCount];
+            data.solverLookaheadTuning = new int[solverCount];
+            data.solverTuningValues = new int[solverCount * SolverTuningSettings.MaxSlots];
+            data.solverLifetimeRuns = new int[solverCount];
+            data.solverTuningUnlocked = false;
+            data.tokens = 0;
+            data.speedLevel = 0;
+            data.autoSolveUnlocked = false;
+            data.autoSolveEnabled = false;
+            data.autoRestartUnlocked = false;
+            data.autoRestartEnabled = false;
+            data.stackCapacityLevel = 0;
+            data.queuePreviewLevel = 0;
+            data.incomeLevel = 0;
+            data.difficultyLevel = 0;
+            data.modifiersMenuUnlocked = false;
+            data.modifierLevels = new int[Modifiers.Length];
+            data.runsCompleted = 0;
+            data.agentsMenuUnlocked = false;
+            data.extraAgentSlotUnlocked = false;
+            data.agentUnlocked = new bool[Agents.Length];
+            data.activeAgentIds = new[] { -1, -1, -1 };
+            data.runHistory = Array.Empty<RunHistoryEntry>();
+            data.totalChipsEarned = 0;
+            data.totalChipsSpent = 0;
+            data.manualRunsCompleted = 0;
+            data.totalBlocksDropped = 0;
+            data.totalMerges = 0;
+            data.highestBlockEver = 2;
+            data.bestRunScore = 0;
+            data.mergeTokenProgress = 0;
+            data.machineLearningTrainingMode = false;
+            data.machineLearningExperience = 0f;
+            data.machineLearningRuns = 0;
+            data.machineLearningBestScore = 0;
+            data.machineLearningBestHigh = 0;
+            data.machineLearningPolicy ??= new StackMergePpoTrainingData();
+        }
+
         private long ApplyStageMultiplier(long amount)
         {
             double multiplier = data.modifiersMenuUnlocked ? 24.0 : data.agentsMenuUnlocked ? 5.0 : 1.0;
@@ -1389,7 +1786,7 @@ namespace StackMerge
 
         private long ApplyIncomeMultiplier(long amount)
         {
-            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35)));
+            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35) * GetResearchIncomeMultiplier()));
         }
 
         private void AwardMergeTokens(int mergeCount)
@@ -1511,6 +1908,12 @@ namespace StackMerge
             data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
             data.difficultyLevel = Mathf.Clamp(data.difficultyLevel, 0, DifficultyUpgradeCosts.Length);
             data.modifierLevels = NormalizeModifierLevels(data.modifierLevels);
+            data.researchInsight = Math.Max(0, data.researchInsight);
+            data.lifetimeResearchInsight = Math.Max(data.lifetimeResearchInsight, data.researchInsight);
+            data.prestigeCount = Math.Max(0, data.prestigeCount);
+            data.lastPrestigeInsight = Math.Max(0, data.lastPrestigeInsight);
+            data.bestPrestigeInsight = Math.Max(data.bestPrestigeInsight, data.lastPrestigeInsight);
+            data.researchLevels = NormalizeResearchLevels(data.researchLevels);
             if (!data.modifiersMenuUnlocked && data.modifierLevels.Any(level => level > 0))
             {
                 data.modifiersMenuUnlocked = true;
@@ -1654,6 +2057,22 @@ namespace StackMerge
             for (int i = 0; i < source.Length && i < normalized.Length; i++)
             {
                 normalized[i] = Mathf.Clamp(source[i], 0, Modifiers[i].MaxLevel);
+            }
+
+            return normalized;
+        }
+
+        private static int[] NormalizeResearchLevels(int[] source)
+        {
+            int[] normalized = new int[Research.Length];
+            if (source == null)
+            {
+                return normalized;
+            }
+
+            for (int i = 0; i < source.Length && i < normalized.Length; i++)
+            {
+                normalized[i] = Mathf.Clamp(source[i], 0, Research[i].MaxLevel);
             }
 
             return normalized;

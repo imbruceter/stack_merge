@@ -157,6 +157,9 @@ namespace StackMerge.Editor
             TMP_Text progressionStageText;
             Button modifiersMenuUnlockButton;
             Button agentsMenuUnlockButton;
+            TMP_Text prestigeSummaryText;
+            Button prestigeButton;
+            Button[] researchButtons;
             BuildUpgradesPanel(
                 upgradesPanel,
                 out upgradesChipsText,
@@ -172,7 +175,10 @@ namespace StackMerge.Editor
                 out difficultyUpgradeButtons,
                 out progressionStageText,
                 out modifiersMenuUnlockButton,
-                out agentsMenuUnlockButton);
+                out agentsMenuUnlockButton,
+                out prestigeSummaryText,
+                out prestigeButton,
+                out researchButtons);
 
             TMP_Text modifiersChipsText;
             TMP_Text modifierSummaryText;
@@ -304,6 +310,9 @@ namespace StackMerge.Editor
                 progressionStageText,
                 modifiersMenuUnlockButton,
                 agentsMenuUnlockButton,
+                prestigeSummaryText,
+                prestigeButton,
+                researchButtons,
                 modifierButtons,
                 modifierSummaryText,
                 modifierDetailNameText,
@@ -874,7 +883,10 @@ namespace StackMerge.Editor
             out Button[] difficultyUpgradeButtons,
             out TMP_Text progressionStageText,
             out Button modifiersMenuUnlockButton,
-            out Button agentsMenuUnlockButton)
+            out Button agentsMenuUnlockButton,
+            out TMP_Text prestigeSummaryText,
+            out Button prestigeButton,
+            out Button[] researchButtons)
         {
             BuildMenuHeader(panel, "Fejlesztesek", out chipsText);
 
@@ -924,6 +936,27 @@ namespace StackMerge.Editor
 
             RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 1178f, 126f);
             incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
+
+            RectTransform prestige = CreateCategoryPanel(panel, "Prestige & Research", 1320f, 260f);
+            prestigeSummaryText = CreateText("Research locked. Unlock PPO to prestige.", prestige, 17, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetTopStretch(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 74f);
+            prestigeSummaryText.enableAutoSizing = true;
+            prestigeSummaryText.fontSizeMin = 10;
+            prestigeSummaryText.fontSizeMax = 17;
+
+            prestigeButton = CreateButton(prestige, "Prestige\nNeeds PPO", HexColor("#334155"), 20);
+            SetTopRight(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 220f, 72f);
+
+            RectTransform researchGrid = CreateRect("Research Grid", prestige);
+            SetStretch(researchGrid, 0f, 90f, 0f, 0f);
+            researchButtons = new Button[StackMergeProgression.Research.Length];
+            int rows = Mathf.CeilToInt(researchButtons.Length / 3f);
+            for (int i = 0; i < researchButtons.Length; i++)
+            {
+                ResearchDefinition definition = StackMergeProgression.Research[i];
+                researchButtons[i] = CreateButton(researchGrid, $"{definition.DisplayName}\nLocked", HexColor("#334155"), 15);
+                SetGridCell(researchButtons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 10f);
+            }
         }
 
         private static Button[] BuildModifiersPanel(

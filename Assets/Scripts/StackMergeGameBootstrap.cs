@@ -86,6 +86,9 @@ namespace StackMerge
         [SerializeField] private TMP_Text progressionStageText;
         [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
+        [SerializeField] private TMP_Text prestigeSummaryText;
+        [SerializeField] private Button prestigeButton;
+        [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
         [SerializeField] private Button[] modifierButtons = Array.Empty<Button>();
         [SerializeField] private TMP_Text modifierSummaryText;
         [SerializeField] private TMP_Text modifierDetailNameText;
@@ -170,6 +173,8 @@ namespace StackMerge
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
             ApplyModernTheme();
+            EnsurePrestigeResearchUi();
+            WirePrestigeResearchButtons();
             CreateFreshGame();
             RefreshEverything();
         }
@@ -336,6 +341,9 @@ namespace StackMerge
             TMP_Text stageText,
             Button unlockModifiersButton,
             Button unlockAgentsButton,
+            TMP_Text prestigeDetails,
+            Button runPrestigeButton,
+            Button[] researchUpgradeButtons,
             Button[] modifierSelectionButtons,
             TMP_Text modifiersSummary,
             TMP_Text selectedModifierName,
@@ -425,6 +433,9 @@ namespace StackMerge
             progressionStageText = stageText;
             modifiersMenuUnlockButton = unlockModifiersButton;
             agentsMenuUnlockButton = unlockAgentsButton;
+            prestigeSummaryText = prestigeDetails;
+            prestigeButton = runPrestigeButton;
+            researchButtons = researchUpgradeButtons;
             modifierButtons = modifierSelectionButtons;
             modifierSummaryText = modifiersSummary;
             modifierDetailNameText = selectedModifierName;
@@ -692,6 +703,8 @@ namespace StackMerge
                 agentsMenuUnlockButton.onClick.AddListener(BuyAgentsMenuUnlock);
             }
 
+            WirePrestigeResearchButtons();
+
             if (solverDetailActionButton != null)
             {
                 solverDetailActionButton.onClick.RemoveAllListeners();
@@ -739,6 +752,27 @@ namespace StackMerge
             {
                 modifierDetailActionButton.onClick.RemoveAllListeners();
                 modifierDetailActionButton.onClick.AddListener(BuySelectedModifierUpgrade);
+            }
+        }
+
+        private void WirePrestigeResearchButtons()
+        {
+            if (prestigeButton != null)
+            {
+                prestigeButton.onClick.RemoveAllListeners();
+                prestigeButton.onClick.AddListener(ExecutePrestige);
+            }
+
+            for (int i = 0; i < researchButtons.Length; i++)
+            {
+                int researchIndex = i;
+                if (researchButtons[i] == null)
+                {
+                    continue;
+                }
+
+                researchButtons[i].onClick.RemoveAllListeners();
+                researchButtons[i].onClick.AddListener(() => BuyResearchUpgrade((ResearchId)researchIndex));
             }
         }
 
@@ -1256,7 +1290,7 @@ namespace StackMerge
             {
                 SetText(ppoModeHintText, playingUnlocked
                     ? "Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."
-                    : $"Normal mode unlocks after {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)}");
+                    : $"Normal mode unlocks after {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)}");
             }
 
             SetActive(ppoModeModal.gameObject, true);
@@ -1301,6 +1335,57 @@ namespace StackMerge
             ppoModeHintText = CreateCardChildText("Hint", card, string.Empty, 16, new Vector2(0f, -110f), new Vector2(400f, 80f), HexColor("#94A3B8"));
 
             ppoModeModal.gameObject.SetActive(false);
+        }
+
+        private void EnsurePrestigeResearchUi()
+        {
+            if (prestigeButton != null || upgradesPanel == null)
+            {
+                return;
+            }
+
+            RectTransform upgradesRoot = upgradesPanel.GetComponent<RectTransform>();
+            if (upgradesRoot == null)
+            {
+                return;
+            }
+
+            RectTransform section = CreateRuntimePanel("Prestige & Research Runtime", upgradesRoot, HexColor("#18212F"));
+            SetTopStretchRuntime(section, 0f, 1320f, 0f, 260f);
+
+            TMP_Text title = CreateRuntimeText("Title", section, "Prestige & Research", 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            SetTopStretchRuntime(title.rectTransform, 18f, 8f, 18f, 28f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 12;
+            title.fontSizeMax = 20;
+
+            RectTransform content = CreateRuntimePanel("Content", section, HexColor("#000000", 0f));
+            Stretch(content, 18f, 44f, 18f, 14f);
+
+            prestigeSummaryText = CreateRuntimeText("Prestige Summary", content, "Research locked.", 17, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetTopStretchRuntime(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 74f);
+            prestigeSummaryText.enableAutoSizing = true;
+            prestigeSummaryText.fontSizeMin = 10;
+            prestigeSummaryText.fontSizeMax = 17;
+
+            prestigeButton = CreateRuntimeButton("Prestige Button", content, "Prestige", HexColor("#7C3AED"), Vector2.zero, new Vector2(220f, 72f));
+            RectTransform prestigeRect = prestigeButton.GetComponent<RectTransform>();
+            prestigeRect.anchorMin = new Vector2(1f, 1f);
+            prestigeRect.anchorMax = new Vector2(1f, 1f);
+            prestigeRect.pivot = new Vector2(1f, 1f);
+            prestigeRect.anchoredPosition = Vector2.zero;
+
+            RectTransform grid = CreateRuntimePanel("Research Grid", content, HexColor("#000000", 0f));
+            Stretch(grid, 0f, 90f, 0f, 0f);
+            researchButtons = new Button[StackMergeProgression.Research.Length];
+            int rows = Mathf.CeilToInt(researchButtons.Length / 3f);
+            for (int i = 0; i < researchButtons.Length; i++)
+            {
+                ResearchDefinition definition = StackMergeProgression.Research[i];
+                Button button = CreateRuntimeButton($"Research {i}", grid, definition.DisplayName, HexColor("#334155"), Vector2.zero, Vector2.zero);
+                SetGridCellRuntime(button.GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 10f);
+                researchButtons[i] = button;
+            }
         }
 
         private TMP_Text CreateCardChildText(string name, Transform parent, string label, int fontSize, Vector2 anchoredPosition, Vector2 size, Color color)
@@ -1476,6 +1561,55 @@ namespace StackMerge
 
             bool bought = progression.BuyModifiersMenuUnlock();
             SetText(feedbackText, bought ? "Modifier Lab unlocked" : progression.CanUnlockModifiersMenu ? "Not enough chips" : "Modifier Lab requirements not met");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void ExecutePrestige()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            long gained = progression.ExecutePrestige();
+            if (gained <= 0)
+            {
+                SetText(feedbackText, "Unlock PPO first to prestige");
+                RefreshEverything();
+                return;
+            }
+
+            highScore = 0;
+            PlayerPrefs.SetInt(HighScoreKey, 0);
+            PlayerPrefs.Save();
+            selectedSolverId = progression.SelectedSolver;
+            selectedAgentId = AgentId.MergeBroker;
+            selectedModifierId = ModifierId.UnstableStack;
+            solverTuneOpen = false;
+            historyOpen = false;
+            achievementsOpen = false;
+            gameplayInfoOpen = false;
+            HidePpoModeModal();
+            CreateFreshGame();
+            SetText(feedbackText, $"Prestige complete: +{FormatNumber(gained)} Insight");
+            progression.SaveImmediate();
+            SelectTab(2);
+            RefreshEverything();
+        }
+
+        private void BuyResearchUpgrade(ResearchId researchId)
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            ResearchDefinition definition = progression.GetResearchDefinition(researchId);
+            bool bought = progression.BuyResearch(researchId);
+            SetText(feedbackText, bought
+                ? $"{definition.DisplayName} L{progression.GetResearchLevel(researchId)}"
+                : progression.GetResearchUnavailableReason(researchId));
             progression.Save();
             RefreshEverything();
         }
@@ -1829,7 +1963,7 @@ namespace StackMerge
             }
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
-            SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)}");
+            SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)} | Insight: {FormatNumber(progression.ResearchInsight)}");
             SetText(solverText, progression.SelectedSolver == SolverId.MachineLearning
                 ? $"Solver: {GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}"
                 : $"Solver: {GetSelectedSolver().DisplayName}");
@@ -2497,6 +2631,8 @@ namespace StackMerge
                 }
             }
 
+            RefreshPrestigeResearchButtons();
+
             for (int i = 0; i < speedUpgradeButtons.Length; i++)
             {
                 Button button = speedUpgradeButtons[i];
@@ -2734,6 +2870,64 @@ namespace StackMerge
                     button.interactable = false;
                     SetButtonColor(button, HexColor("#334155"));
                 }
+            }
+        }
+
+        private void RefreshPrestigeResearchButtons()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            if (prestigeSummaryText != null)
+            {
+                SetText(prestigeSummaryText, progression.GetPrestigeSummary());
+            }
+
+            if (prestigeButton != null)
+            {
+                if (progression.PrestigeAvailable)
+                {
+                    SetButtonText(prestigeButton, $"Prestige\n+{FormatNumber(progression.PreviewPrestigeInsightGain())} Insight");
+                    prestigeButton.interactable = true;
+                    SetButtonColor(prestigeButton, HexColor("#7C3AED"));
+                }
+                else
+                {
+                    SetButtonText(prestigeButton, "Prestige\nNeeds PPO");
+                    prestigeButton.interactable = false;
+                    SetButtonColor(prestigeButton, HexColor("#334155"));
+                }
+            }
+
+            for (int i = 0; i < researchButtons.Length && i < StackMergeProgression.Research.Length; i++)
+            {
+                Button button = researchButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                ResearchDefinition definition = StackMergeProgression.Research[i];
+                ResearchId researchId = definition.Id;
+                int level = progression.GetResearchLevel(researchId);
+                bool maxed = progression.IsResearchMaxed(researchId);
+                bool canBuy = progression.CanBuyResearch(researchId);
+                string effect = progression.GetResearchEffectSummary(researchId);
+                string label = maxed
+                    ? $"{definition.DisplayName}\n{effect}\nMaxed"
+                    : $"{definition.DisplayName}\n{effect}\n{FormatNumber(progression.GetResearchCost(researchId))} Insight";
+
+                string reason = progression.GetResearchUnavailableReason(researchId);
+                if (!maxed && !string.IsNullOrEmpty(reason) && reason != "Not enough Insight.")
+                {
+                    label = $"{definition.DisplayName}\nL{level}/{definition.MaxLevel}\nLocked";
+                }
+
+                SetButtonText(button, label);
+                button.interactable = canBuy;
+                SetButtonColor(button, maxed ? HexColor("#0F766E") : canBuy ? HexColor("#7C3AED") : HexColor("#334155"));
             }
         }
 
@@ -3129,7 +3323,7 @@ namespace StackMerge
                 stats.AppendLine($"Policy loss {metrics.LastPolicyLoss:0.000}   Entropy {metrics.LastEntropy:0.000}");
                 stats.AppendLine(progression.MachineLearningPlayingModeUnlocked
                     ? "Playing mode: unlocked"
-                    : $"Playing mode unlocks at {FormatNumber(StackMergeProgression.PlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
+                    : $"Playing mode unlocks at {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
             }
 
             SetText(solverInfoStatsText, stats.ToString());
@@ -3745,6 +3939,25 @@ namespace StackMerge
             rectTransform.anchorMax = Vector2.one;
             rectTransform.offsetMin = new Vector2(left, bottom);
             rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetTopStretchRuntime(RectTransform rectTransform, float left, float top, float right, float height)
+        {
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(0.5f, 1f);
+            rectTransform.offsetMin = new Vector2(left, -top - height);
+            rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetGridCellRuntime(RectTransform rectTransform, int column, int columns, int row, int rows, float spacing)
+        {
+            float columnWidth = 1f / Math.Max(1, columns);
+            float rowHeight = 1f / Math.Max(1, rows);
+            rectTransform.anchorMin = new Vector2(column * columnWidth, 1f - (row + 1) * rowHeight);
+            rectTransform.anchorMax = new Vector2((column + 1) * columnWidth, 1f - row * rowHeight);
+            rectTransform.offsetMin = new Vector2(spacing * 0.5f, spacing * 0.5f);
+            rectTransform.offsetMax = new Vector2(-spacing * 0.5f, -spacing * 0.5f);
         }
 
         private static float CalculateBoardHeight(int stackCapacity)
