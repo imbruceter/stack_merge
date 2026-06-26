@@ -34,6 +34,8 @@ namespace StackMerge.Editor
         private int ppoEvaluationRuns = 3;
         private int ppoLogEveryNthRun = 1;
         private int ppoHiddenSize = 64;
+        private int ppoMeasureAgents = 8;
+        private int ppoMeasureBin = 500;
         private Vector2 scroll;
         private string lastOutput = "No benchmark run yet.";
         private string lastPpoDetailPath = string.Empty;
@@ -118,6 +120,16 @@ namespace StackMerge.Editor
 
                     ppoLogEveryNthRun = EditorGUILayout.IntSlider("UI log every N runs", ppoLogEveryNthRun, 1, 1000);
                     EditorGUILayout.HelpBox("PPO supports larger training runs. The full per-run log is written to a TSV file; the UI can show every Nth training row plus evaluation rows.", MessageType.Info);
+
+                    EditorGUILayout.Space(4f);
+                    EditorGUILayout.LabelField("Parallel learning measurement", EditorStyles.boldLabel);
+                    ppoMeasureAgents = Mathf.Clamp(EditorGUILayout.IntField("Parallel agents", ppoMeasureAgents), 1, 64);
+                    ppoMeasureBin = Mathf.Clamp(EditorGUILayout.IntField("Bin size (runs)", ppoMeasureBin), 50, 100000);
+                    EditorGUILayout.HelpBox("Trains N independent PPO agents in parallel across all CPU cores and reports the AVERAGED learning curve (avg/peak High & Score per bin). Uses 'Runs' per agent and the config above. Far more measurement data per wall-clock than the single-threaded benchmark.", MessageType.Info);
+                    if (GUILayout.Button("Measure PPO learning (parallel)", GUILayout.Height(28f)))
+                    {
+                        MeasurePpoLearningParallel();
+                    }
                 }
 
                 EditorGUILayout.Space(4f);
@@ -472,6 +484,192 @@ namespace StackMerge.Editor
         {
             int index = (int)modifierId;
             return index >= 0 && index < benchmarkModifierLevels.Length && benchmarkModifierLevels[index] > 0;
+        }
+
+        // ONE shared PPO model trained with parallel experience collection (A2C-style): N worker
+        // agents play in parallel each cycle, then their weights are averaged and broadcast back, so
+        // the consensus model learns from N games per cycle. This produces a single CUMULATIVE
+        // learning curve over the full effective run count, at roughly 1/N the wall-clock — unlike
+        // independent agents, the training genuinely builds up across all the runs.
+        private void MeasurePpoLearningParallel()
+        {
+            int agents = Mathf.Clamp(ppoMeasureAgents, 1, 64);
+            int totalRuns = Mathf.Max(agents, runCount);
+            int cycleGames = 8;
+            int perCycle = agents * cycleGames;
+            int cycles = (totalRuns + perCycle - 1) / perCycle;
+            int bin = Mathf.Clamp(ppoMeasureBin, 50, 100000);
+            int binCount = (totalRuns + bin - 1) / bin;
+            int capacity = Mathf.Clamp(stackCapacity, 2, StackMergeGameState.MaxStackCapacity);
+            int queue = Mathf.Clamp(queueLength, 1, StackMergeGameState.DefaultQueueLength + 2);
+            int diff = Mathf.Clamp(difficultyLevel, 0, 3);
+            int hidden = Mathf.Clamp(ppoHiddenSize, 16, 512);
+            int moveCap = Mathf.Max(50, maxMovesPerRun);
+            int baseSeed = seed;
+            StackMergeRunModifiers modifiers = BuildBenchmarkModifiers();
+
+            var pool = new StackMergePpoAgent[agents];
+            var rngs = new System.Random[agents];
+            for (int a = 0; a < agents; a++)
+            {
+                pool[a] = new StackMergePpoAgent(new StackMergePpoTrainingData { hiddenSize = hidden }, baseSeed + a * 7919 + 1);
+                rngs[a] = new System.Random(baseSeed + a * 104729 + 17);
+            }
+
+            int[][] cycleHigh = new int[agents][];
+            long[][] cycleScore = new long[agents][];
+            for (int a = 0; a < agents; a++)
+            {
+                cycleHigh[a] = new int[cycleGames];
+                cycleScore[a] = new long[cycleGames];
+            }
+
+            double[] binHigh = new double[binCount];
+            double[] binScore = new double[binCount];
+            long[] binCount2 = new long[binCount];
+            int[] binPeak = new int[binCount];
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            long effective = 0;
+            for (int cycle = 0; cycle < cycles; cycle++)
+            {
+                System.Threading.Tasks.Parallel.For(0, agents, a =>
+                {
+                    StackMergePpoAgent agent = pool[a];
+                    System.Random rng = rngs[a];
+                    for (int g = 0; g < cycleGames; g++)
+                    {
+                        var state = new StackMergeGameState(stackCapacity: capacity, queueLength: queue, difficultyLevel: diff, modifiers: modifiers, seed: rng.Next());
+                        int moves = 0;
+                        while (!state.IsGameOver && moves < moveCap)
+                        {
+                            SolverDecision decision = agent.ChooseMove(state, rng, true);
+                            if (!decision.HasMove || !SolverScoring.CanApplyDecision(state, decision))
+                            {
+                                break;
+                            }
+
+                            MoveResult result = SolverScoring.ApplyDecision(state, decision);
+                            if (!result.Accepted)
+                            {
+                                break;
+                            }
+
+                            agent.Observe(result, state, true);
+                            moves++;
+                        }
+
+                        agent.ForceUpdate(true);
+                        cycleHigh[a][g] = state.HighestMergedBlock;
+                        cycleScore[a][g] = state.Score;
+                    }
+                });
+
+                AverageAgentWeights(pool);
+
+                for (int a = 0; a < agents; a++)
+                {
+                    for (int g = 0; g < cycleGames; g++)
+                    {
+                        int b = (int)Math.Min(binCount - 1, effective / bin);
+                        binHigh[b] += cycleHigh[a][g];
+                        binScore[b] += cycleScore[a][g];
+                        binPeak[b] = Math.Max(binPeak[b], cycleHigh[a][g]);
+                        binCount2[b]++;
+                        effective++;
+                    }
+                }
+
+                if (effective >= totalRuns)
+                {
+                    break;
+                }
+            }
+
+            stopwatch.Stop();
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"PPO learning measurement (shared model, {agents} parallel workers) | hidden {hidden} | cap {capacity} q{queue} diff {diff}");
+            sb.AppendLine($"Modifiers: {BuildModifierSummary()}");
+            sb.AppendLine($"Effective training runs: {effective:N0} in {stopwatch.Elapsed.TotalSeconds:0}s  ({effective / Math.Max(1.0, stopwatch.Elapsed.TotalSeconds):0} runs/s, ~{agents}x wall-clock speedup)");
+            sb.AppendLine("Note: weights are averaged across workers each cycle (parallel SGD); the curve is the consensus model's cumulative progress.");
+            sb.AppendLine();
+            sb.AppendLine("EffectiveRuns\tAvgHigh\tAvgScore\tPeakHigh");
+            for (int b = 0; b < binCount; b++)
+            {
+                if (binCount2[b] == 0)
+                {
+                    continue;
+                }
+
+                long from = (long)b * bin + 1;
+                long to = Math.Min(effective, (long)(b + 1) * bin);
+                sb.AppendLine($"{from}-{to}\t{binHigh[b] / binCount2[b]:0}\t{binScore[b] / binCount2[b]:0}\t{binPeak[b]}");
+            }
+
+            string text = sb.ToString();
+            lastOutput = text;
+
+            try
+            {
+                string dir = Path.Combine(Application.dataPath, "..", "BenchmarkResults");
+                Directory.CreateDirectory(dir);
+                string path = Path.GetFullPath(Path.Combine(dir, $"ppo_learning_{DateTime.Now:yyyyMMdd_HHmmss}.tsv"));
+                File.WriteAllText(path, text);
+                AssetDatabase.Refresh();
+                lastOutput += $"\n\nSaved: {path}";
+            }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogWarning($"PPO learning measurement: failed to write file: {exception.Message}");
+            }
+
+            Repaint();
+        }
+
+        // Averages every weight/bias array across the worker pool in place (the agents' DenseNets
+        // reference these same arrays, so this both averages and broadcasts the consensus weights).
+        private static void AverageAgentWeights(StackMergePpoAgent[] pool)
+        {
+            if (pool.Length <= 1)
+            {
+                return;
+            }
+
+            StackMergePpoTrainingData[] data = pool.Select(p => p.Data).ToArray();
+            AverageInPlace(data.Select(d => d.actorW1).ToArray());
+            AverageInPlace(data.Select(d => d.actorB1).ToArray());
+            AverageInPlace(data.Select(d => d.actorW2).ToArray());
+            AverageInPlace(data.Select(d => d.actorB2).ToArray());
+            AverageInPlace(data.Select(d => d.criticW1).ToArray());
+            AverageInPlace(data.Select(d => d.criticB1).ToArray());
+            AverageInPlace(data.Select(d => d.criticW2).ToArray());
+            AverageInPlace(data.Select(d => d.criticB2).ToArray());
+        }
+
+        private static void AverageInPlace(float[][] arrays)
+        {
+            int n = arrays.Length;
+            if (n == 0 || arrays[0] == null)
+            {
+                return;
+            }
+
+            int len = arrays[0].Length;
+            for (int i = 0; i < len; i++)
+            {
+                double sum = 0;
+                for (int a = 0; a < n; a++)
+                {
+                    sum += arrays[a][i];
+                }
+
+                float avg = (float)(sum / n);
+                for (int a = 0; a < n; a++)
+                {
+                    arrays[a][i] = avg;
+                }
+            }
         }
 
         private string BuildModifierSummary()

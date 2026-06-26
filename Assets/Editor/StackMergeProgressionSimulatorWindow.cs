@@ -300,20 +300,21 @@ namespace StackMerge
         private (long Score, int High, int Moves, int Merges) EstimatePpoNormalRun(StackMergeProgression progression, System.Random rng)
         {
             int prestige = Math.Max(0, progression.PrestigeCount);
-            double researchPower =
-                progression.GetResearchLevel(ResearchId.PpoMemory) * 0.18
-                + progression.GetResearchLevel(ResearchId.PpoHighFocus) * 0.22
-                + progression.GetResearchLevel(ResearchId.PpoStability) * 0.14
-                + progression.GetResearchLevel(ResearchId.InsightExtractor) * 0.08;
-            double prestigePower = Math.Log10(2.0 + prestige) * 0.45;
-            double variance = 0.88 + rng.NextDouble() * 0.32;
-            double multiplier = (1.0 + researchPower + prestigePower) * variance;
-
-            long score = Math.Max(42000, (long)Math.Round(46000.0 * multiplier));
-            int highExponent = Mathf.Clamp(13 + (int)Math.Floor(researchPower * 2.0 + prestigePower * 2.5 + rng.NextDouble() * 2.0), 13, 20);
+            // Grounded in the measured PPO benchmark: a Normal-mode session peaks around tile
+            // 2048-8192, climbing SLOWLY with PPO research (warm start / high-focus / stability), the
+            // prestige count, and how many Normal runs are played (more runs = more chances at a high
+            // peak). Capped modestly (the small net plateaus) — no fictional 1M tiles.
+            double research =
+                progression.GetResearchLevel(ResearchId.PpoHighFocus) * 0.25
+                + progression.GetResearchLevel(ResearchId.PpoMemory) * 0.18
+                + progression.GetResearchLevel(ResearchId.PpoStability) * 0.10;
+            double volumeBoost = Math.Log10(1.0 + ppoNormalRunsPerPrestige) * 0.9;
+            double prestigeBoost = Math.Log10(2.0 + prestige) * 0.5;
+            int highExponent = Mathf.Clamp(10 + (int)Math.Floor(research + volumeBoost + prestigeBoost + rng.NextDouble() * 1.2), 9, 16);
             int high = 1 << highExponent;
-            int moves = Mathf.Clamp((int)Math.Round(430 + multiplier * 92), 260, 1200);
-            int merges = Mathf.Clamp(moves - 52, 180, moves);
+            long score = Math.Max(2000, (long)Math.Round(high * (2.4 + rng.NextDouble() * 1.2)));
+            int moves = Mathf.Clamp(150 + highExponent * 30 + (int)Math.Round(rng.NextDouble() * 60.0), 120, 1200);
+            int merges = Mathf.Clamp(moves - 50, 80, moves);
             return (score, high, moves, merges);
         }
 

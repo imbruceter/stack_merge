@@ -736,11 +736,18 @@ namespace StackMerge
             long frames = Math.Max(0, data.machineLearningNormalFrames);
             int normalRuns = Math.Max(0, data.machineLearningNormalRuns);
 
-            double generalScoreTerm = Math.Pow(Math.Max(0.0, bestScore - 30000.0) / 50000.0, 0.55);
-            double highTerm = Math.Max(0, FloorLog2(Math.Max(1, bestHigh)) - 13) * 0.35;
-            double frameTerm = Math.Log10(1.0 + Math.Max(0, frames) / 500000.0) * 1.15;
-            double runTerm = Math.Log10(1.0 + normalRuns) * 0.45;
-            double raw = 1.0 + generalScoreTerm + highTerm + frameTerm + runTerm;
+            // Performance — correlates with how high/much the PPO actually reaches in NORMAL mode,
+            // anchored to its real reachable range (best tile ~512+, not 8192+). Convex so a stronger
+            // PPO is worth disproportionately more, but it climbs slowly (the small net plateaus); the
+            // long-run growth comes from the Insight multipliers (research) and from playing longer.
+            double highTerm = Math.Pow(Math.Max(0, FloorLog2(bestHigh) - 9), 1.25) * 0.35;
+            double scoreTerm = Math.Max(0, Math.Log10(Math.Max(1, bestScore) / 6000.0)) * 0.5;
+
+            // Volume — rewards actually USING the PPO in Normal mode before prestiging (the "don't
+            // prestige instantly, milk the PPO first" lever). Diminishing, so it can't be farmed.
+            double volumeTerm = Math.Log10(1.0 + normalRuns) * 1.6 + Math.Log10(1.0 + frames / 150000.0) * 0.5;
+
+            double raw = 0.4 + highTerm + scoreTerm + volumeTerm;
             double multiplier = GetPrestigeInsightMultiplier() * GetInsightExtractorMultiplier();
             return Math.Max(1, (long)Math.Round(raw * multiplier, MidpointRounding.AwayFromZero));
         }
