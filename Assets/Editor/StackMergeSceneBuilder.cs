@@ -1,4 +1,5 @@
 using StackMerge;
+using System.Collections.Generic;
 using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -13,6 +14,28 @@ namespace StackMerge.Editor
     public static class StackMergeSceneBuilder
     {
         private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
+        private static readonly Vector2 ResearchNodeSize = new(198f, 68f);
+        private const float ResearchNodeLeft = 22f;
+        private const float ResearchNodeTop = 18f;
+        private const float ResearchNodeColumnSpacing = 278f;
+        private const float ResearchNodeTierSpacing = 88f;
+
+        private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
+        {
+            (ResearchId.InsightAmplifier, ResearchId.SeedCapital),
+            (ResearchId.InsightAmplifier, ResearchId.PpoBootcamp),
+            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
+            (ResearchId.SeedCapital, ResearchId.AutomationMemory),
+            (ResearchId.AutomationMemory, ResearchId.AlgorithmArchive),
+            (ResearchId.AlgorithmArchive, ResearchId.YieldTheory),
+            (ResearchId.PpoBootcamp, ResearchId.PpoMemory),
+            (ResearchId.PpoMemory, ResearchId.PpoHighFocus),
+            (ResearchId.PpoHighFocus, ResearchId.PpoStability),
+            (ResearchId.PpoStability, ResearchId.InsightExtractor),
+            (ResearchId.PassiveInsight, ResearchId.InsightExtractor),
+            (ResearchId.PassiveInsight, ResearchId.OfflineEfficiency),
+            (ResearchId.OfflineEfficiency, ResearchId.OfflineTime)
+        };
 
         [MenuItem("Tools/Stack Merge/Rebuild Editable UI Scene")]
         public static void RebuildOpenScene()
@@ -56,8 +79,9 @@ namespace StackMerge.Editor
             RectTransform historyPanel;
             RectTransform achievementsPanel;
             RectTransform agentsPanel;
+            RectTransform researchPanel;
             RectTransform settingsPanel;
-            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out modifiersPanel, out historyPanel, out achievementsPanel, out agentsPanel, out settingsPanel);
+            BuildTabPanels(contentRoot, out gameplayPanel, out algorithmsPanel, out upgradesPanel, out modifiersPanel, out historyPanel, out achievementsPanel, out agentsPanel, out researchPanel, out settingsPanel);
 
             TMP_Text scoreText;
             TMP_Text bestText;
@@ -157,9 +181,6 @@ namespace StackMerge.Editor
             TMP_Text progressionStageText;
             Button modifiersMenuUnlockButton;
             Button agentsMenuUnlockButton;
-            TMP_Text prestigeSummaryText;
-            Button prestigeButton;
-            Button[] researchButtons;
             BuildUpgradesPanel(
                 upgradesPanel,
                 out upgradesChipsText,
@@ -175,10 +196,7 @@ namespace StackMerge.Editor
                 out difficultyUpgradeButtons,
                 out progressionStageText,
                 out modifiersMenuUnlockButton,
-                out agentsMenuUnlockButton,
-                out prestigeSummaryText,
-                out prestigeButton,
-                out researchButtons);
+                out agentsMenuUnlockButton);
 
             TMP_Text modifiersChipsText;
             TMP_Text modifierSummaryText;
@@ -237,6 +255,27 @@ namespace StackMerge.Editor
             TMP_Text settingsChipsText;
             BuildSettingsPanel(settingsPanel, out settingsChipsText);
 
+            TMP_Text researchChipsText;
+            TMP_Text prestigeSummaryText;
+            Button prestigeButton;
+            Button[] researchButtons;
+            Image[] researchConnectorImages;
+            TMP_Text researchDetailNameText;
+            TMP_Text researchDetailInfoText;
+            TMP_Text researchDetailStatusText;
+            Button researchDetailActionButton;
+            BuildResearchPanel(
+                researchPanel,
+                out researchChipsText,
+                out prestigeSummaryText,
+                out prestigeButton,
+                out researchButtons,
+                out researchConnectorImages,
+                out researchDetailNameText,
+                out researchDetailInfoText,
+                out researchDetailStatusText,
+                out researchDetailActionButton);
+
             Button[] tabButtons = BuildBottomTabs(appRoot);
 
             Button modalNewGameButton;
@@ -272,9 +311,10 @@ namespace StackMerge.Editor
                 historyPanel.gameObject,
                 achievementsPanel.gameObject,
                 agentsPanel.gameObject,
+                researchPanel.gameObject,
                 settingsPanel.gameObject,
                 tabButtons,
-                new[] { gameplayChipsText, algorithmsChipsText, upgradesChipsText, modifiersChipsText, agentsChipsText, settingsChipsText },
+                new[] { gameplayChipsText, algorithmsChipsText, upgradesChipsText, modifiersChipsText, agentsChipsText, researchChipsText, settingsChipsText },
                 solverText,
                 speedText,
                 capacityText,
@@ -313,6 +353,11 @@ namespace StackMerge.Editor
                 prestigeSummaryText,
                 prestigeButton,
                 researchButtons,
+                researchConnectorImages,
+                researchDetailNameText,
+                researchDetailInfoText,
+                researchDetailStatusText,
+                researchDetailActionButton,
                 modifierButtons,
                 modifierSummaryText,
                 modifierDetailNameText,
@@ -436,6 +481,7 @@ namespace StackMerge.Editor
             out RectTransform historyPanel,
             out RectTransform achievementsPanel,
             out RectTransform agentsPanel,
+            out RectTransform researchPanel,
             out RectTransform settingsPanel)
         {
             gameplayPanel = CreateTabPanel("Gameplay Panel", parent);
@@ -445,6 +491,7 @@ namespace StackMerge.Editor
             historyPanel = CreateTabPanel("History Panel", parent);
             achievementsPanel = CreateTabPanel("Achievements Panel", parent);
             agentsPanel = CreateTabPanel("Agents Panel", parent);
+            researchPanel = CreateTabPanel("Research Panel", parent);
             settingsPanel = CreateTabPanel("Settings Panel", parent);
 
             algorithmsPanel.gameObject.SetActive(false);
@@ -453,6 +500,7 @@ namespace StackMerge.Editor
             historyPanel.gameObject.SetActive(false);
             achievementsPanel.gameObject.SetActive(false);
             agentsPanel.gameObject.SetActive(false);
+            researchPanel.gameObject.SetActive(false);
             settingsPanel.gameObject.SetActive(false);
         }
 
@@ -883,10 +931,7 @@ namespace StackMerge.Editor
             out Button[] difficultyUpgradeButtons,
             out TMP_Text progressionStageText,
             out Button modifiersMenuUnlockButton,
-            out Button agentsMenuUnlockButton,
-            out TMP_Text prestigeSummaryText,
-            out Button prestigeButton,
-            out Button[] researchButtons)
+            out Button agentsMenuUnlockButton)
         {
             BuildMenuHeader(panel, "Fejlesztesek", out chipsText);
 
@@ -936,27 +981,72 @@ namespace StackMerge.Editor
 
             RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 1178f, 126f);
             incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
+        }
 
-            RectTransform prestige = CreateCategoryPanel(panel, "Prestige & Research", 1320f, 260f);
-            prestigeSummaryText = CreateText("Research locked. Unlock PPO to prestige.", prestige, 17, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
-            SetTopStretch(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 74f);
+        private static void BuildResearchPanel(
+            RectTransform panel,
+            out TMP_Text chipsText,
+            out TMP_Text prestigeSummaryText,
+            out Button prestigeButton,
+            out Button[] researchButtons,
+            out Image[] researchConnectorImages,
+            out TMP_Text detailNameText,
+            out TMP_Text detailInfoText,
+            out TMP_Text detailStatusText,
+            out Button detailActionButton)
+        {
+            BuildMenuHeader(panel, "Research", out chipsText);
+
+            TMP_Text subtitle = CreateText("Permanent late-game research. Prestige turns PPO Normal-mode performance into Insight, then the tree makes every future reset faster and deeper.", panel, 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#CBD5E1"));
+            SetTopStretch(subtitle.rectTransform, 0f, 78f, 0f, 46f);
+            subtitle.enableAutoSizing = true;
+            subtitle.fontSizeMin = 12;
+            subtitle.fontSizeMax = 20;
+
+            RectTransform console = CreateCategoryPanel(panel, "Prestige Console", 136f, 146f);
+            prestigeSummaryText = CreateText("Research locked. Finish PPO Training, then run PPO in Normal mode.", console, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            SetStretch(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 0f);
             prestigeSummaryText.enableAutoSizing = true;
             prestigeSummaryText.fontSizeMin = 10;
-            prestigeSummaryText.fontSizeMax = 17;
+            prestigeSummaryText.fontSizeMax = 18;
 
-            prestigeButton = CreateButton(prestige, "Prestige\nNeeds PPO", HexColor("#334155"), 20);
-            SetTopRight(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 220f, 72f);
+            prestigeButton = CreateButton(console, "Prestige\nNeeds Training", HexColor("#334155"), 20);
+            SetTopRight(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 230f, 74f);
 
-            RectTransform researchGrid = CreateRect("Research Grid", prestige);
-            SetStretch(researchGrid, 0f, 90f, 0f, 0f);
+            RectTransform tree = CreateCategoryPanel(panel, "Research Tree", 304f, 640f, 420f);
+            RectTransform connectorLayer = CreateRect("Research Connectors", tree);
+            Stretch(connectorLayer);
+            researchConnectorImages = CreateResearchConnectors(connectorLayer);
+
             researchButtons = new Button[StackMergeProgression.Research.Length];
-            int rows = Mathf.CeilToInt(researchButtons.Length / 3f);
             for (int i = 0; i < researchButtons.Length; i++)
             {
                 ResearchDefinition definition = StackMergeProgression.Research[i];
-                researchButtons[i] = CreateButton(researchGrid, $"{definition.DisplayName}\nLocked", HexColor("#334155"), 15);
-                SetGridCell(researchButtons[i].GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 10f);
+                researchButtons[i] = CreateButton(tree, $"{definition.DisplayName}\nLocked", HexColor("#334155"), 15);
+                SetTopLeft(researchButtons[i].GetComponent<RectTransform>(), GetResearchNodePosition(definition), ResearchNodeSize);
             }
+
+            RectTransform details = CreateCategoryPanelRight(panel, "Selected Research", 304f, 400f, 640f);
+            detailNameText = CreateText("Insight Amplifier", details, 30, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 0f, 42f);
+            detailNameText.enableAutoSizing = true;
+            detailNameText.fontSizeMin = 16;
+            detailNameText.fontSizeMax = 30;
+
+            detailStatusText = CreateText("Level 0/5", details, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#FDE68A"));
+            SetTopStretch(detailStatusText.rectTransform, 0f, 52f, 0f, 34f);
+            detailStatusText.enableAutoSizing = true;
+            detailStatusText.fontSizeMin = 11;
+            detailStatusText.fontSizeMax = 18;
+
+            detailInfoText = CreateText("Select a research node to inspect its effect and purchase requirements.", details, 19, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(detailInfoText.rectTransform, 0f, 98f, 0f, 86f);
+            detailInfoText.enableAutoSizing = true;
+            detailInfoText.fontSizeMin = 12;
+            detailInfoText.fontSizeMax = 19;
+
+            detailActionButton = CreateButton(details, "Buy", HexColor("#7C3AED"), 22);
+            SetBottomCenter(detailActionButton.GetComponent<RectTransform>(), 240f, 64f, 0f);
         }
 
         private static Button[] BuildModifiersPanel(
@@ -1201,6 +1291,38 @@ namespace StackMerge.Editor
             return content;
         }
 
+        private static RectTransform CreateCategoryPanel(RectTransform parent, string titleText, float top, float height, float right)
+        {
+            RectTransform panel = CreatePanel($"{titleText} Category", parent, HexColor("#18212F"));
+            SetTopStretch(panel, 0f, top, right, height);
+
+            TMP_Text title = CreateText(titleText, panel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            SetTopStretch(title.rectTransform, 18f, 8f, 18f, 28f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 12;
+            title.fontSizeMax = 20;
+
+            RectTransform content = CreateRect($"{titleText} Content", panel);
+            SetStretch(content, 18f, 44f, 18f, 14f);
+            return content;
+        }
+
+        private static RectTransform CreateCategoryPanelRight(RectTransform parent, string titleText, float top, float width, float height)
+        {
+            RectTransform panel = CreatePanel($"{titleText} Category", parent, HexColor("#18212F"));
+            SetTopRight(panel, top, 0f, width, height);
+
+            TMP_Text title = CreateText(titleText, panel, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            SetTopStretch(title.rectTransform, 18f, 8f, 18f, 28f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 12;
+            title.fontSizeMax = 20;
+
+            RectTransform content = CreateRect($"{titleText} Content", panel);
+            SetStretch(content, 18f, 44f, 18f, 14f);
+            return content;
+        }
+
         private static void BuildMenuHeader(RectTransform panel, string titleText, out TMP_Text chipsText)
         {
             TMP_Text title = CreateText(titleText, panel, 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
@@ -1224,7 +1346,7 @@ namespace StackMerge.Editor
             RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0B1322"));
             SetBottomStretch(tabs, 40f, 24f, 40f, 86f);
 
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Settings" };
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Research", "Settings" };
             Button[] buttons = new Button[labels.Length];
             for (int i = 0; i < labels.Length; i++)
             {
@@ -1433,6 +1555,15 @@ namespace StackMerge.Editor
             rectTransform.sizeDelta = new Vector2(width, height);
         }
 
+        private static void SetTopLeft(RectTransform rectTransform, Vector2 topLeft, Vector2 size)
+        {
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(0f, 1f);
+            rectTransform.pivot = new Vector2(0f, 1f);
+            rectTransform.anchoredPosition = new Vector2(topLeft.x, -topLeft.y);
+            rectTransform.sizeDelta = size;
+        }
+
         private static void SetCenter(RectTransform rectTransform, float width, float height)
         {
             rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
@@ -1449,6 +1580,66 @@ namespace StackMerge.Editor
             rectTransform.pivot = new Vector2(0.5f, 0f);
             rectTransform.anchoredPosition = new Vector2(0f, bottom);
             rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static Image[] CreateResearchConnectors(RectTransform parent)
+        {
+            var images = new List<Image>();
+            foreach ((ResearchId from, ResearchId to) in ResearchConnections)
+            {
+                ResearchDefinition fromDefinition = GetResearchDefinition(from);
+                ResearchDefinition toDefinition = GetResearchDefinition(to);
+                Vector2 fromPosition = GetResearchNodePosition(fromDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, ResearchNodeSize.y);
+                Vector2 toPosition = GetResearchNodePosition(toDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, 0f);
+                AddResearchArrow(parent, fromPosition, toPosition, images);
+            }
+
+            return images.ToArray();
+        }
+
+        private static void AddResearchArrow(RectTransform parent, Vector2 from, Vector2 to, List<Image> images)
+        {
+            images.Add(AddLine(parent, "Research Arrow", from, to, 4f));
+            Vector2 delta = to - from;
+            if (delta.sqrMagnitude < 0.01f)
+            {
+                return;
+            }
+
+            Vector2 direction = delta.normalized;
+            Vector2 normal = new(-direction.y, direction.x);
+            images.Add(AddLine(parent, "Research Arrow Head", to, to - direction * 18f + normal * 8f, 3.2f));
+            images.Add(AddLine(parent, "Research Arrow Head", to, to - direction * 18f - normal * 8f, 3.2f));
+        }
+
+        private static Image AddLine(RectTransform parent, string name, Vector2 from, Vector2 to, float thickness)
+        {
+            RectTransform line = CreatePanel(name, parent, HexColor("#334155", 0.9f));
+            Image image = line.GetComponent<Image>();
+            image.raycastTarget = false;
+
+            Vector2 delta = to - from;
+            Vector2 middle = (from + to) * 0.5f;
+            line.anchorMin = new Vector2(0f, 1f);
+            line.anchorMax = new Vector2(0f, 1f);
+            line.pivot = new Vector2(0.5f, 0.5f);
+            line.anchoredPosition = new Vector2(middle.x, -middle.y);
+            line.sizeDelta = new Vector2(Mathf.Max(1f, delta.magnitude), thickness);
+            line.localEulerAngles = new Vector3(0f, 0f, Mathf.Atan2(-delta.y, delta.x) * Mathf.Rad2Deg);
+            return image;
+        }
+
+        private static ResearchDefinition GetResearchDefinition(ResearchId researchId)
+        {
+            int index = (int)researchId;
+            return index >= 0 && index < StackMergeProgression.Research.Length ? StackMergeProgression.Research[index] : StackMergeProgression.Research[0];
+        }
+
+        private static Vector2 GetResearchNodePosition(ResearchDefinition definition)
+        {
+            return new Vector2(
+                ResearchNodeLeft + definition.BranchColumn * ResearchNodeColumnSpacing,
+                ResearchNodeTop + definition.Tier * ResearchNodeTierSpacing);
         }
 
         private static float BoardHeightForCapacity(int stackCapacity)

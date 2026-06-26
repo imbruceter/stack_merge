@@ -46,6 +46,7 @@ namespace StackMerge
         [SerializeField] private GameObject historyPanel;
         [SerializeField] private GameObject achievementsPanel;
         [SerializeField] private GameObject agentsPanel;
+        [SerializeField] private GameObject researchPanel;
         [SerializeField] private GameObject settingsPanel;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
 
@@ -89,6 +90,11 @@ namespace StackMerge
         [SerializeField] private TMP_Text prestigeSummaryText;
         [SerializeField] private Button prestigeButton;
         [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
+        [SerializeField] private Image[] researchConnectorImages = Array.Empty<Image>();
+        [SerializeField] private TMP_Text researchDetailNameText;
+        [SerializeField] private TMP_Text researchDetailInfoText;
+        [SerializeField] private TMP_Text researchDetailStatusText;
+        [SerializeField] private Button researchDetailActionButton;
         [SerializeField] private Button[] modifierButtons = Array.Empty<Button>();
         [SerializeField] private TMP_Text modifierSummaryText;
         [SerializeField] private TMP_Text modifierDetailNameText;
@@ -157,6 +163,30 @@ namespace StackMerge
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
+        private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
+
+        private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
+        {
+            (ResearchId.InsightAmplifier, ResearchId.SeedCapital),
+            (ResearchId.InsightAmplifier, ResearchId.PpoBootcamp),
+            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
+            (ResearchId.SeedCapital, ResearchId.AutomationMemory),
+            (ResearchId.AutomationMemory, ResearchId.AlgorithmArchive),
+            (ResearchId.AlgorithmArchive, ResearchId.YieldTheory),
+            (ResearchId.PpoBootcamp, ResearchId.PpoMemory),
+            (ResearchId.PpoMemory, ResearchId.PpoHighFocus),
+            (ResearchId.PpoHighFocus, ResearchId.PpoStability),
+            (ResearchId.PpoStability, ResearchId.InsightExtractor),
+            (ResearchId.PassiveInsight, ResearchId.InsightExtractor),
+            (ResearchId.PassiveInsight, ResearchId.OfflineEfficiency),
+            (ResearchId.OfflineEfficiency, ResearchId.OfflineTime)
+        };
+
+        private static readonly Vector2 ResearchNodeSize = new(198f, 68f);
+        private const float ResearchNodeLeft = 22f;
+        private const float ResearchNodeTop = 18f;
+        private const float ResearchNodeColumnSpacing = 278f;
+        private const float ResearchNodeTierSpacing = 88f;
 
         private void Awake()
         {
@@ -173,10 +203,14 @@ namespace StackMerge
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
             ApplyModernTheme();
-            EnsurePrestigeResearchUi();
+            EnsureResearchUi();
             WirePrestigeResearchButtons();
             CreateFreshGame();
             RefreshEverything();
+            if (progression.LastOfflineChips > 0 || progression.LastOfflineInsight > 0)
+            {
+                SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} chips, +{FormatNumber(progression.LastOfflineInsight)} Insight");
+            }
         }
 
         /// <summary>
@@ -303,6 +337,7 @@ namespace StackMerge
             GameObject history,
             GameObject achievements,
             GameObject agents,
+            GameObject research,
             GameObject settings,
             Button[] bottomTabs,
             TMP_Text[] chipsDisplays,
@@ -344,6 +379,11 @@ namespace StackMerge
             TMP_Text prestigeDetails,
             Button runPrestigeButton,
             Button[] researchUpgradeButtons,
+            Image[] researchConnections,
+            TMP_Text selectedResearchName,
+            TMP_Text selectedResearchInfo,
+            TMP_Text selectedResearchStatus,
+            Button selectedResearchAction,
             Button[] modifierSelectionButtons,
             TMP_Text modifiersSummary,
             TMP_Text selectedModifierName,
@@ -395,6 +435,7 @@ namespace StackMerge
             historyPanel = history;
             achievementsPanel = achievements;
             agentsPanel = agents;
+            researchPanel = research;
             settingsPanel = settings;
             tabButtons = bottomTabs;
             chipsTexts = chipsDisplays;
@@ -436,6 +477,11 @@ namespace StackMerge
             prestigeSummaryText = prestigeDetails;
             prestigeButton = runPrestigeButton;
             researchButtons = researchUpgradeButtons;
+            researchConnectorImages = researchConnections;
+            researchDetailNameText = selectedResearchName;
+            researchDetailInfoText = selectedResearchInfo;
+            researchDetailStatusText = selectedResearchStatus;
+            researchDetailActionButton = selectedResearchAction;
             modifierButtons = modifierSelectionButtons;
             modifierSummaryText = modifiersSummary;
             modifierDetailNameText = selectedModifierName;
@@ -753,6 +799,12 @@ namespace StackMerge
                 modifierDetailActionButton.onClick.RemoveAllListeners();
                 modifierDetailActionButton.onClick.AddListener(BuySelectedModifierUpgrade);
             }
+
+            if (researchDetailActionButton != null)
+            {
+                researchDetailActionButton.onClick.RemoveAllListeners();
+                researchDetailActionButton.onClick.AddListener(BuySelectedResearchUpgrade);
+            }
         }
 
         private void WirePrestigeResearchButtons()
@@ -772,7 +824,13 @@ namespace StackMerge
                 }
 
                 researchButtons[i].onClick.RemoveAllListeners();
-                researchButtons[i].onClick.AddListener(() => BuyResearchUpgrade((ResearchId)researchIndex));
+                researchButtons[i].onClick.AddListener(() => SelectResearchUpgrade((ResearchId)researchIndex));
+            }
+
+            if (researchDetailActionButton != null)
+            {
+                researchDetailActionButton.onClick.RemoveAllListeners();
+                researchDetailActionButton.onClick.AddListener(BuySelectedResearchUpgrade);
             }
         }
 
@@ -782,7 +840,7 @@ namespace StackMerge
             achievementsOpen = false;
             solverTuneOpen = false;
             gameplayInfoOpen = false;
-            int requestedTab = Mathf.Clamp(tabIndex, 0, 5);
+            int requestedTab = Mathf.Clamp(tabIndex, 0, 6);
             if (requestedTab == 3 && progression != null && !progression.ModifiersMenuUnlocked)
             {
                 SetText(feedbackText, "Unlock Modifier Lab in Upgrades first");
@@ -795,6 +853,12 @@ namespace StackMerge
                 requestedTab = selectedTabIndex;
             }
 
+            if (requestedTab == 5 && progression != null && !IsResearchMenuUnlocked())
+            {
+                SetText(feedbackText, progression.IsSolverUnlocked(SolverId.MachineLearning) ? "Finish PPO Training first" : "Unlock PPO to open Research");
+                requestedTab = selectedTabIndex;
+            }
+
             selectedTabIndex = requestedTab;
             SetActive(gameplayPanel, selectedTabIndex == 0);
             SetActive(algorithmsPanel, selectedTabIndex == 1);
@@ -803,7 +867,8 @@ namespace StackMerge
             SetActive(historyPanel, false);
             SetActive(achievementsPanel, false);
             SetActive(agentsPanel, selectedTabIndex == 4);
-            SetActive(settingsPanel, selectedTabIndex == 5);
+            SetActive(researchPanel, selectedTabIndex == 5);
+            SetActive(settingsPanel, selectedTabIndex == 6);
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
             RefreshTabButtons();
@@ -825,6 +890,7 @@ namespace StackMerge
             SetActive(modifiersPanel, false);
             SetActive(achievementsPanel, false);
             SetActive(agentsPanel, false);
+            SetActive(researchPanel, false);
             SetActive(settingsPanel, false);
             SetActive(historyPanel, true);
             SetActive(solverTunePanel, false);
@@ -851,6 +917,7 @@ namespace StackMerge
             SetActive(historyPanel, false);
             SetActive(modifiersPanel, false);
             SetActive(agentsPanel, false);
+            SetActive(researchPanel, false);
             SetActive(settingsPanel, false);
             SetActive(achievementsPanel, true);
             SetActive(solverTunePanel, false);
@@ -876,6 +943,12 @@ namespace StackMerge
         {
             gameplayInfoOpen = false;
             SetActive(gameplayInfoOverlay, false);
+        }
+
+        private bool IsResearchMenuUnlocked()
+        {
+            return progression != null
+                && (progression.PrestigeAvailable || progression.PrestigeCount > 0 || progression.ResearchInsight > 0);
         }
 
         private void OpenSolverTunePanel()
@@ -905,7 +978,7 @@ namespace StackMerge
 
         private void RefreshTabButtons()
         {
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Settings" };
+            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Research", "Settings" };
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 Button button = tabButtons[i];
@@ -919,11 +992,15 @@ namespace StackMerge
                 bool selected = !historyOpen && !achievementsOpen && i == selectedTabIndex;
                 bool lockedModifierTab = i == 3 && progression != null && !progression.ModifiersMenuUnlocked;
                 bool lockedAgentTab = i == 4 && progression != null && !progression.AgentsMenuUnlocked;
-                bool locked = lockedModifierTab || lockedAgentTab;
+                bool lockedResearchTab = i == 5 && progression != null && !IsResearchMenuUnlocked();
+                bool locked = lockedModifierTab || lockedAgentTab || lockedResearchTab;
 
                 if (label != null)
                 {
-                    label.text = lockedModifierTab ? "Modifiers\nLocked" : lockedAgentTab ? "Agent\nLocked" : i < labels.Length ? labels[i] : label.text;
+                    label.text = lockedModifierTab ? "Modifiers\nLocked"
+                        : lockedAgentTab ? "Agent\nLocked"
+                        : lockedResearchTab ? "Research\nLocked"
+                        : i < labels.Length ? labels[i] : label.text;
                     label.color = locked ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
                 }
 
@@ -1337,55 +1414,285 @@ namespace StackMerge
             ppoModeModal.gameObject.SetActive(false);
         }
 
-        private void EnsurePrestigeResearchUi()
+        private void EnsureResearchUi()
         {
-            if (prestigeButton != null || upgradesPanel == null)
+            HideLegacyPrestigeResearchSection();
+            EnsureResearchTabButton();
+
+            if (researchPanel != null && prestigeButton != null && researchDetailActionButton != null && researchButtons.Length > 0)
             {
                 return;
             }
 
-            RectTransform upgradesRoot = upgradesPanel.GetComponent<RectTransform>();
-            if (upgradesRoot == null)
+            RectTransform tabRoot = researchPanel != null
+                ? researchPanel.transform.parent as RectTransform
+                : upgradesPanel != null ? upgradesPanel.transform.parent as RectTransform : null;
+            if (tabRoot == null)
             {
                 return;
             }
 
-            RectTransform section = CreateRuntimePanel("Prestige & Research Runtime", upgradesRoot, HexColor("#18212F"));
-            SetTopStretchRuntime(section, 0f, 1320f, 0f, 260f);
+            RectTransform panel = researchPanel != null
+                ? researchPanel.GetComponent<RectTransform>()
+                : CreateRuntimePanel("Research Panel", tabRoot, HexColor("#000000", 0f));
+            researchPanel = panel.gameObject;
+            Stretch(panel);
+            researchPanel.SetActive(false);
 
-            TMP_Text title = CreateRuntimeText("Title", section, "Prestige & Research", 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            TMP_Text title = CreateRuntimeText("Research Title", panel, "Research", 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretchRuntime(title.rectTransform, 0f, 0f, 280f, 58f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 20;
+            title.fontSizeMax = 38;
+
+            RectTransform wallet = CreateRuntimePanel("Research Wallet", panel, HexColor("#141C2B"));
+            SetTopRightRuntime(wallet, 0f, 0f, 360f, 58f);
+            TMP_Text walletText = CreateRuntimeText("Research Wallet Text", wallet, "Insight: 0", 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDE68A"));
+            Stretch(walletText.rectTransform, 12f, 0f, 12f, 0f);
+            walletText.enableAutoSizing = true;
+            walletText.fontSizeMin = 12;
+            walletText.fontSizeMax = 20;
+            chipsTexts = AppendTextTarget(chipsTexts, walletText);
+
+            TMP_Text subtitle = CreateRuntimeText(
+                "Research Subtitle",
+                panel,
+                "Late-game permanent upgrades. Prestige converts trained PPO performance into Insight, then this tree speeds up every future cycle.",
+                20,
+                FontStyles.Bold,
+                TextAlignmentOptions.Center,
+                HexColor("#CBD5E1"));
+            SetTopStretchRuntime(subtitle.rectTransform, 0f, 78f, 0f, 46f);
+            subtitle.enableAutoSizing = true;
+            subtitle.fontSizeMin = 12;
+            subtitle.fontSizeMax = 20;
+
+            RectTransform console = CreateRuntimeCategoryPanel(panel, "Prestige Console", 136f, 146f);
+            prestigeSummaryText = CreateRuntimeText("Prestige Summary", console, "Research locked.", 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
+            Stretch(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 0f);
+            prestigeSummaryText.enableAutoSizing = true;
+            prestigeSummaryText.fontSizeMin = 10;
+            prestigeSummaryText.fontSizeMax = 18;
+
+            prestigeButton = CreateRuntimeButton("Prestige Button", console, "Prestige", HexColor("#7C3AED"), Vector2.zero, new Vector2(230f, 74f));
+            SetTopRightRuntime(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 230f, 74f);
+
+            RectTransform tree = CreateRuntimeCategoryPanel(panel, "Research Tree", 304f, 640f, 420f);
+            RectTransform connectorLayer = CreateRuntimePanel("Research Connectors", tree, HexColor("#000000", 0f));
+            Stretch(connectorLayer);
+            researchConnectorImages = CreateRuntimeResearchConnectors(connectorLayer);
+            researchButtons = new Button[StackMergeProgression.Research.Length];
+            for (int i = 0; i < researchButtons.Length; i++)
+            {
+                ResearchDefinition definition = StackMergeProgression.Research[i];
+                Button button = CreateRuntimeButton($"Research {i}", tree, definition.DisplayName, HexColor("#334155"), Vector2.zero, ResearchNodeSize);
+                SetTopLeftRuntime(button.GetComponent<RectTransform>(), GetResearchNodePosition(definition), ResearchNodeSize);
+                researchButtons[i] = button;
+            }
+
+            RectTransform detail = CreateRuntimeCategoryPanelRight(panel, "Selected Research", 304f, 400f, 640f);
+            researchDetailNameText = CreateRuntimeText("Research Detail Name", detail, "Insight Amplifier", 30, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
+            SetTopStretchRuntime(researchDetailNameText.rectTransform, 0f, 0f, 0f, 42f);
+            researchDetailNameText.enableAutoSizing = true;
+            researchDetailNameText.fontSizeMin = 16;
+            researchDetailNameText.fontSizeMax = 30;
+
+            researchDetailStatusText = CreateRuntimeText("Research Detail Status", detail, "Locked", 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#FDE68A"));
+            SetTopStretchRuntime(researchDetailStatusText.rectTransform, 0f, 52f, 0f, 34f);
+            researchDetailStatusText.enableAutoSizing = true;
+            researchDetailStatusText.fontSizeMin = 11;
+            researchDetailStatusText.fontSizeMax = 18;
+
+            researchDetailInfoText = CreateRuntimeText("Research Detail Info", detail, "Select a node.", 19, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            Stretch(researchDetailInfoText.rectTransform, 0f, 98f, 0f, 86f);
+            researchDetailInfoText.enableAutoSizing = true;
+            researchDetailInfoText.fontSizeMin = 12;
+            researchDetailInfoText.fontSizeMax = 19;
+
+            researchDetailActionButton = CreateRuntimeButton("Research Buy Button", detail, "Buy", HexColor("#7C3AED"), Vector2.zero, new Vector2(240f, 64f));
+            SetBottomCenterRuntime(researchDetailActionButton.GetComponent<RectTransform>(), 240f, 64f, 0f);
+        }
+
+        private void HideLegacyPrestigeResearchSection()
+        {
+            if (upgradesPanel == null)
+            {
+                return;
+            }
+
+            foreach (Transform child in upgradesPanel.transform)
+            {
+                if (child.name.IndexOf("Prestige & Research", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    child.gameObject.SetActive(false);
+                }
+            }
+        }
+
+        private void EnsureResearchTabButton()
+        {
+            if (tabButtons == null || tabButtons.Length >= 7 || tabButtons.Length == 0)
+            {
+                return;
+            }
+
+            RectTransform tabRoot = tabButtons[0] != null ? tabButtons[0].transform.parent as RectTransform : null;
+            if (tabRoot == null)
+            {
+                return;
+            }
+
+            var buttons = new Button[7];
+            Array.Copy(tabButtons, buttons, tabButtons.Length);
+            Button researchTab = CreateRuntimeButton("Research Tab", tabRoot, "Research", HexColor("#18212F"), Vector2.zero, Vector2.zero);
+            int researchIndex = 5;
+            researchTab.onClick.AddListener(() => SelectTab(researchIndex));
+
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                if (i < 5)
+                {
+                    buttons[i] = tabButtons[i];
+                }
+                else if (i == 5)
+                {
+                    buttons[i] = researchTab;
+                }
+                else
+                {
+                    buttons[i] = tabButtons.Length > 5 ? tabButtons[5] : null;
+                }
+            }
+
+            tabButtons = buttons;
+            for (int i = 0; i < tabButtons.Length; i++)
+            {
+                if (tabButtons[i] != null)
+                {
+                    int tabIndex = i;
+                    tabButtons[i].onClick.RemoveAllListeners();
+                    tabButtons[i].onClick.AddListener(() => SelectTab(tabIndex));
+                    SetGridCellRuntime(tabButtons[i].GetComponent<RectTransform>(), i, tabButtons.Length, 0, 1, 8f);
+                }
+            }
+        }
+
+        private RectTransform CreateRuntimeCategoryPanel(RectTransform parent, string titleText, float top, float height, float right = 0f)
+        {
+            RectTransform panel = CreateRuntimePanel($"{titleText} Category", parent, HexColor("#18212F"));
+            SetTopStretchRuntime(panel, 0f, top, right, height);
+
+            TMP_Text title = CreateRuntimeText("Title", panel, titleText, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
             SetTopStretchRuntime(title.rectTransform, 18f, 8f, 18f, 28f);
             title.enableAutoSizing = true;
             title.fontSizeMin = 12;
             title.fontSizeMax = 20;
 
-            RectTransform content = CreateRuntimePanel("Content", section, HexColor("#000000", 0f));
+            RectTransform content = CreateRuntimePanel($"{titleText} Content", panel, HexColor("#000000", 0f));
             Stretch(content, 18f, 44f, 18f, 14f);
+            return content;
+        }
 
-            prestigeSummaryText = CreateRuntimeText("Prestige Summary", content, "Research locked.", 17, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
-            SetTopStretchRuntime(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 74f);
-            prestigeSummaryText.enableAutoSizing = true;
-            prestigeSummaryText.fontSizeMin = 10;
-            prestigeSummaryText.fontSizeMax = 17;
+        private RectTransform CreateRuntimeCategoryPanelRight(RectTransform parent, string titleText, float top, float width, float height)
+        {
+            RectTransform panel = CreateRuntimePanel($"{titleText} Category", parent, HexColor("#18212F"));
+            SetTopRightRuntime(panel, top, 0f, width, height);
 
-            prestigeButton = CreateRuntimeButton("Prestige Button", content, "Prestige", HexColor("#7C3AED"), Vector2.zero, new Vector2(220f, 72f));
-            RectTransform prestigeRect = prestigeButton.GetComponent<RectTransform>();
-            prestigeRect.anchorMin = new Vector2(1f, 1f);
-            prestigeRect.anchorMax = new Vector2(1f, 1f);
-            prestigeRect.pivot = new Vector2(1f, 1f);
-            prestigeRect.anchoredPosition = Vector2.zero;
+            TMP_Text title = CreateRuntimeText("Title", panel, titleText, 20, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#E5E7EB"));
+            SetTopStretchRuntime(title.rectTransform, 18f, 8f, 18f, 28f);
+            title.enableAutoSizing = true;
+            title.fontSizeMin = 12;
+            title.fontSizeMax = 20;
 
-            RectTransform grid = CreateRuntimePanel("Research Grid", content, HexColor("#000000", 0f));
-            Stretch(grid, 0f, 90f, 0f, 0f);
-            researchButtons = new Button[StackMergeProgression.Research.Length];
-            int rows = Mathf.CeilToInt(researchButtons.Length / 3f);
-            for (int i = 0; i < researchButtons.Length; i++)
+            RectTransform content = CreateRuntimePanel($"{titleText} Content", panel, HexColor("#000000", 0f));
+            Stretch(content, 18f, 44f, 18f, 14f);
+            return content;
+        }
+
+        private static TMP_Text[] AppendTextTarget(TMP_Text[] targets, TMP_Text target)
+        {
+            if (target == null)
             {
-                ResearchDefinition definition = StackMergeProgression.Research[i];
-                Button button = CreateRuntimeButton($"Research {i}", grid, definition.DisplayName, HexColor("#334155"), Vector2.zero, Vector2.zero);
-                SetGridCellRuntime(button.GetComponent<RectTransform>(), i % 3, 3, i / 3, rows, 10f);
-                researchButtons[i] = button;
+                return targets ?? Array.Empty<TMP_Text>();
             }
+
+            targets ??= Array.Empty<TMP_Text>();
+            if (targets.Contains(target))
+            {
+                return targets;
+            }
+
+            var resized = new TMP_Text[targets.Length + 1];
+            Array.Copy(targets, resized, targets.Length);
+            resized[^1] = target;
+            return resized;
+        }
+
+        private static Image[] CreateRuntimeResearchConnectors(RectTransform parent)
+        {
+            var images = new List<Image>();
+            foreach ((ResearchId from, ResearchId to) in ResearchConnections)
+            {
+                ResearchDefinition fromDefinition = GetStaticResearchDefinition(from);
+                ResearchDefinition toDefinition = GetStaticResearchDefinition(to);
+                Vector2 fromPosition = GetResearchNodePosition(fromDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, ResearchNodeSize.y);
+                Vector2 toPosition = GetResearchNodePosition(toDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, 0f);
+                AddRuntimeResearchArrow(parent, fromPosition, toPosition, images);
+            }
+
+            return images.ToArray();
+        }
+
+        private static void AddRuntimeResearchArrow(RectTransform parent, Vector2 from, Vector2 to, List<Image> images)
+        {
+            Image main = AddRuntimeLine(parent, "Research Arrow", from, to, 4f);
+            images.Add(main);
+
+            Vector2 delta = to - from;
+            if (delta.sqrMagnitude < 0.01f)
+            {
+                return;
+            }
+
+            Vector2 direction = delta.normalized;
+            Vector2 normal = new(-direction.y, direction.x);
+            Vector2 left = to - direction * 18f + normal * 8f;
+            Vector2 right = to - direction * 18f - normal * 8f;
+            images.Add(AddRuntimeLine(parent, "Research Arrow Head", to, left, 3.2f));
+            images.Add(AddRuntimeLine(parent, "Research Arrow Head", to, right, 3.2f));
+        }
+
+        private static Image AddRuntimeLine(RectTransform parent, string name, Vector2 from, Vector2 to, float thickness)
+        {
+            RectTransform line = CreateRuntimePanel(name, parent, HexColor("#334155", 0.9f));
+            Image image = line.GetComponent<Image>();
+            if (image != null)
+            {
+                image.raycastTarget = false;
+            }
+
+            Vector2 delta = to - from;
+            Vector2 middle = (from + to) * 0.5f;
+            line.anchorMin = new Vector2(0f, 1f);
+            line.anchorMax = new Vector2(0f, 1f);
+            line.pivot = new Vector2(0.5f, 0.5f);
+            line.anchoredPosition = new Vector2(middle.x, -middle.y);
+            line.sizeDelta = new Vector2(Mathf.Max(1f, delta.magnitude), thickness);
+            line.localEulerAngles = new Vector3(0f, 0f, Mathf.Atan2(-delta.y, delta.x) * Mathf.Rad2Deg);
+            return image;
+        }
+
+        private static ResearchDefinition GetStaticResearchDefinition(ResearchId researchId)
+        {
+            int index = (int)researchId;
+            return index >= 0 && index < StackMergeProgression.Research.Length ? StackMergeProgression.Research[index] : StackMergeProgression.Research[0];
+        }
+
+        private static Vector2 GetResearchNodePosition(ResearchDefinition definition)
+        {
+            return new Vector2(
+                ResearchNodeLeft + definition.BranchColumn * ResearchNodeColumnSpacing,
+                ResearchNodeTop + definition.Tier * ResearchNodeTierSpacing);
         }
 
         private TMP_Text CreateCardChildText(string name, Transform parent, string label, int fontSize, Vector2 anchoredPosition, Vector2 size, Color color)
@@ -1575,7 +1882,7 @@ namespace StackMerge
             long gained = progression.ExecutePrestige();
             if (gained <= 0)
             {
-                SetText(feedbackText, "Unlock PPO first to prestige");
+                SetText(feedbackText, progression.PrestigeAvailable ? "Run PPO in Normal mode first" : "Finish PPO Training first");
                 RefreshEverything();
                 return;
             }
@@ -1594,8 +1901,19 @@ namespace StackMerge
             CreateFreshGame();
             SetText(feedbackText, $"Prestige complete: +{FormatNumber(gained)} Insight");
             progression.SaveImmediate();
-            SelectTab(2);
+            SelectTab(5);
             RefreshEverything();
+        }
+
+        private void SelectResearchUpgrade(ResearchId researchId)
+        {
+            selectedResearchId = researchId;
+            RefreshResearchMenu();
+        }
+
+        private void BuySelectedResearchUpgrade()
+        {
+            BuyResearchUpgrade(selectedResearchId);
         }
 
         private void BuyResearchUpgrade(ResearchId researchId)
@@ -2009,6 +2327,7 @@ namespace StackMerge
             RefreshModifierButtons();
             RefreshModifierDetails();
             RefreshUpgradeButtons();
+            RefreshResearchMenu();
             RefreshHistory();
             RefreshAchievements();
             RefreshTabButtons();
@@ -2631,8 +2950,6 @@ namespace StackMerge
                 }
             }
 
-            RefreshPrestigeResearchButtons();
-
             for (int i = 0; i < speedUpgradeButtons.Length; i++)
             {
                 Button button = speedUpgradeButtons[i];
@@ -2873,7 +3190,7 @@ namespace StackMerge
             }
         }
 
-        private void RefreshPrestigeResearchButtons()
+        private void RefreshResearchMenu()
         {
             if (progression == null)
             {
@@ -2887,15 +3204,16 @@ namespace StackMerge
 
             if (prestigeButton != null)
             {
-                if (progression.PrestigeAvailable)
+                long gain = progression.PreviewPrestigeInsightGain();
+                if (gain > 0)
                 {
-                    SetButtonText(prestigeButton, $"Prestige\n+{FormatNumber(progression.PreviewPrestigeInsightGain())} Insight");
+                    SetButtonText(prestigeButton, $"Prestige\n+{FormatNumber(gain)} Insight");
                     prestigeButton.interactable = true;
                     SetButtonColor(prestigeButton, HexColor("#7C3AED"));
                 }
                 else
                 {
-                    SetButtonText(prestigeButton, "Prestige\nNeeds PPO");
+                    SetButtonText(prestigeButton, progression.PrestigeAvailable ? "Prestige\nRun Normal PPO" : "Prestige\nNeeds Training");
                     prestigeButton.interactable = false;
                     SetButtonColor(prestigeButton, HexColor("#334155"));
                 }
@@ -2915,19 +3233,95 @@ namespace StackMerge
                 bool maxed = progression.IsResearchMaxed(researchId);
                 bool canBuy = progression.CanBuyResearch(researchId);
                 string effect = progression.GetResearchEffectSummary(researchId);
+                bool selected = researchId == selectedResearchId;
+                string prefix = selected ? "> " : string.Empty;
                 string label = maxed
-                    ? $"{definition.DisplayName}\n{effect}\nMaxed"
-                    : $"{definition.DisplayName}\n{effect}\n{FormatNumber(progression.GetResearchCost(researchId))} Insight";
+                    ? $"{prefix}{definition.DisplayName}\nL{level}/{definition.MaxLevel}\nMaxed"
+                    : $"{prefix}{definition.DisplayName}\nL{level}/{definition.MaxLevel}\n{FormatNumber(progression.GetResearchCost(researchId))} Insight";
 
                 string reason = progression.GetResearchUnavailableReason(researchId);
                 if (!maxed && !string.IsNullOrEmpty(reason) && reason != "Not enough Insight.")
                 {
-                    label = $"{definition.DisplayName}\nL{level}/{definition.MaxLevel}\nLocked";
+                    label = $"{prefix}{definition.DisplayName}\nL{level}/{definition.MaxLevel}\nLocked";
                 }
 
                 SetButtonText(button, label);
-                button.interactable = canBuy;
-                SetButtonColor(button, maxed ? HexColor("#0F766E") : canBuy ? HexColor("#7C3AED") : HexColor("#334155"));
+                button.interactable = IsResearchMenuUnlocked();
+                SetButtonColor(button, selected ? HexColor("#1D4ED8") : maxed ? HexColor("#0F766E") : level > 0 ? HexColor("#115E59") : canBuy ? HexColor("#7C3AED") : HexColor("#334155"));
+            }
+
+            RefreshResearchConnectors();
+            RefreshSelectedResearchDetails();
+        }
+
+        private void RefreshResearchConnectors()
+        {
+            if (researchConnectorImages == null || researchConnectorImages.Length == 0 || progression == null)
+            {
+                return;
+            }
+
+            for (int connectionIndex = 0; connectionIndex < ResearchConnections.Length; connectionIndex++)
+            {
+                (ResearchId from, ResearchId to) = ResearchConnections[connectionIndex];
+                Color color = progression.GetResearchLevel(to) > 0
+                    ? HexColor("#0F766E", 0.95f)
+                    : progression.GetResearchLevel(from) > 0
+                        ? HexColor("#7C3AED", 0.9f)
+                        : HexColor("#334155", 0.72f);
+
+                int firstSegment = connectionIndex * 3;
+                for (int offset = 0; offset < 3; offset++)
+                {
+                    int imageIndex = firstSegment + offset;
+                    if (imageIndex < researchConnectorImages.Length && researchConnectorImages[imageIndex] != null)
+                    {
+                        researchConnectorImages[imageIndex].color = color;
+                    }
+                }
+            }
+        }
+
+        private void RefreshSelectedResearchDetails()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            ResearchDefinition definition = progression.GetResearchDefinition(selectedResearchId);
+            int level = progression.GetResearchLevel(selectedResearchId);
+            bool maxed = progression.IsResearchMaxed(selectedResearchId);
+            bool canBuy = progression.CanBuyResearch(selectedResearchId);
+            string effect = progression.GetResearchEffectSummary(selectedResearchId);
+            string reason = progression.GetResearchUnavailableReason(selectedResearchId);
+
+            SetText(researchDetailNameText, definition.DisplayName);
+            SetText(researchDetailStatusText, $"Level {level}/{definition.MaxLevel} | {effect}");
+
+            string availability = maxed
+                ? "This research is maxed."
+                : string.IsNullOrEmpty(reason)
+                    ? $"Ready to buy for {FormatNumber(progression.GetResearchCost(selectedResearchId))} Insight."
+                    : reason;
+
+            SetText(researchDetailInfoText,
+                $"{definition.Description}\n\nCurrent effect: {effect}\n\n{availability}\n\nInsight: {FormatNumber(progression.ResearchInsight)}");
+
+            if (researchDetailActionButton != null)
+            {
+                if (maxed)
+                {
+                    SetButtonText(researchDetailActionButton, "Maxed");
+                    researchDetailActionButton.interactable = false;
+                    SetButtonColor(researchDetailActionButton, HexColor("#0F766E"));
+                }
+                else
+                {
+                    SetButtonText(researchDetailActionButton, canBuy ? $"Buy\n{FormatNumber(progression.GetResearchCost(selectedResearchId))}" : "Locked");
+                    researchDetailActionButton.interactable = canBuy;
+                    SetButtonColor(researchDetailActionButton, canBuy ? HexColor("#7C3AED") : HexColor("#334155"));
+                }
             }
         }
 
@@ -3948,6 +4342,33 @@ namespace StackMerge
             rectTransform.pivot = new Vector2(0.5f, 1f);
             rectTransform.offsetMin = new Vector2(left, -top - height);
             rectTransform.offsetMax = new Vector2(-right, -top);
+        }
+
+        private static void SetTopRightRuntime(RectTransform rectTransform, float top, float right, float width, float height)
+        {
+            rectTransform.anchorMin = new Vector2(1f, 1f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(1f, 1f);
+            rectTransform.anchoredPosition = new Vector2(-right, -top);
+            rectTransform.sizeDelta = new Vector2(width, height);
+        }
+
+        private static void SetTopLeftRuntime(RectTransform rectTransform, Vector2 topLeft, Vector2 size)
+        {
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(0f, 1f);
+            rectTransform.pivot = new Vector2(0f, 1f);
+            rectTransform.anchoredPosition = new Vector2(topLeft.x, -topLeft.y);
+            rectTransform.sizeDelta = size;
+        }
+
+        private static void SetBottomCenterRuntime(RectTransform rectTransform, float width, float height, float bottom)
+        {
+            rectTransform.anchorMin = new Vector2(0.5f, 0f);
+            rectTransform.anchorMax = new Vector2(0.5f, 0f);
+            rectTransform.pivot = new Vector2(0.5f, 0f);
+            rectTransform.anchoredPosition = new Vector2(0f, bottom);
+            rectTransform.sizeDelta = new Vector2(width, height);
         }
 
         private static void SetGridCellRuntime(RectTransform rectTransform, int column, int columns, int row, int rows, float spacing)

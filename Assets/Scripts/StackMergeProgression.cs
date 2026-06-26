@@ -49,12 +49,22 @@ namespace StackMerge
         public long machineLearningBestScore;
         public int machineLearningBestHigh;
         public StackMergePpoTrainingData machineLearningPolicy;
+        public int machineLearningNormalRuns;
+        public long machineLearningNormalBestScore;
+        public int machineLearningNormalBestHigh;
+        public long machineLearningNormalFrames;
+        public StackMergePpoTrainingData machineLearningPrestigeMemoryPolicy;
+        public int machineLearningPrestigeMemoryRuns;
         public long researchInsight;
         public long lifetimeResearchInsight;
         public int prestigeCount;
         public long lastPrestigeInsight;
         public long bestPrestigeInsight;
         public int[] researchLevels;
+        public double passiveResearchProgress;
+        public long lastSaveUnixSeconds;
+        public long lastOfflineChips;
+        public long lastOfflineInsight;
     }
 
     [Serializable]
@@ -178,16 +188,25 @@ namespace StackMerge
         AutomationMemory = 2,
         AlgorithmArchive = 3,
         YieldTheory = 4,
-        PpoBootcamp = 5
+        PpoBootcamp = 5,
+        PpoMemory = 6,
+        PpoHighFocus = 7,
+        PpoStability = 8,
+        InsightExtractor = 9,
+        PassiveInsight = 10,
+        OfflineEfficiency = 11,
+        OfflineTime = 12
     }
 
     public readonly struct ResearchDefinition
     {
-        public ResearchDefinition(ResearchId id, string displayName, string description, params int[] costs)
+        public ResearchDefinition(ResearchId id, string displayName, string description, int branchColumn, int tier, params int[] costs)
         {
             Id = id;
             DisplayName = displayName;
             Description = description;
+            BranchColumn = Mathf.Clamp(branchColumn, 0, 2);
+            Tier = Math.Max(0, tier);
             Costs = costs ?? Array.Empty<int>();
         }
 
@@ -196,6 +215,10 @@ namespace StackMerge
         public string DisplayName { get; }
 
         public string Description { get; }
+
+        public int BranchColumn { get; }
+
+        public int Tier { get; }
 
         public int[] Costs { get; }
 
@@ -285,12 +308,19 @@ namespace StackMerge
 
         public static readonly ResearchDefinition[] Research =
         {
-            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the long-term currency scaler, but it grows linearly so prestige value cannot explode.", 1, 2, 4, 8, 16),
-            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 1, 2, 4, 8, 16),
-            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 2, 5, 12),
-            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 3, 8, 18, 40),
-            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 2, 4, 9, 18, 36),
-            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 4, 9, 18, 36, 72)
+            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the root research: every branch starts here.", 1, 0, 1, 2, 4, 8, 16),
+            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 0, 1, 1, 2, 4, 8, 16),
+            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 0, 2, 2, 5, 12),
+            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 3, 3, 8, 18, 40),
+            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 0, 4, 2, 4, 9, 18, 36),
+            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 4, 9, 18, 36, 72),
+            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 2, 6, 14, 30, 65, 140),
+            new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 3, 8, 18, 38, 80, 170),
+            new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 4, 10, 24, 52, 110, 230),
+            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 5, 14, 32, 70, 150, 320),
+            new(ResearchId.PassiveInsight, "Passive Insight", "PPO Normal-mode runs slowly generate extra Insight outside prestige. Training mode never feeds this.", 2, 1, 3, 7, 15, 32, 68),
+            new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 2, 4, 10, 22, 48, 100),
+            new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 3, 5, 12, 28, 60, 130)
         };
 
         private readonly StackMergeProgressionData data;
@@ -301,6 +331,8 @@ namespace StackMerge
             this.data = data ?? new StackMergeProgressionData();
             Normalize();
             machineLearningAgent = new StackMergePpoAgent(this.data.machineLearningPolicy);
+            ApplyMachineLearningResearchBonuses();
+            ApplyOfflineProgress();
         }
 
         public long Chips => data.chips;
@@ -375,7 +407,23 @@ namespace StackMerge
 
         public long BestPrestigeInsight => data.bestPrestigeInsight;
 
-        public bool PrestigeAvailable => IsSolverUnlocked(SolverId.MachineLearning);
+        public bool PrestigeAvailable => IsSolverUnlocked(SolverId.MachineLearning) && MachineLearningPlayingModeUnlocked;
+
+        public bool CanPrestige => PreviewPrestigeInsightGain() > 0;
+
+        public int MachineLearningNormalRuns => Math.Max(0, data.machineLearningNormalRuns);
+
+        public long MachineLearningNormalBestScore => Math.Max(0, data.machineLearningNormalBestScore);
+
+        public int MachineLearningNormalBestHigh => Math.Max(0, data.machineLearningNormalBestHigh);
+
+        public long MachineLearningNormalFrames => Math.Max(0, data.machineLearningNormalFrames);
+
+        public int MachineLearningMemoryRuns => Math.Max(0, data.machineLearningPrestigeMemoryRuns);
+
+        public long LastOfflineChips => Math.Max(0, data.lastOfflineChips);
+
+        public long LastOfflineInsight => Math.Max(0, data.lastOfflineInsight);
 
         public bool MachineLearningTrainingMode
         {
@@ -548,6 +596,7 @@ namespace StackMerge
         public void SaveImmediate()
         {
             data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
+            data.lastSaveUnixSeconds = GetUnixNow();
             PlayerPrefs.SetString(PlayerPrefsKey, JsonUtility.ToJson(data));
             PlayerPrefs.Save();
             saveDirty = false;
@@ -650,6 +699,13 @@ namespace StackMerge
                 },
                 ResearchId.YieldTheory => $"Chip rewards x{GetResearchIncomeMultiplier():0.00}",
                 ResearchId.PpoBootcamp => $"PPO Normal mode at {MachineLearningPlayingModeFrameRequirement} frames",
+                ResearchId.PpoMemory => $"Warm start: {GetPpoMemoryRunLimit(level)} PPO runs retained",
+                ResearchId.PpoHighFocus => $"New-high learning x{GetPpoHighFocusMultiplier():0.00}",
+                ResearchId.PpoStability => $"Survival shaping x{GetPpoStabilityMultiplier():0.00}",
+                ResearchId.InsightExtractor => $"Normal-mode prestige x{GetInsightExtractorMultiplier():0.00}",
+                ResearchId.PassiveInsight => $"Passive Insight x{GetPassiveInsightMultiplier():0.00}",
+                ResearchId.OfflineEfficiency => $"Offline efficiency {GetOfflineEfficiency() * 100:0}%",
+                ResearchId.OfflineTime => $"Offline cap {GetOfflineHourCap():0.#}h",
                 _ => string.Empty
             };
         }
@@ -670,39 +726,47 @@ namespace StackMerge
 
         public long PreviewPrestigeInsightGain()
         {
-            if (!PrestigeAvailable)
+            if (!PrestigeAvailable || data.machineLearningNormalRuns <= 0)
             {
                 return 0;
             }
 
-            long bestScore = Math.Max(data.bestRunScore, MachineLearningBestScore);
-            long ppoBestScore = MachineLearningBestScore;
-            int bestHigh = Math.Max(data.highestBlockEver, MachineLearningBestHigh);
-            long frames = MachineLearningFrames;
+            long bestScore = Math.Max(0, data.machineLearningNormalBestScore);
+            int bestHigh = Math.Max(1, data.machineLearningNormalBestHigh);
+            long frames = Math.Max(0, data.machineLearningNormalFrames);
+            int normalRuns = Math.Max(0, data.machineLearningNormalRuns);
 
             double generalScoreTerm = Math.Pow(Math.Max(0.0, bestScore - 30000.0) / 50000.0, 0.55);
-            double ppoScoreTerm = Math.Pow(Math.Max(0.0, ppoBestScore - 30000.0) / 70000.0, 0.55);
             double highTerm = Math.Max(0, FloorLog2(Math.Max(1, bestHigh)) - 13) * 0.35;
             double frameTerm = Math.Log10(1.0 + Math.Max(0, frames) / 500000.0) * 1.15;
-            double raw = 1.0 + generalScoreTerm + ppoScoreTerm + highTerm + frameTerm;
-            return Math.Max(1, (long)Math.Round(raw * GetPrestigeInsightMultiplier(), MidpointRounding.AwayFromZero));
+            double runTerm = Math.Log10(1.0 + normalRuns) * 0.45;
+            double raw = 1.0 + generalScoreTerm + highTerm + frameTerm + runTerm;
+            double multiplier = GetPrestigeInsightMultiplier() * GetInsightExtractorMultiplier();
+            return Math.Max(1, (long)Math.Round(raw * multiplier, MidpointRounding.AwayFromZero));
         }
 
         public string GetPrestigeSummary()
         {
             if (!PrestigeAvailable)
             {
-                return $"Research locked. Unlock PPO to prestige.\nInsight: {ResearchInsight} | Prestiges: {PrestigeCount}";
+                string gate = !IsSolverUnlocked(SolverId.MachineLearning)
+                    ? "Unlock PPO to begin the prestige layer."
+                    : $"Finish PPO Training first: {MachineLearningFrames}/{MachineLearningPlayingModeFrameRequirement} frames.";
+                return $"{gate}\nInsight: {ResearchInsight} | Prestiges: {PrestigeCount}";
             }
 
             long gain = PreviewPrestigeInsightGain();
-            long bestScore = Math.Max(data.bestRunScore, MachineLearningBestScore);
-            int bestHigh = Math.Max(data.highestBlockEver, MachineLearningBestHigh);
-            return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount} | Next prestige: +{gain}\nBest score {bestScore} | Best high {bestHigh} | PPO frames {MachineLearningFrames} | Insight x{GetPrestigeInsightMultiplier():0.00}";
+            if (gain <= 0)
+            {
+                return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount}\nPPO Training complete. Run PPO in Normal mode to generate prestige Insight.";
+            }
+
+            return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount} | Next prestige: +{gain}\nNormal PPO runs {MachineLearningNormalRuns} | Best score {MachineLearningNormalBestScore} | Best high {MachineLearningNormalBestHigh} | Insight x{GetPrestigeInsightMultiplier() * GetInsightExtractorMultiplier():0.00}";
         }
 
         public long ExecutePrestige()
         {
+            CaptureMachineLearningMemoryIfEligible();
             long gained = PreviewPrestigeInsightGain();
             if (gained <= 0)
             {
@@ -725,7 +789,9 @@ namespace StackMerge
             data.bestPrestigeInsight = bestPrestige;
 
             machineLearningAgent?.ResetForPrestige(24681357 + nextPrestigeCount * 9973);
+            ApplyMachineLearningMemoryAfterReset();
             data.machineLearningPolicy = machineLearningAgent?.Data ?? new StackMergePpoTrainingData();
+            ApplyMachineLearningResearchBonuses();
             ApplyPrestigeStartResearchBonuses();
             Normalize();
             Save();
@@ -1475,18 +1541,87 @@ namespace StackMerge
             data.machineLearningRuns++;
             data.machineLearningBestScore = Math.Max(data.machineLearningBestScore, Math.Max(0, runScore));
             data.machineLearningBestHigh = Math.Max(data.machineLearningBestHigh, Math.Max(0, highestMergedBlock));
+            if (!trainingMode)
+            {
+                data.machineLearningNormalRuns++;
+                data.machineLearningNormalBestScore = Math.Max(data.machineLearningNormalBestScore, Math.Max(0, runScore));
+                data.machineLearningNormalBestHigh = Math.Max(data.machineLearningNormalBestHigh, Math.Max(0, highestMergedBlock));
+                data.machineLearningNormalFrames += Math.Max(0, moves);
+                AwardPassiveInsightFromNormalRun(runScore, highestMergedBlock);
+            }
+
+            CaptureMachineLearningMemoryIfEligible();
             return machineLearningAgent?.Metrics.LastPolicyLoss ?? 0f;
         }
 
         public void ObserveMachineLearningMove(MoveResult result, StackMergeGameState stateAfterMove, bool trainingMode)
         {
+            ApplyMachineLearningResearchBonuses();
             machineLearningAgent?.Observe(result, stateAfterMove, trainingMode);
         }
 
         public void FlushMachineLearningTraining(bool trainingMode)
         {
+            ApplyMachineLearningResearchBonuses();
             machineLearningAgent?.ForceUpdate(trainingMode);
         }
+
+#if UNITY_EDITOR
+        public void AddMachineLearningSimulationProgress(int trainingFrames, int normalRuns, long bestScore, int bestHigh, int movesPerRun, int mergesPerRun)
+        {
+            trainingFrames = Math.Max(0, trainingFrames);
+            normalRuns = Math.Max(0, normalRuns);
+            movesPerRun = Math.Max(1, movesPerRun);
+            mergesPerRun = Math.Max(0, mergesPerRun);
+            bestScore = Math.Max(0, bestScore);
+            bestHigh = Math.Max(0, bestHigh);
+
+            StackMergePpoTrainingData policy = machineLearningAgent?.Data ?? data.machineLearningPolicy ?? new StackMergePpoTrainingData();
+            int simulatedFrames = trainingFrames + normalRuns * movesPerRun;
+            policy.steps = Math.Max(0, policy.steps) + simulatedFrames;
+            policy.updates = Math.Max(0, policy.updates) + Math.Max(0, simulatedFrames / 256);
+            policy.episodes = Math.Max(0, policy.episodes) + normalRuns;
+            policy.bestScore = Math.Max(policy.bestScore, bestScore);
+            policy.bestHigh = Math.Max(policy.bestHigh, bestHigh);
+
+            if (normalRuns > 0)
+            {
+                policy.recentAverageScore = BlendAverage(policy.recentAverageScore, bestScore, 0.28f);
+                policy.recentAverageMoves = BlendAverage(policy.recentAverageMoves, movesPerRun, 0.28f);
+                policy.recentAverageMerges = BlendAverage(policy.recentAverageMerges, mergesPerRun, 0.28f);
+                policy.recentAverageHigh = BlendAverage(policy.recentAverageHigh, bestHigh, 0.28f);
+                policy.recentAverageReward = BlendAverage(policy.recentAverageReward, (float)Math.Log10(1.0 + bestScore), 0.28f);
+                policy.bestEpisodeReward = Math.Max(policy.bestEpisodeReward, policy.recentAverageReward);
+                data.machineLearningRuns += normalRuns;
+                data.machineLearningBestScore = Math.Max(data.machineLearningBestScore, bestScore);
+                data.machineLearningBestHigh = Math.Max(data.machineLearningBestHigh, bestHigh);
+                data.machineLearningNormalRuns += normalRuns;
+                data.machineLearningNormalBestScore = Math.Max(data.machineLearningNormalBestScore, bestScore);
+                data.machineLearningNormalBestHigh = Math.Max(data.machineLearningNormalBestHigh, bestHigh);
+                data.machineLearningNormalFrames += normalRuns * movesPerRun;
+
+                for (int i = 0; i < normalRuns; i++)
+                {
+                    AwardPassiveInsightFromNormalRun(bestScore, bestHigh);
+                }
+            }
+
+            data.machineLearningExperience = Math.Max(data.machineLearningExperience, policy.steps);
+            data.machineLearningPolicy = policy;
+            CaptureMachineLearningMemoryIfEligible();
+            Normalize();
+        }
+
+        private static float BlendAverage(float current, float next, float weight)
+        {
+            if (current <= 0f)
+            {
+                return next;
+            }
+
+            return current * (1f - weight) + next * weight;
+        }
+#endif
 
         public long GetAchievementProgress(AchievementDefinition achievement)
         {
@@ -1613,9 +1748,73 @@ namespace StackMerge
             return 1.0 + GetResearchLevel(ResearchId.InsightAmplifier) * 0.35;
         }
 
+        private double GetInsightExtractorMultiplier()
+        {
+            return 1.0 + GetResearchLevel(ResearchId.InsightExtractor) * 0.20;
+        }
+
         private double GetResearchIncomeMultiplier()
         {
             return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.18;
+        }
+
+        private double GetPassiveInsightMultiplier()
+        {
+            return GetResearchLevel(ResearchId.PassiveInsight) <= 0
+                ? 0.0
+                : 0.03 + GetResearchLevel(ResearchId.PassiveInsight) * 0.035;
+        }
+
+        private double GetOfflineEfficiency()
+        {
+            int level = GetResearchLevel(ResearchId.OfflineEfficiency);
+            return level <= 0 ? 0.0 : 0.08 + level * 0.05;
+        }
+
+        private double GetOfflineHourCap()
+        {
+            if (GetResearchLevel(ResearchId.OfflineEfficiency) <= 0)
+            {
+                return 0.0;
+            }
+
+            return GetResearchLevel(ResearchId.OfflineTime) switch
+            {
+                <= 0 => 1.0,
+                1 => 3.0,
+                2 => 6.0,
+                3 => 12.0,
+                4 => 18.0,
+                _ => 24.0
+            };
+        }
+
+        private float GetPpoHighFocusMultiplier()
+        {
+            return 1f + GetResearchLevel(ResearchId.PpoHighFocus) * 0.12f;
+        }
+
+        private float GetPpoStabilityMultiplier()
+        {
+            return 1f + GetResearchLevel(ResearchId.PpoStability) * 0.10f;
+        }
+
+        private static int GetPpoMemoryRunLimit(int level)
+        {
+            return level switch
+            {
+                <= 0 => 0,
+                1 => 500,
+                2 => 1000,
+                3 => 2000,
+                4 => 3500,
+                _ => 5000
+            };
+        }
+
+        private int GetPpoMemoryRunLimit()
+        {
+            return GetPpoMemoryRunLimit(GetResearchLevel(ResearchId.PpoMemory));
         }
 
         private static long GetPrestigeStartChips(int seedCapitalLevel)
@@ -1636,6 +1835,16 @@ namespace StackMerge
             reason = string.Empty;
             switch (researchId)
             {
+                case ResearchId.SeedCapital:
+                case ResearchId.PpoBootcamp:
+                case ResearchId.PassiveInsight:
+                    if (GetResearchLevel(ResearchId.InsightAmplifier) < 1)
+                    {
+                        reason = "Requires Insight Amplifier L1.";
+                        return false;
+                    }
+
+                    return true;
                 case ResearchId.AutomationMemory:
                     if (GetResearchLevel(ResearchId.SeedCapital) < 1)
                     {
@@ -1652,10 +1861,58 @@ namespace StackMerge
                     }
 
                     return true;
-                case ResearchId.PpoBootcamp:
-                    if (GetResearchLevel(ResearchId.InsightAmplifier) < 2 || GetResearchLevel(ResearchId.AlgorithmArchive) < 2)
+                case ResearchId.YieldTheory:
+                    if (GetResearchLevel(ResearchId.AlgorithmArchive) < 1)
                     {
-                        reason = "Requires Insight Amplifier L2 and Algorithm Archive L2.";
+                        reason = "Requires Algorithm Archive L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.PpoMemory:
+                    if (GetResearchLevel(ResearchId.PpoBootcamp) < 1)
+                    {
+                        reason = "Requires PPO Bootcamp L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.PpoHighFocus:
+                    if (GetResearchLevel(ResearchId.PpoMemory) < 1)
+                    {
+                        reason = "Requires PPO Memory L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.PpoStability:
+                    if (GetResearchLevel(ResearchId.PpoHighFocus) < 1)
+                    {
+                        reason = "Requires High Focus L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.InsightExtractor:
+                    if (GetResearchLevel(ResearchId.PpoStability) < 1 || GetResearchLevel(ResearchId.PassiveInsight) < 1)
+                    {
+                        reason = "Requires Stability Model L1 and Passive Insight L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.OfflineEfficiency:
+                    if (GetResearchLevel(ResearchId.PassiveInsight) < 1)
+                    {
+                        reason = "Requires Passive Insight L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.OfflineTime:
+                    if (GetResearchLevel(ResearchId.OfflineEfficiency) < 1)
+                    {
+                        reason = "Requires Offline Engine L1.";
                         return false;
                     }
 
@@ -1672,6 +1929,16 @@ namespace StackMerge
             if (researchId == ResearchId.AutomationMemory || researchId == ResearchId.AlgorithmArchive)
             {
                 ApplyPrestigeStartResearchBonuses();
+            }
+
+            if (researchId == ResearchId.PpoHighFocus || researchId == ResearchId.PpoStability)
+            {
+                ApplyMachineLearningResearchBonuses();
+            }
+
+            if (researchId == ResearchId.PpoMemory)
+            {
+                CaptureMachineLearningMemoryIfEligible();
             }
         }
 
@@ -1775,7 +2042,171 @@ namespace StackMerge
             data.machineLearningRuns = 0;
             data.machineLearningBestScore = 0;
             data.machineLearningBestHigh = 0;
+            data.machineLearningNormalRuns = 0;
+            data.machineLearningNormalBestScore = 0;
+            data.machineLearningNormalBestHigh = 0;
+            data.machineLearningNormalFrames = 0;
             data.machineLearningPolicy ??= new StackMergePpoTrainingData();
+        }
+
+        private void ApplyMachineLearningResearchBonuses()
+        {
+            machineLearningAgent?.ApplyResearchBonuses(GetPpoHighFocusMultiplier(), GetPpoStabilityMultiplier());
+        }
+
+        private void AwardPassiveInsightFromNormalRun(long runScore, int highestMergedBlock)
+        {
+            double multiplier = GetPassiveInsightMultiplier();
+            if (multiplier <= 0.0)
+            {
+                return;
+            }
+
+            data.passiveResearchProgress += ComputeInsightValue(runScore, highestMergedBlock, Math.Max(1, data.machineLearningNormalRuns)) * multiplier;
+            FlushPassiveResearchProgress();
+        }
+
+        private void FlushPassiveResearchProgress()
+        {
+            long whole = (long)Math.Floor(Math.Max(0.0, data.passiveResearchProgress));
+            if (whole <= 0)
+            {
+                return;
+            }
+
+            data.passiveResearchProgress -= whole;
+            data.researchInsight += whole;
+            data.lifetimeResearchInsight += whole;
+        }
+
+        private void CaptureMachineLearningMemoryIfEligible()
+        {
+            int limit = GetPpoMemoryRunLimit();
+            if (limit <= 0 || machineLearningAgent == null)
+            {
+                return;
+            }
+
+            int runs = Math.Min(MachineLearningRuns, limit);
+            if (runs <= 0)
+            {
+                return;
+            }
+
+            if (data.machineLearningPrestigeMemoryPolicy != null
+                && data.machineLearningPrestigeMemoryRuns >= runs
+                && data.machineLearningPrestigeMemoryRuns >= Math.Min(limit, MachineLearningRuns))
+            {
+                return;
+            }
+
+            data.machineLearningPrestigeMemoryPolicy = StackMergePpoAgent.CloneData(machineLearningAgent.Data);
+            data.machineLearningPrestigeMemoryRuns = runs;
+        }
+
+        private void ApplyMachineLearningMemoryAfterReset()
+        {
+            int limit = GetPpoMemoryRunLimit();
+            if (limit <= 0 || data.machineLearningPrestigeMemoryPolicy == null || machineLearningAgent == null)
+            {
+                return;
+            }
+
+            int retainedRuns = Math.Min(Math.Max(0, data.machineLearningPrestigeMemoryRuns), limit);
+            if (retainedRuns <= 0)
+            {
+                return;
+            }
+
+            StackMergePpoTrainingData snapshot = StackMergePpoAgent.CloneData(data.machineLearningPrestigeMemoryPolicy);
+            snapshot.episodes = Math.Min(Math.Max(0, snapshot.episodes), retainedRuns);
+            machineLearningAgent.LoadSnapshot(snapshot);
+            data.machineLearningPolicy = machineLearningAgent.Data;
+            data.machineLearningRuns = Math.Max(data.machineLearningRuns, snapshot.episodes);
+            data.machineLearningExperience = Math.Max(data.machineLearningExperience, snapshot.steps);
+            data.machineLearningBestScore = Math.Max(data.machineLearningBestScore, snapshot.bestScore);
+            data.machineLearningBestHigh = Math.Max(data.machineLearningBestHigh, snapshot.bestHigh);
+        }
+
+        private void ApplyOfflineProgress()
+        {
+            long now = GetUnixNow();
+            data.lastOfflineChips = 0;
+            data.lastOfflineInsight = 0;
+            if (data.lastSaveUnixSeconds <= 0)
+            {
+                data.lastSaveUnixSeconds = now;
+                return;
+            }
+
+            double elapsedHours = Math.Max(0.0, (now - data.lastSaveUnixSeconds) / 3600.0);
+            double cappedHours = Math.Min(elapsedHours, GetOfflineHourCap());
+            double efficiency = GetOfflineEfficiency();
+            if (cappedHours <= 0.01 || efficiency <= 0.0)
+            {
+                data.lastSaveUnixSeconds = now;
+                return;
+            }
+
+            long offlineChips = ComputeOfflineChips(cappedHours, efficiency);
+            long offlineInsight = ComputeOfflineInsight(cappedHours, efficiency);
+            if (offlineChips > 0)
+            {
+                data.chips += offlineChips;
+                data.totalChipsEarned += offlineChips;
+                data.lastOfflineChips = offlineChips;
+            }
+
+            if (offlineInsight > 0)
+            {
+                data.researchInsight += offlineInsight;
+                data.lifetimeResearchInsight += offlineInsight;
+                data.lastOfflineInsight = offlineInsight;
+            }
+
+            data.lastSaveUnixSeconds = now;
+            if (offlineChips > 0 || offlineInsight > 0)
+            {
+                Save();
+            }
+        }
+
+        private long ComputeOfflineChips(double cappedHours, double efficiency)
+        {
+            if (data.runsCompleted <= 0 || data.totalChipsEarned <= 0)
+            {
+                return 0;
+            }
+
+            double averageRunIncome = data.totalChipsEarned / (double)Math.Max(1, data.runsCompleted);
+            double offlineRunsPerHour = 10.0 + data.speedLevel * 3.0;
+            return Math.Max(0, (long)Math.Floor(averageRunIncome * offlineRunsPerHour * cappedHours * efficiency));
+        }
+
+        private long ComputeOfflineInsight(double cappedHours, double efficiency)
+        {
+            if (GetResearchLevel(ResearchId.PassiveInsight) <= 0 || data.machineLearningNormalRuns <= 0)
+            {
+                return 0;
+            }
+
+            double hourly = ComputeInsightValue(data.machineLearningNormalBestScore, data.machineLearningNormalBestHigh, data.machineLearningNormalRuns)
+                * GetPassiveInsightMultiplier()
+                * 4.0;
+            return Math.Max(0, (long)Math.Floor(hourly * cappedHours * efficiency));
+        }
+
+        private static double ComputeInsightValue(long score, int highestBlock, int normalRuns)
+        {
+            double scoreTerm = Math.Pow(Math.Max(0.0, score - 30000.0) / 60000.0, 0.52);
+            double highTerm = Math.Max(0, FloorLog2(Math.Max(1, highestBlock)) - 12) * 0.22;
+            double runTerm = Math.Log10(1.0 + Math.Max(0, normalRuns)) * 0.18;
+            return Math.Max(0.15, 0.55 + scoreTerm + highTerm + runTerm);
+        }
+
+        private static long GetUnixNow()
+        {
+            return DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         }
 
         private long ApplyStageMultiplier(long amount)
@@ -1994,6 +2425,20 @@ namespace StackMerge
             data.machineLearningBestScore = Math.Max(0, data.machineLearningBestScore);
             data.machineLearningBestHigh = Math.Max(0, data.machineLearningBestHigh);
             data.machineLearningPolicy ??= new StackMergePpoTrainingData();
+            data.machineLearningNormalRuns = Math.Max(0, data.machineLearningNormalRuns);
+            data.machineLearningNormalBestScore = Math.Max(0, data.machineLearningNormalBestScore);
+            data.machineLearningNormalBestHigh = Math.Max(0, data.machineLearningNormalBestHigh);
+            data.machineLearningNormalFrames = Math.Max(0, data.machineLearningNormalFrames);
+            data.machineLearningPrestigeMemoryRuns = Math.Max(0, data.machineLearningPrestigeMemoryRuns);
+            if (data.machineLearningPrestigeMemoryRuns <= 0)
+            {
+                data.machineLearningPrestigeMemoryPolicy = null;
+            }
+
+            data.passiveResearchProgress = Math.Max(0.0, data.passiveResearchProgress);
+            data.lastSaveUnixSeconds = Math.Max(0, data.lastSaveUnixSeconds);
+            data.lastOfflineChips = Math.Max(0, data.lastOfflineChips);
+            data.lastOfflineInsight = Math.Max(0, data.lastOfflineInsight);
             if (!IsSolverUnlocked(SolverId.MachineLearning))
             {
                 data.machineLearningTrainingMode = false;

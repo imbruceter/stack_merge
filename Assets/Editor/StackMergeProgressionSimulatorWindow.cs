@@ -32,6 +32,10 @@ namespace StackMerge
         private int seed = 12345;
         private int moveCap = 1000;
         private bool stopAtPpo = true;
+        private bool simulateResearch = true;
+        private int targetPrestiges = 6;
+        private int ppoNormalRunsPerPrestige = 90;
+        private int ppoTrainingFramesPerStep = 90000;
         private SolverId manualProxy = SolverId.Rand;
         private Vector2 scroll;
         private string summary = "Configure and press Run.";
@@ -48,13 +52,20 @@ namespace StackMerge
             EditorGUILayout.LabelField("Progression Simulator", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "Plays the real economy run-by-run with an auto-buyer (cheapest affordable first). " +
-                "Reports the run number each thing is bought, up to PPO. Use it to tune costs/income to the target curve.",
+                "Reports the run number each thing is bought. With Research simulation enabled it continues through prestige cycles and auto-buys research nodes.",
                 MessageType.Info);
 
             maxRuns = Mathf.Clamp(EditorGUILayout.IntField("Max runs", maxRuns), 10, 1000000);
             seed = EditorGUILayout.IntField("Seed", seed);
             moveCap = Mathf.Clamp(EditorGUILayout.IntField("Move cap / run", moveCap), 20, 5000);
             stopAtPpo = EditorGUILayout.Toggle("Stop when PPO unlocks", stopAtPpo);
+            simulateResearch = EditorGUILayout.Toggle(new GUIContent("Simulate prestige / research", "Continues after PPO by injecting editor-only PPO training/normal progress and buying research."), simulateResearch);
+            using (new EditorGUI.DisabledScope(!simulateResearch || stopAtPpo))
+            {
+                targetPrestiges = Mathf.Clamp(EditorGUILayout.IntField("Target prestiges", targetPrestiges), 1, 1000);
+                ppoTrainingFramesPerStep = Mathf.Clamp(EditorGUILayout.IntField("PPO training frames / step", ppoTrainingFramesPerStep), 1000, 2000000);
+                ppoNormalRunsPerPrestige = Mathf.Clamp(EditorGUILayout.IntField("PPO normal runs / prestige", ppoNormalRunsPerPrestige), 1, 10000);
+            }
             manualProxy = (SolverId)EditorGUILayout.EnumPopup(new GUIContent("Manual play proxy", "Solver used to model the human player before Auto Solve is bought."), manualProxy);
 
             using (new EditorGUILayout.HorizontalScope())
@@ -88,15 +99,14 @@ namespace StackMerge
 
             var purchases = new List<PurchaseRecord>();
             var details = new StringBuilder();
-            details.AppendLine("Run\tChips\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
+            details.AppendLine("Run\tChips\tInsight\tPrestiges\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
 
-            long previousEarned = 0;
             int run = 0;
             bool ppoUnlocked = false;
             int sampleEvery = Mathf.Max(1, maxRuns / 400);
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            while (run < maxRuns && !(stopAtPpo && ppoUnlocked))
+            while (run < maxRuns && !(stopAtPpo && ppoUnlocked) && !ResearchTargetReached(progression))
             {
                 run++;
                 bool auto = progression.AutoSolveEnabled && progression.HasPurchasedSolver;
@@ -108,12 +118,16 @@ namespace StackMerge
 
                 string bought = AutoBuy(progression, purchases, run);
                 ppoUnlocked = progression.IsSolverUnlocked(SolverId.MachineLearning);
+                string researchEvent = SimulateResearchLayer(progression, purchases, run, rng);
+                if (!string.IsNullOrEmpty(researchEvent))
+                {
+                    bought = string.IsNullOrEmpty(bought) ? researchEvent : $"{bought}, {researchEvent}";
+                }
 
                 if (run % sampleEvery == 0 || bought.Length > 0 || run <= 12)
                 {
                     long earned = progression.TotalChipsEarned;
-                    details.AppendLine($"{run}\t{progression.Chips}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
-                    previousEarned = earned;
+                    details.AppendLine($"{run}\t{progression.Chips}\t{progression.ResearchInsight}\t{progression.PrestigeCount}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
                 }
 
                 if (stopwatch.Elapsed.TotalSeconds > 600)
@@ -227,6 +241,145 @@ namespace StackMerge
             return string.Join(", ", boughtThisRun);
         }
 
+        private bool ResearchTargetReached(StackMergeProgression progression)
+        {
+            return simulateResearch
+                && !stopAtPpo
+                && targetPrestiges > 0
+                && progression.PrestigeCount >= targetPrestiges;
+        }
+
+        private string SimulateResearchLayer(StackMergeProgression progression, List<PurchaseRecord> purchases, int run, System.Random rng)
+        {
+            if (!simulateResearch || stopAtPpo || !progression.IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                return string.Empty;
+            }
+
+            var events = new List<string>();
+            if (!progression.MachineLearningPlayingModeUnlocked)
+            {
+                long missingFrames = progression.MachineLearningPlayingModeFrameRequirement - progression.MachineLearningFrames;
+                int frames = (int)Math.Min(Math.Max(0, missingFrames), ppoTrainingFramesPerStep);
+                if (frames > 0)
+                {
+                    progression.AddMachineLearningSimulationProgress(frames, 0, 0, 0, 1, 0);
+                    events.Add($"PPO train +{frames:N0}f");
+                }
+
+                if (progression.MachineLearningPlayingModeUnlocked)
+                {
+                    progression.SetMachineLearningTrainingMode(false);
+                    purchases.Add(new PurchaseRecord(run, "PPO Training Complete", 0, "frames", progression.MachineLearningFrames, progression.TotalChipsEarned));
+                    events.Add("PPO Training Complete");
+                }
+
+                return string.Join(", ", events);
+            }
+
+            (long score, int high, int moves, int merges) = EstimatePpoNormalRun(progression, rng);
+            progression.AddMachineLearningSimulationProgress(0, ppoNormalRunsPerPrestige, score, high, moves, merges);
+            events.Add($"PPO Normal x{ppoNormalRunsPerPrestige}");
+
+            long preview = progression.PreviewPrestigeInsightGain();
+            if (preview > 0 && progression.PrestigeCount < targetPrestiges)
+            {
+                long gained = progression.ExecutePrestige();
+                purchases.Add(new PurchaseRecord(run, $"Prestige +{gained} Insight", 0, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
+                events.Add($"Prestige +{gained}");
+                string research = AutoBuyResearch(progression, purchases, run);
+                if (!string.IsNullOrEmpty(research))
+                {
+                    events.Add(research);
+                }
+            }
+
+            return string.Join(", ", events);
+        }
+
+        private (long Score, int High, int Moves, int Merges) EstimatePpoNormalRun(StackMergeProgression progression, System.Random rng)
+        {
+            int prestige = Math.Max(0, progression.PrestigeCount);
+            double researchPower =
+                progression.GetResearchLevel(ResearchId.PpoMemory) * 0.18
+                + progression.GetResearchLevel(ResearchId.PpoHighFocus) * 0.22
+                + progression.GetResearchLevel(ResearchId.PpoStability) * 0.14
+                + progression.GetResearchLevel(ResearchId.InsightExtractor) * 0.08;
+            double prestigePower = Math.Log10(2.0 + prestige) * 0.45;
+            double variance = 0.88 + rng.NextDouble() * 0.32;
+            double multiplier = (1.0 + researchPower + prestigePower) * variance;
+
+            long score = Math.Max(42000, (long)Math.Round(46000.0 * multiplier));
+            int highExponent = Mathf.Clamp(13 + (int)Math.Floor(researchPower * 2.0 + prestigePower * 2.5 + rng.NextDouble() * 2.0), 13, 20);
+            int high = 1 << highExponent;
+            int moves = Mathf.Clamp((int)Math.Round(430 + multiplier * 92), 260, 1200);
+            int merges = Mathf.Clamp(moves - 52, 180, moves);
+            return (score, high, moves, merges);
+        }
+
+        private string AutoBuyResearch(StackMergeProgression progression, List<PurchaseRecord> purchases, int run)
+        {
+            var boughtThisRun = new List<string>();
+            int guard = 0;
+            while (guard++ < 200)
+            {
+                List<Candidate> candidates = GetResearchCandidates(progression);
+                Candidate? cheapest = null;
+                foreach (Candidate candidate in candidates)
+                {
+                    if (candidate.Cost <= progression.ResearchInsight && (cheapest == null || candidate.Cost < cheapest.Value.Cost))
+                    {
+                        cheapest = candidate;
+                    }
+                }
+
+                if (cheapest == null)
+                {
+                    break;
+                }
+
+                long costPaid = cheapest.Value.Cost;
+                if (!cheapest.Value.Buy())
+                {
+                    break;
+                }
+
+                purchases.Add(new PurchaseRecord(run, cheapest.Value.Label, costPaid, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
+                boughtThisRun.Add(cheapest.Value.Label);
+            }
+
+            return string.Join(", ", boughtThisRun);
+        }
+
+        private static List<Candidate> GetResearchCandidates(StackMergeProgression p)
+        {
+            var list = new List<Candidate>();
+            if (p.PrestigeCount <= 0)
+            {
+                return list;
+            }
+
+            foreach (ResearchDefinition definition in StackMergeProgression.Research)
+            {
+                ResearchId researchId = definition.Id;
+                if (p.IsResearchMaxed(researchId))
+                {
+                    continue;
+                }
+
+                string reason = p.GetResearchUnavailableReason(researchId);
+                if (!string.IsNullOrEmpty(reason) && reason != "Not enough Insight.")
+                {
+                    continue;
+                }
+
+                int nextLevel = p.GetResearchLevel(researchId) + 1;
+                list.Add(new Candidate($"Research {definition.DisplayName} L{nextLevel}", p.GetResearchCost(researchId), () => p.BuyResearch(researchId)));
+            }
+
+            return list;
+        }
+
         private static List<Candidate> GetCandidates(StackMergeProgression p)
         {
             var list = new List<Candidate>();
@@ -335,6 +488,7 @@ namespace StackMerge
         {
             var sb = new StringBuilder();
             sb.AppendLine($"Simulated {runs} runs  |  final chips {progression.Chips:N0}  |  total earned {progression.TotalChipsEarned:N0}");
+            sb.AppendLine($"Prestiges: {progression.PrestigeCount:N0}  |  Insight {progression.ResearchInsight:N0}  |  Lifetime Insight {progression.LifetimeResearchInsight:N0}  |  Last prestige {progression.LastPrestigeInsight:N0}");
             sb.AppendLine($"PPO unlocked: {(ppoUnlocked ? $"YES at run {FirstRun(purchases, "Solver PPO")}" : "no")}");
             sb.AppendLine($"Highest block ever: {progression.HighestBlockEver}  |  best run score: {progression.BestRunScore:N0}");
             sb.AppendLine();
@@ -355,12 +509,15 @@ namespace StackMerge
             AppendMilestone(sb, purchases, "Agents Menu", "Agents Menu");
             AppendMilestone(sb, purchases, "Modifiers Menu", "Modifiers Menu");
             AppendMilestone(sb, purchases, "Solver PPO", "Solver PPO");
+            AppendMilestone(sb, purchases, "PPO Training Done", "PPO Training Complete");
+            AppendMilestone(sb, purchases, "First Prestige", "Prestige +");
+            AppendMilestone(sb, purchases, "Root Research", "Research Insight Amplifier");
             sb.AppendLine();
 
             sb.AppendLine("=== Full purchase timeline ===");
             foreach (PurchaseRecord record in purchases)
             {
-                sb.AppendLine($"Run {record.Run,6}  |  {record.Label,-26}  {record.Cost,14:N0}  (chips left {record.ChipsAfter,14:N0})");
+                sb.AppendLine($"Run {record.Run,6}  |  {record.Label,-32}  {record.Cost,14:N0} {record.Currency,-7}  (balance {record.BalanceAfter,14:N0})");
             }
 
             return sb.ToString();
@@ -395,12 +552,13 @@ namespace StackMerge
 
                 var sb = new StringBuilder();
                 sb.AppendLine("# Progression simulation");
-                sb.AppendLine($"# runs={runs} seed={seed} moveCap={moveCap} manualProxy={manualProxy}");
+                sb.AppendLine($"# runs={runs} seed={seed} moveCap={moveCap} manualProxy={manualProxy} stopAtPpo={stopAtPpo} simulateResearch={simulateResearch} targetPrestiges={targetPrestiges} ppoNormalRunsPerPrestige={ppoNormalRunsPerPrestige}");
+                sb.AppendLine($"# finalChips={progression.Chips} totalEarned={progression.TotalChipsEarned} prestiges={progression.PrestigeCount} insight={progression.ResearchInsight} lifetimeInsight={progression.LifetimeResearchInsight}");
                 sb.AppendLine("# Purchases:");
-                sb.AppendLine("Run\tLabel\tCost\tChipsAfter\tTotalEarnedAfter");
+                sb.AppendLine("Run\tLabel\tCost\tCurrency\tBalanceAfter\tTotalEarnedAfter");
                 foreach (PurchaseRecord record in purchases)
                 {
-                    sb.AppendLine($"{record.Run}\t{record.Label}\t{record.Cost}\t{record.ChipsAfter}\t{record.TotalEarnedAfter}");
+                    sb.AppendLine($"{record.Run}\t{record.Label}\t{record.Cost}\t{record.Currency}\t{record.BalanceAfter}\t{record.TotalEarnedAfter}");
                 }
 
                 sb.AppendLine();
@@ -459,11 +617,17 @@ namespace StackMerge
         private readonly struct PurchaseRecord
         {
             public PurchaseRecord(int run, string label, long cost, long chipsAfter, long totalEarnedAfter)
+                : this(run, label, cost, "chips", chipsAfter, totalEarnedAfter)
+            {
+            }
+
+            public PurchaseRecord(int run, string label, long cost, string currency, long balanceAfter, long totalEarnedAfter)
             {
                 Run = run;
                 Label = label;
                 Cost = cost;
-                ChipsAfter = chipsAfter;
+                Currency = currency;
+                BalanceAfter = balanceAfter;
                 TotalEarnedAfter = totalEarnedAfter;
             }
 
@@ -473,7 +637,9 @@ namespace StackMerge
 
             public long Cost { get; }
 
-            public long ChipsAfter { get; }
+            public string Currency { get; }
+
+            public long BalanceAfter { get; }
 
             public long TotalEarnedAfter { get; }
         }

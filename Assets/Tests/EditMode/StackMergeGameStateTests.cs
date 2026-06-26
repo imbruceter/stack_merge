@@ -6,6 +6,18 @@ namespace StackMerge.Tests
 {
     public sealed class StackMergeGameStateTests
     {
+        private static StackMergePpoTrainingData CreateInitializedPpoPolicy(int steps, int updates, int episodes, long bestScore, int bestHigh)
+        {
+            var data = new StackMergePpoTrainingData();
+            _ = new StackMergePpoAgent(data);
+            data.steps = steps;
+            data.updates = updates;
+            data.episodes = episodes;
+            data.bestScore = bestScore;
+            data.bestHigh = bestHigh;
+            return data;
+        }
+
         [Test]
         public void NewGame_UsesLowerStarterStackCapacity()
         {
@@ -577,14 +589,11 @@ namespace StackMerge.Tests
                 selectedSolver = (int)SolverId.MachineLearning,
                 bestRunScore = 33_908,
                 highestBlockEver = 8192,
-                machineLearningPolicy = new StackMergePpoTrainingData
-                {
-                    steps = 12_000,
-                    updates = 25,
-                    episodes = 4,
-                    bestScore = 0,
-                    bestHigh = 0
-                }
+                machineLearningNormalRuns = 1,
+                machineLearningNormalBestScore = 33_908,
+                machineLearningNormalBestHigh = 8192,
+                machineLearningNormalFrames = 200,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 25, 4, 0, 0)
             });
 
             Assert.That(progression.PrestigeAvailable, Is.True);
@@ -622,12 +631,11 @@ namespace StackMerge.Tests
                 prestigeCount = 1,
                 researchInsight = 4,
                 researchLevels = researchLevels,
-                machineLearningPolicy = new StackMergePpoTrainingData
-                {
-                    steps = 500_000,
-                    bestScore = 70_000,
-                    bestHigh = 16384
-                }
+                machineLearningNormalRuns = 12,
+                machineLearningNormalBestScore = 80_000,
+                machineLearningNormalBestHigh = 16384,
+                machineLearningNormalFrames = 500_000,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 50, 12, 70_000, 16384)
             });
 
             long gained = progression.ExecutePrestige();
@@ -642,6 +650,55 @@ namespace StackMerge.Tests
             Assert.That(progression.AutoSolveEnabled, Is.True);
             Assert.That(progression.PrestigeCount, Is.EqualTo(2));
             Assert.That(progression.ResearchInsight, Is.EqualTo(4 + gained));
+        }
+
+        [Test]
+        public void Prestige_RequiresNormalPpoRunsAfterTraining()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                machineLearningBestScore = 120_000,
+                machineLearningBestHigh = 16384,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 100, 500, 120_000, 16384)
+            });
+
+            Assert.That(progression.PrestigeAvailable, Is.True);
+            Assert.That(progression.PreviewPrestigeInsightGain(), Is.EqualTo(0));
+            Assert.That(progression.ExecutePrestige(), Is.EqualTo(0));
+            Assert.That(progression.ResearchInsight, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Prestige_PpoMemoryWarmStartsAfterReset()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            int[] researchLevels = new int[StackMergeProgression.Research.Length];
+            researchLevels[(int)ResearchId.PpoMemory] = 1;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                researchLevels = researchLevels,
+                machineLearningRuns = 500,
+                machineLearningNormalRuns = 1,
+                machineLearningNormalBestScore = 40_000,
+                machineLearningNormalBestHigh = 8192,
+                machineLearningNormalFrames = 300,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 80, 500, 40_000, 8192)
+            });
+
+            long gained = progression.ExecutePrestige();
+
+            Assert.That(gained, Is.GreaterThan(0));
+            Assert.That(progression.MachineLearningMemoryRuns, Is.EqualTo(500));
+            Assert.That(progression.MachineLearningFrames, Is.EqualTo(500_000));
+            Assert.That(progression.MachineLearningRuns, Is.EqualTo(500));
+            Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
         }
 
         [Test]

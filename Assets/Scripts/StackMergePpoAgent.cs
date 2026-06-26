@@ -136,6 +136,8 @@ namespace StackMerge
         private bool hasPendingTransition;
         private Transition pendingTransition;
         private float episodeReward;
+        private float highRewardMultiplier = 1f;
+        private float stabilityRewardMultiplier = 1f;
 
         public StackMergePpoAgent(StackMergePpoTrainingData data, int seed = 24681357)
         {
@@ -145,6 +147,43 @@ namespace StackMerge
         }
 
         public StackMergePpoTrainingData Data => data;
+
+        public static StackMergePpoTrainingData CloneData(StackMergePpoTrainingData source)
+        {
+            if (source == null)
+            {
+                return new StackMergePpoTrainingData();
+            }
+
+            return new StackMergePpoTrainingData
+            {
+                version = source.version,
+                hiddenSize = source.hiddenSize,
+                updates = source.updates,
+                episodes = source.episodes,
+                steps = source.steps,
+                totalReward = source.totalReward,
+                recentAverageReward = source.recentAverageReward,
+                recentAverageScore = source.recentAverageScore,
+                recentAverageMoves = source.recentAverageMoves,
+                recentAverageMerges = source.recentAverageMerges,
+                recentAverageHigh = source.recentAverageHigh,
+                bestEpisodeReward = source.bestEpisodeReward,
+                bestScore = source.bestScore,
+                bestHigh = source.bestHigh,
+                lastPolicyLoss = source.lastPolicyLoss,
+                lastValueLoss = source.lastValueLoss,
+                lastEntropy = source.lastEntropy,
+                actorW1 = CloneArray(source.actorW1),
+                actorB1 = CloneArray(source.actorB1),
+                actorW2 = CloneArray(source.actorW2),
+                actorB2 = CloneArray(source.actorB2),
+                criticW1 = CloneArray(source.criticW1),
+                criticB1 = CloneArray(source.criticB1),
+                criticW2 = CloneArray(source.criticW2),
+                criticB2 = CloneArray(source.criticB2)
+            };
+        }
 
         public StackMergePpoMetrics Metrics => new(
             data.updates,
@@ -290,6 +329,22 @@ namespace StackMerge
             data.criticW2 = null;
             data.criticB2 = null;
             EnsureInitialized(rng);
+        }
+
+        public void LoadSnapshot(StackMergePpoTrainingData snapshot)
+        {
+            CopyData(snapshot, data);
+            trajectory.Clear();
+            hasPendingTransition = false;
+            pendingTransition = default;
+            episodeReward = 0f;
+            EnsureInitialized(rng);
+        }
+
+        public void ApplyResearchBonuses(float highFocusMultiplier, float stabilityMultiplier)
+        {
+            highRewardMultiplier = Math.Max(1f, highFocusMultiplier);
+            stabilityRewardMultiplier = Math.Max(1f, stabilityMultiplier);
         }
 
         /// <summary>
@@ -692,7 +747,7 @@ namespace StackMerge
             return features;
         }
 
-        private static float ComputeReward(MoveResult result, StackMergeGameState nextState, long scoreBefore, int highBefore)
+        private float ComputeReward(MoveResult result, StackMergeGameState nextState, long scoreBefore, int highBefore)
         {
             if (!result.Accepted)
             {
@@ -716,7 +771,7 @@ namespace StackMerge
             if (highAfter > high)
             {
                 float tier = LogBlock(highAfter);
-                reward += tier * tier * 0.06f;
+                reward += tier * tier * 0.06f * highRewardMultiplier;
             }
 
             // Light positional shaping.
@@ -733,7 +788,7 @@ namespace StackMerge
                 }
             }
 
-            reward -= danger * 0.05f;
+            reward -= danger * (0.05f / stabilityRewardMultiplier);
 
             if (result.IsGameOver)
             {
@@ -743,9 +798,9 @@ namespace StackMerge
                 // merely long — i.e. how to learn from a bad run.
                 float highLog = LogBlock(highAfter);
                 float survival = Math.Min(1f, nextState.BlocksDropped / 450f);
-                reward += highLog * highLog * 0.15f;
-                reward += survival * 0.6f;
-                reward -= (1f - survival) * 1.2f;
+                reward += highLog * highLog * 0.15f * highRewardMultiplier;
+                reward += survival * 0.6f * stabilityRewardMultiplier;
+                reward -= (1f - survival) * (1.2f / stabilityRewardMultiplier);
             }
 
             return Math.Min(40f, Math.Max(-6f, reward));
@@ -817,6 +872,41 @@ namespace StackMerge
         private static bool HasSize(float[] array, int size)
         {
             return array != null && array.Length == size;
+        }
+
+        private static float[] CloneArray(float[] source)
+        {
+            return source == null ? null : (float[])source.Clone();
+        }
+
+        private static void CopyData(StackMergePpoTrainingData source, StackMergePpoTrainingData target)
+        {
+            source ??= new StackMergePpoTrainingData();
+            target.version = source.version;
+            target.hiddenSize = source.hiddenSize;
+            target.updates = source.updates;
+            target.episodes = source.episodes;
+            target.steps = source.steps;
+            target.totalReward = source.totalReward;
+            target.recentAverageReward = source.recentAverageReward;
+            target.recentAverageScore = source.recentAverageScore;
+            target.recentAverageMoves = source.recentAverageMoves;
+            target.recentAverageMerges = source.recentAverageMerges;
+            target.recentAverageHigh = source.recentAverageHigh;
+            target.bestEpisodeReward = source.bestEpisodeReward;
+            target.bestScore = source.bestScore;
+            target.bestHigh = source.bestHigh;
+            target.lastPolicyLoss = source.lastPolicyLoss;
+            target.lastValueLoss = source.lastValueLoss;
+            target.lastEntropy = source.lastEntropy;
+            target.actorW1 = CloneArray(source.actorW1);
+            target.actorB1 = CloneArray(source.actorB1);
+            target.actorW2 = CloneArray(source.actorW2);
+            target.actorB2 = CloneArray(source.actorB2);
+            target.criticW1 = CloneArray(source.criticW1);
+            target.criticB1 = CloneArray(source.criticB1);
+            target.criticW2 = CloneArray(source.criticW2);
+            target.criticB2 = CloneArray(source.criticB2);
         }
 
         private static float[] CreateWeights(int length, Random random, float scale)
