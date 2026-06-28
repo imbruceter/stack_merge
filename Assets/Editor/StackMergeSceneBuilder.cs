@@ -682,7 +682,7 @@ namespace StackMerge.Editor
             feedbackText.fontSizeMin = 12;
             feedbackText.fontSizeMax = 20;
 
-            infoButton = CreateButton(footer, "i", HexColor("#334155"), 26);
+            infoButton = CreateButton(footer, "i", HexColor("#0369A1"), 26);
             SetRightStretch(infoButton.GetComponent<RectTransform>(), 0f, 576f, 0f, 70f);
 
             historyButton = CreateButton(footer, "History", HexColor("#2563EB"), 22);
@@ -1013,7 +1013,8 @@ namespace StackMerge.Editor
             prestigeButton = CreateButton(console, "Prestige\nNeeds Training", HexColor("#334155"), 20);
             SetTopRight(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 230f, 74f);
 
-            RectTransform tree = CreateCategoryPanel(panel, "Research Tree", 304f, 640f, 420f);
+            // Tree takes full width so all columns (needs 776px) fit without overflow.
+            RectTransform tree = CreateCategoryPanel(panel, "Research Tree", 304f, 510f);
             RectTransform connectorLayer = CreateRect("Research Connectors", tree);
             Stretch(connectorLayer);
             researchConnectorImages = CreateResearchConnectors(connectorLayer);
@@ -1026,27 +1027,28 @@ namespace StackMerge.Editor
                 SetTopLeft(researchButtons[i].GetComponent<RectTransform>(), GetResearchNodePosition(definition), ResearchNodeSize);
             }
 
-            RectTransform details = CreateCategoryPanelRight(panel, "Selected Research", 304f, 400f, 640f);
+            // Details panel is placed below the tree instead of to its right.
+            RectTransform details = CreateCategoryPanel(panel, "Selected Research", 826f, 220f);
             detailNameText = CreateText("Insight Amplifier", details, 30, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
-            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 0f, 42f);
+            SetTopStretch(detailNameText.rectTransform, 0f, 0f, 260f, 42f);
             detailNameText.enableAutoSizing = true;
             detailNameText.fontSizeMin = 16;
             detailNameText.fontSizeMax = 30;
 
             detailStatusText = CreateText("Level 0/5", details, 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#FDE68A"));
-            SetTopStretch(detailStatusText.rectTransform, 0f, 52f, 0f, 34f);
+            SetTopStretch(detailStatusText.rectTransform, 0f, 52f, 260f, 34f);
             detailStatusText.enableAutoSizing = true;
             detailStatusText.fontSizeMin = 11;
             detailStatusText.fontSizeMax = 18;
 
-            detailInfoText = CreateText("Select a research node to inspect its effect and purchase requirements.", details, 19, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
-            SetStretch(detailInfoText.rectTransform, 0f, 98f, 0f, 86f);
+            detailInfoText = CreateText("Select a research node to inspect its effect and purchase requirements.", details, 18, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
+            SetStretch(detailInfoText.rectTransform, 0f, 0f, 260f, 0f);
             detailInfoText.enableAutoSizing = true;
             detailInfoText.fontSizeMin = 12;
-            detailInfoText.fontSizeMax = 19;
+            detailInfoText.fontSizeMax = 18;
 
             detailActionButton = CreateButton(details, "Buy", HexColor("#7C3AED"), 22);
-            SetBottomCenter(detailActionButton.GetComponent<RectTransform>(), 240f, 64f, 0f);
+            SetTopRight(detailActionButton.GetComponent<RectTransform>(), 0f, 0f, 240f, 100f);
         }
 
         private static Button[] BuildModifiersPanel(

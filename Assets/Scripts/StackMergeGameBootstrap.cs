@@ -164,6 +164,14 @@ namespace StackMerge
         private AgentId selectedAgentId = AgentId.MergeBroker;
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
+        private bool solverDeselected = false;
+        private int blockDropStack = -1;
+        private float blockDropTimer = 0f;
+        private const float BlockDropDuration = 0.14f;
+        private float mergePulseTimer = 0f;
+        private const float MergePulseDuration = 0.22f;
+        private int mergePulseStack = -1;
+        private RectTransform[] stackSlotLayers;
 
         private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
         {
@@ -227,7 +235,7 @@ namespace StackMerge
             }
 
             Sprite roundedButton = GetRoundedSprite(Color.white, Color.white, 22);
-            Sprite roundedCard = GetRoundedSprite(Color.white, Color.white, 30);
+            Sprite roundedCard = GetRoundedSprite(Color.white, Color.white, 20);
 
             foreach (Button button in canvas.GetComponentsInChildren<Button>(true))
             {
@@ -235,13 +243,47 @@ namespace StackMerge
                 ApplyRoundedSprite(image, roundedButton);
             }
 
-            // Card-like surfaces get a softer radius.
+            // Elevate category card panels with a lighter background and rounded corners.
+            foreach (Transform t in canvas.GetComponentsInChildren<Transform>(true))
+            {
+                if (!t.name.EndsWith(" Category"))
+                {
+                    continue;
+                }
+
+                Image img = t.GetComponent<Image>();
+                if (img != null)
+                {
+                    img.color = HexColor("#1A2844");
+                    ApplyRoundedSprite(img, roundedCard);
+                }
+
+                // Give the category section title a bright accent colour.
+                TMP_Text[] texts = t.GetComponents<TMP_Text>();
+                if (texts.Length == 0)
+                {
+                    TMP_Text firstChild = t.GetComponentInChildren<TMP_Text>(true);
+                    if (firstChild != null && firstChild.transform.parent == t)
+                    {
+                        firstChild.color = HexColor("#7DD3FC");
+                        firstChild.fontStyle |= FontStyles.Bold;
+                    }
+                }
+            }
+
+            // Card-like surfaces for stack columns and next-block preview.
             ApplyRoundedSprite(GetImage(nextBlocksRoot), roundedCard);
             foreach (RectTransform layer in stackBlockLayers)
             {
                 if (layer != null)
                 {
-                    ApplyRoundedSprite(GetImage(layer.parent as RectTransform), roundedCard);
+                    RectTransform col = layer.parent as RectTransform;
+                    Image colImg = col != null ? col.GetComponent<Image>() : null;
+                    if (colImg != null)
+                    {
+                        colImg.color = HexColor("#111B2D");
+                        ApplyRoundedSprite(colImg, roundedCard);
+                    }
                 }
             }
         }
@@ -275,6 +317,7 @@ namespace StackMerge
             }
 
             TickAutomation();
+            TickBlockAnimations();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -309,6 +352,22 @@ namespace StackMerge
         private void OnDisable()
         {
             progression?.FlushIfDirty();
+        }
+
+        private void TickBlockAnimations()
+        {
+            if (blockDropTimer <= 0f && mergePulseTimer <= 0f)
+            {
+                return;
+            }
+
+            blockDropTimer = Mathf.Max(0f, blockDropTimer - Time.deltaTime);
+            mergePulseTimer = Mathf.Max(0f, mergePulseTimer - Time.deltaTime);
+
+            if (gameState != null && !gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
+            {
+                RefreshColumns();
+            }
         }
 
         public void ConfigureSceneReferences(
@@ -1084,6 +1143,11 @@ namespace StackMerge
                 return;
             }
 
+            if (solverDeselected && !progression.IsMachineLearningTrainingActive)
+            {
+                return;
+            }
+
             autoSolveTimer += Time.deltaTime;
             if (autoSolveTimer < progression.MoveInterval)
             {
@@ -1167,6 +1231,15 @@ namespace StackMerge
 
         private void HandleAcceptedMove(MoveResult result, string reason, bool autoSolverMove, bool wasGameOver)
         {
+            // Trigger block drop animation.
+            blockDropStack = result.StackIndex;
+            blockDropTimer = BlockDropDuration;
+            if (result.MergeCount > 0)
+            {
+                mergePulseStack = result.StackIndex;
+                mergePulseTimer = MergePulseDuration;
+            }
+
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             long chipsGained = progression.AwardMove(result, machineLearningTraining);
             if (progression.SelectedSolver == SolverId.MachineLearning && autoSolverMove)
@@ -1187,9 +1260,10 @@ namespace StackMerge
             if (!wasGameOver && result.IsGameOver)
             {
                 bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
+                SolverId histSolverId = manualRun ? (SolverId)(-1) : progression.SelectedSolver;
                 runBonus = progression.AwardRunCompleted(
                     gameState.Score,
-                    progression.SelectedSolver,
+                    histSolverId,
                     gameState.BlocksDropped,
                     gameState.TotalMerges,
                     gameState.HighestMergedBlock,
@@ -1315,7 +1389,17 @@ namespace StackMerge
                 return;
             }
 
+            // If the solver is already active, toggle manual deselect mode.
+            if (progression.SelectedSolver == selectedSolverId && progression.IsSolverUnlocked(selectedSolverId))
+            {
+                solverDeselected = !solverDeselected;
+                SetText(feedbackText, solverDeselected ? "Manual mode: solver paused" : $"Solver: {definition.DisplayName}");
+                RefreshEverything();
+                return;
+            }
+
             bool changed = progression.SelectOrUnlockSolver(selectedSolverId);
+            if (changed) solverDeselected = false;
             SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
             progression.Save();
             RefreshEverything();
@@ -2282,9 +2366,18 @@ namespace StackMerge
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)} | Insight: {FormatNumber(progression.ResearchInsight)}");
-            SetText(solverText, progression.SelectedSolver == SolverId.MachineLearning
-                ? $"Solver: {GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}"
-                : $"Solver: {GetSelectedSolver().DisplayName}");
+            if (solverDeselected)
+            {
+                SetText(solverText, $"Solver: Manual  ({GetSelectedSolver().DisplayName} paused)");
+            }
+            else if (progression.SelectedSolver == SolverId.MachineLearning)
+            {
+                SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}");
+            }
+            else
+            {
+                SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
+            }
             SetText(speedText, machineLearningTraining
                 ? $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.000}s | training"
                 : $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.00}s");
@@ -2293,7 +2386,7 @@ namespace StackMerge
             {
                 SetText(runStatusText, machineLearningTraining
                     ? "ML TRAINING - chips paused"
-                    : progression.AutoSolveEnabled ? "Auto solving" : "Manual mode");
+                    : (solverDeselected || !progression.AutoSolveEnabled) ? "Manual mode" : "Auto solving");
                 if (runStatusText != null)
                 {
                     runStatusText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#D1D5DB");
@@ -2405,11 +2498,19 @@ namespace StackMerge
                 return;
             }
 
-            SetText(solverDetailStatusText, isMachineLearning ? active ? $"Active | Lv {progression.MachineLearningLevel}" : $"Unlocked | Lv {progression.MachineLearningLevel}" : active ? "Active" : "Unlocked");
-            SetButtonText(solverDetailActionButton, active ? "Selected" : "Select");
-            if (solverDetailActionButton != null)
+            string statusLabel = isMachineLearning
+                ? active ? $"Active | Lv {progression.MachineLearningLevel}" : $"Unlocked | Lv {progression.MachineLearningLevel}"
+                : active ? (solverDeselected ? "Paused — manual mode" : "Active") : "Unlocked";
+            SetText(solverDetailStatusText, statusLabel);
+            if (!isMachineLearning && active)
             {
-                solverDetailActionButton.interactable = !active;
+                SetButtonText(solverDetailActionButton, solverDeselected ? "Resume solver" : "Deselect");
+                if (solverDetailActionButton != null) solverDetailActionButton.interactable = true;
+            }
+            else
+            {
+                SetButtonText(solverDetailActionButton, active ? "Selected" : "Select");
+                if (solverDetailActionButton != null) solverDetailActionButton.interactable = !active;
             }
         }
 
@@ -3436,7 +3537,7 @@ namespace StackMerge
                 CreateSolverListRow(
                     root, width, y, rowHeight,
                     stat.SolverName,
-                    FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)),
+                    stat.SolverId < 0 ? FormatNumber(stat.Runs) : FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)),
                     FormatNumber(stat.MedianScore),
                     FormatNumber(stat.MaxScore),
                     FormatNumber(stat.BestHighestMerged),
@@ -3679,7 +3780,7 @@ namespace StackMerge
 
         private void ShowSolverInfoModal(SolverId solverId)
         {
-            if (progression == null)
+            if (progression == null || (int)solverId < 0)
             {
                 return;
             }
@@ -3930,6 +4031,7 @@ namespace StackMerge
 
         private static string SolverName(int solverId)
         {
+            if (solverId < 0) return "Manual";
             return StackMergeSolverCatalog.GetDefinition((SolverId)solverId).DisplayName;
         }
 
@@ -4043,21 +4145,52 @@ namespace StackMerge
                 IReadOnlyList<int> stack = stackIndex < gameState.StackCount ? gameState.Stacks[stackIndex] : Array.Empty<int>();
                 int count = stack.Count;
 
+                // Slot outlines: render ghost placeholder behind blocks.
+                EnsureSlotLayer(stackIndex, layer);
+                RefreshSlotOutlines(stackIndex, capacity, blockWidth, blockHeight, padding, spacing, count);
+
                 // Pool block objects: reuse the layer's existing children instead of
                 // destroying and re-instantiating every block on every move.
+                // Child 0 is reserved for the slot outline layer, so blocks start at child 1.
+                int poolOffset = stackSlotLayers != null && stackIndex < stackSlotLayers.Length && stackSlotLayers[stackIndex] != null ? 1 : 0;
                 for (int i = 0; i < count; i++)
                 {
-                    RectTransform block = i < layer.childCount
-                        ? (RectTransform)layer.GetChild(i)
+                    int childIdx = poolOffset + i;
+                    RectTransform block = childIdx < layer.childCount
+                        ? (RectTransform)layer.GetChild(childIdx)
                         : CreateBlockInstance(layer);
                     ConfigureBlock(block, stack[i], blockWidth, blockHeight, fontSize);
                     block.anchorMin = new Vector2(0.5f, 0f);
                     block.anchorMax = new Vector2(0.5f, 0f);
                     block.pivot = new Vector2(0.5f, 0f);
-                    block.anchoredPosition = new Vector2(0f, padding + i * (blockHeight + spacing));
+
+                    float finalY = padding + i * (blockHeight + spacing);
+                    bool isTopBlock = i == count - 1;
+
+                    // Block drop animation: slide the freshly placed top block from above.
+                    if (stackIndex == blockDropStack && isTopBlock && blockDropTimer > 0f)
+                    {
+                        float t = Mathf.SmoothStep(0f, 1f, 1f - blockDropTimer / BlockDropDuration);
+                        float startY = padding + capacity * (blockHeight + spacing);
+                        finalY = Mathf.Lerp(startY, finalY, t);
+                    }
+
+                    block.anchoredPosition = new Vector2(0f, finalY);
+
+                    // Merge pulse: bounce scale on the resulting top block.
+                    if (stackIndex == mergePulseStack && isTopBlock && mergePulseTimer > 0f)
+                    {
+                        float pt = mergePulseTimer / MergePulseDuration;
+                        float scale = 1f + 0.14f * Mathf.Sin(pt * Mathf.PI);
+                        block.localScale = new Vector3(scale, scale, 1f);
+                    }
+                    else
+                    {
+                        block.localScale = Vector3.one;
+                    }
                 }
 
-                for (int i = layer.childCount - 1; i >= count; i--)
+                for (int i = layer.childCount - 1; i >= count + poolOffset; i--)
                 {
                     GameObject extra = layer.GetChild(i).gameObject;
                     if (extra.activeSelf)
@@ -4069,6 +4202,78 @@ namespace StackMerge
                 if (stackIndex < stackButtons.Length && stackButtons[stackIndex] != null)
                 {
                     stackButtons[stackIndex].interactable = gameState.CanPlace(stackIndex);
+                }
+            }
+        }
+
+        private void EnsureSlotLayer(int stackIndex, RectTransform layer)
+        {
+            if (stackSlotLayers == null || stackSlotLayers.Length != stackBlockLayers.Length)
+            {
+                stackSlotLayers = new RectTransform[stackBlockLayers.Length];
+            }
+
+            if (stackIndex >= stackSlotLayers.Length || stackSlotLayers[stackIndex] != null)
+            {
+                return;
+            }
+
+            GameObject go = new GameObject("SlotLayer");
+            RectTransform rt = go.AddComponent<RectTransform>();
+            rt.SetParent(layer, false);
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.SetAsFirstSibling();
+            stackSlotLayers[stackIndex] = rt;
+        }
+
+        private void RefreshSlotOutlines(int stackIndex, int capacity, float blockWidth, float blockHeight, float padding, float spacing, int filledCount)
+        {
+            if (stackSlotLayers == null || stackIndex >= stackSlotLayers.Length)
+            {
+                return;
+            }
+
+            RectTransform slotLayer = stackSlotLayers[stackIndex];
+            if (slotLayer == null)
+            {
+                return;
+            }
+
+            while (slotLayer.childCount < capacity)
+            {
+                GameObject go = new GameObject("Slot");
+                RectTransform slotRt = go.AddComponent<RectTransform>();
+                slotRt.SetParent(slotLayer, false);
+                UnityEngine.UI.Image img = go.AddComponent<UnityEngine.UI.Image>();
+                img.raycastTarget = false;
+                img.color = HexColor("#FFFFFF", 0.07f);
+            }
+
+            for (int s = 0; s < slotLayer.childCount; s++)
+            {
+                RectTransform slot = slotLayer.GetChild(s) as RectTransform;
+                if (slot == null) continue;
+
+                if (s < capacity)
+                {
+                    slot.gameObject.SetActive(true);
+                    slot.anchorMin = new Vector2(0.5f, 0f);
+                    slot.anchorMax = new Vector2(0.5f, 0f);
+                    slot.pivot = new Vector2(0.5f, 0f);
+                    slot.sizeDelta = new Vector2(blockWidth, blockHeight);
+                    slot.anchoredPosition = new Vector2(0f, padding + s * (blockHeight + spacing));
+                    UnityEngine.UI.Image img = slot.GetComponent<UnityEngine.UI.Image>();
+                    if (img != null)
+                    {
+                        img.color = s < filledCount ? HexColor("#FFFFFF", 0.03f) : HexColor("#FFFFFF", 0.09f);
+                    }
+                }
+                else
+                {
+                    slot.gameObject.SetActive(false);
                 }
             }
         }
