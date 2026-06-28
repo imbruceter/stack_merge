@@ -222,10 +222,10 @@ namespace StackMerge
         }
 
         /// <summary>
-        /// Runtime visual modernization that works on the existing scene without a rebuild: gives
-        /// every button and card panel soft rounded corners (a white rounded sprite tinted by the
-        /// element's own colour, so existing colour semantics and hover states are preserved). The
-        /// layout is untouched — only the look.
+        /// Runtime visual polish that only rounds the corners of buttons and card panels.
+        /// It NEVER sets a colour — every colour comes from the Image / Button components you
+        /// edit in the Inspector. Images that already have a sprite assigned are left untouched,
+        /// so any custom sprite you set in the Hierarchy is preserved.
         /// </summary>
         private void ApplyModernTheme()
         {
@@ -243,47 +243,21 @@ namespace StackMerge
                 ApplyRoundedSprite(image, roundedButton);
             }
 
-            // Elevate category card panels with a lighter background and rounded corners.
+            // Round the corners of category cards (colour is left exactly as set in the Inspector).
             foreach (Transform t in canvas.GetComponentsInChildren<Transform>(true))
             {
-                if (!t.name.EndsWith(" Category"))
+                if (t.name.EndsWith(" Category"))
                 {
-                    continue;
-                }
-
-                Image img = t.GetComponent<Image>();
-                if (img != null)
-                {
-                    img.color = HexColor("#1A2844");
-                    ApplyRoundedSprite(img, roundedCard);
-                }
-
-                // Give the category section title a bright accent colour.
-                TMP_Text[] texts = t.GetComponents<TMP_Text>();
-                if (texts.Length == 0)
-                {
-                    TMP_Text firstChild = t.GetComponentInChildren<TMP_Text>(true);
-                    if (firstChild != null && firstChild.transform.parent == t)
-                    {
-                        firstChild.color = HexColor("#7DD3FC");
-                        firstChild.fontStyle |= FontStyles.Bold;
-                    }
+                    ApplyRoundedSprite(t.GetComponent<Image>(), roundedCard);
                 }
             }
 
-            // Card-like surfaces for stack columns and next-block preview.
             ApplyRoundedSprite(GetImage(nextBlocksRoot), roundedCard);
             foreach (RectTransform layer in stackBlockLayers)
             {
                 if (layer != null)
                 {
-                    RectTransform col = layer.parent as RectTransform;
-                    Image colImg = col != null ? col.GetComponent<Image>() : null;
-                    if (colImg != null)
-                    {
-                        colImg.color = HexColor("#111B2D");
-                        ApplyRoundedSprite(colImg, roundedCard);
-                    }
+                    ApplyRoundedSprite(GetImage(layer.parent as RectTransform), roundedCard);
                 }
             }
         }
@@ -1063,11 +1037,9 @@ namespace StackMerge
                     label.color = locked ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
                 }
 
-                if (background != null)
-                {
-                    background.color = locked ? HexColor("#111827") : selected ? HexColor("#1D4ED8") : HexColor("#1F2937");
-                }
-
+                // Tab background colour is owned by the Button component (Color Tint) in the
+                // Inspector; the code only marks locked tabs non-interactable so Unity shows
+                // your disabled colour.
                 button.interactable = !locked;
             }
         }
@@ -4515,13 +4487,12 @@ namespace StackMerge
             SetText(text, value);
         }
 
+        // Intentionally a no-op. Button background colours are owned by each Button's
+        // Color Tint settings in the Inspector — the code only toggles `interactable`,
+        // so Unity shows your normal / disabled colours automatically. Kept as a stub so
+        // the many call sites don't need to be removed individually.
         private static void SetButtonColor(Button button, Color color)
         {
-            Image image = button != null ? button.GetComponent<Image>() : null;
-            if (image != null)
-            {
-                image.color = color;
-            }
         }
 
         private static void SetActive(GameObject target, bool active)
