@@ -174,6 +174,10 @@ namespace StackMerge
         private Button ppoTrainingButton;
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
+        // Tuning rows are built once per solver and then updated in place; rebuilding every
+        // refresh would destroy/re-instantiate the prefabs each auto-move.
+        private SolverId tuneRowsBuiltForSolver = (SolverId)(-999);
+        private readonly List<TuneRowBinding> tuneRowBindings = new();
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -2490,7 +2494,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    label += $"\n{FormatNumber(definition.Cost)} chips";
+                    label += $"\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}";
                 }
 
                 SetButtonText(button, label);
@@ -2511,8 +2515,8 @@ namespace StackMerge
 
             SetText(solverDetailNameText, definition.DisplayName);
             string lockedInfo = isMachineLearning
-                ? $"{progression.GetMachineLearningGateStatus()}\nCost: {FormatNumber(definition.Cost)} chips"
-                : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips";
+                ? $"{progression.GetMachineLearningGateStatus()}\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}"
+                : $"Unlock this algorithm to reveal details.\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}";
             // PPO runtime statistics are intentionally not shown here — they live in the History menu.
             SetText(solverDetailInfoText, unlocked ? definition.Description : lockedInfo);
             SetButtonText(solverDetailTuneButton,
@@ -2564,7 +2568,18 @@ namespace StackMerge
             SetText(solverTuneSummaryText, tuningDefinition.Summary);
 
             HideLegacyTuneRows();
-            BuildTuneRows(tuningDefinition, tuning);
+
+            // Build the prefab rows once per solver, then only update their values. Rebuilding on
+            // every refresh would destroy and re-instantiate the prefabs each auto-move, which made
+            // the rows overlap (Destroy is deferred to end-of-frame) and dropped editor selection.
+            if (TuneRowsNeedRebuild(tuningDefinition))
+            {
+                RebuildTuneRows(tuningDefinition, tuning);
+            }
+            else
+            {
+                UpdateTuneRowValues(tuningDefinition, tuning);
+            }
 
             if (solverTuneResetButton != null)
             {
@@ -2572,10 +2587,38 @@ namespace StackMerge
             }
         }
 
+        private bool TuneRowsNeedRebuild(SolverTuningDefinition tuningDefinition)
+        {
+            if (solverTuneRowsRoot == null)
+            {
+                return false;
+            }
+
+            if (tuneRowsBuiltForSolver != selectedSolverId)
+            {
+                return true;
+            }
+
+            if (tuneRowBindings.Count != tuningDefinition.Parameters.Length)
+            {
+                return true;
+            }
+
+            foreach (TuneRowBinding binding in tuneRowBindings)
+            {
+                if (binding == null || !binding.IsAlive)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // Instantiates one row prefab per tuning parameter into solverTuneRowsRoot: a slider
         // prefab for continuous parameters, a button prefab (one button per value) for the small
-        // whole-number ones.
-        private void BuildTuneRows(SolverTuningDefinition tuningDefinition, SolverTuningSettings tuning)
+        // whole-number ones. Caches each row in tuneRowBindings for later in-place updates.
+        private void RebuildTuneRows(SolverTuningDefinition tuningDefinition, SolverTuningSettings tuning)
         {
             RectTransform root = solverTuneRowsRoot;
             if (root == null)
@@ -2585,6 +2628,8 @@ namespace StackMerge
 
             ClearInstantiatedRows<StackMergeTuneSliderRow>(root);
             ClearInstantiatedRows<StackMergeTuneButtonRow>(root);
+            tuneRowBindings.Clear();
+            tuneRowsBuiltForSolver = selectedSolverId;
 
             float y = 0f;
             for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
@@ -2612,7 +2657,14 @@ namespace StackMerge
                     SetText(row.nameText, parameter.DisplayName);
                     SetText(row.descriptionText, parameter.Description);
                     SetText(row.valueText, FormatWholeParamValue(selectedSolverId, parameter.Id, value));
-                    BuildTuneButtons(row, i, parameter, value);
+                    Button[] valueButtons = BuildTuneButtons(row, i, parameter, value);
+                    tuneRowBindings.Add(new TuneRowBinding
+                    {
+                        Slot = i,
+                        ButtonRow = row,
+                        ValueButtons = valueButtons,
+                        MinRaw = parameter.MinValue
+                    });
                     y += height + 6f;
                 }
                 else
@@ -2641,19 +2693,70 @@ namespace StackMerge
                         row.slider.onValueChanged.AddListener(v => SetSelectedSolverTuningFromDisplay(slot, v));
                     }
 
+                    tuneRowBindings.Add(new TuneRowBinding { Slot = i, SliderRow = row });
                     y += height + 6f;
                 }
             }
         }
 
-        // Clones the row prefab's single button once per selectable value. The active value's
-        // button is shown non-interactable so the Button's own disabled colour marks it.
-        private void BuildTuneButtons(StackMergeTuneButtonRow row, int slotIndex, SolverTuningParameterDefinition parameter, int currentValue)
+        // Refreshes values/labels on already-built rows without destroying anything. Safe to call
+        // every frame (e.g. on each auto-move) and after a tuning change.
+        private void UpdateTuneRowValues(SolverTuningDefinition tuningDefinition, SolverTuningSettings tuning)
+        {
+            foreach (TuneRowBinding binding in tuneRowBindings)
+            {
+                if (binding == null || binding.Slot < 0 || binding.Slot >= tuningDefinition.Parameters.Length)
+                {
+                    continue;
+                }
+
+                SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[binding.Slot];
+                int value = tuning.GetSlotValue(binding.Slot);
+
+                if (binding.ButtonRow != null)
+                {
+                    SetText(binding.ButtonRow.valueText, FormatWholeParamValue(selectedSolverId, parameter.Id, value));
+                    if (binding.ValueButtons != null)
+                    {
+                        for (int raw = parameter.MinValue; raw <= parameter.MaxValue; raw++)
+                        {
+                            int idx = raw - binding.MinRaw;
+                            if (idx < 0 || idx >= binding.ValueButtons.Length)
+                            {
+                                continue;
+                            }
+
+                            Button button = binding.ValueButtons[idx];
+                            if (button == null)
+                            {
+                                continue;
+                            }
+
+                            SetButtonText(button, ResolveWholeParamValue(selectedSolverId, parameter.Id, raw).ToString());
+                            button.interactable = raw != value;
+                        }
+                    }
+                }
+                else if (binding.SliderRow != null)
+                {
+                    SetText(binding.SliderRow.valueText, parameter.FormatValue(value));
+                    if (binding.SliderRow.slider != null)
+                    {
+                        binding.SliderRow.slider.SetValueWithoutNotify(parameter.ToDisplayValue(value));
+                    }
+                }
+            }
+        }
+
+        // Clones the row prefab's single button once per selectable value and returns them in
+        // value order. The active value's button is shown non-interactable so the Button's own
+        // disabled colour marks it.
+        private Button[] BuildTuneButtons(StackMergeTuneButtonRow row, int slotIndex, SolverTuningParameterDefinition parameter, int currentValue)
         {
             Button template = row.buttonTemplate;
             if (template == null)
             {
-                return;
+                return Array.Empty<Button>();
             }
 
             Transform parent = template.transform.parent;
@@ -2672,11 +2775,12 @@ namespace StackMerge
                 layout.childAlignment = TextAnchor.MiddleCenter;
             }
 
+            int count = parameter.MaxValue - parameter.MinValue + 1;
+            Button[] buttons = new Button[count];
             int index = 0;
             for (int raw = parameter.MinValue; raw <= parameter.MaxValue; raw++)
             {
                 Button button = index == 0 ? template : Instantiate(template, parent, false);
-                index++;
 
                 int captured = raw;
                 bool selected = raw == currentValue;
@@ -2688,7 +2792,25 @@ namespace StackMerge
                 LayoutElement layoutElement = EnsureComponent<LayoutElement>(button.gameObject);
                 layoutElement.flexibleWidth = 1f;
                 layoutElement.minWidth = 24f;
+
+                buttons[index] = button;
+                index++;
             }
+
+            return buttons;
+        }
+
+        // Caches one instantiated tuning row so it can be updated in place instead of rebuilt.
+        private sealed class TuneRowBinding
+        {
+            public int Slot;
+            public StackMergeTuneSliderRow SliderRow;
+            public StackMergeTuneButtonRow ButtonRow;
+            public Button[] ValueButtons;
+            public int MinRaw;
+
+            // Uses Unity's overloaded == so a destroyed row reads as not-alive.
+            public bool IsAlive => SliderRow != null || ButtonRow != null;
         }
 
         // Defensively hides any legacy pre-built tuning rows still left in the scene.
@@ -2904,7 +3026,7 @@ namespace StackMerge
             if (!progression.AgentsMenuUnlocked)
             {
                 SetText(agentDetailNameText, "Agents Locked");
-                SetText(agentDetailInfoText, $"Unlock the Agents menu in Upgrades.\nCost: {FormatNumber(progression.GetAgentsMenuUnlockCost())} chips");
+                SetText(agentDetailInfoText, $"Unlock the Agents menu in Upgrades.\n<sprite name=\"chips\"> {FormatNumber(progression.GetAgentsMenuUnlockCost())}");
                 SetText(agentDetailStatusText, "Locked");
                 SetButtonText(agentDetailActionButton, "Unlock in\nUpgrades");
                 if (agentDetailActionButton != null)
@@ -2919,7 +3041,7 @@ namespace StackMerge
             bool active = progression.IsAgentActive(selectedAgentId);
 
             SetText(agentDetailNameText, definition.DisplayName);
-            SetText(agentDetailInfoText, unlocked ? definition.Description : $"{definition.LockedHint}\nCost: {FormatNumber(definition.Cost)} chips");
+            SetText(agentDetailInfoText, unlocked ? definition.Description : $"{definition.LockedHint}\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}");
 
             if (!unlocked)
             {
@@ -3094,7 +3216,7 @@ namespace StackMerge
                 else if (i == progression.SpeedLevel && !progression.IsMaxSpeed)
                 {
                     long cost = progression.GetSpeedUpgradeCost(i);
-                    SetButtonText(button, $"L{i + 1}\n{FormatNumber(cost)}");
+                    SetButtonText(button, $"L{i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     button.interactable = progression.Chips >= cost;
                     SetButtonColor(button, HexColor("#0891B2"));
                 }
@@ -3117,7 +3239,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetAutoSolveCost();
-                    SetButtonText(autoSolveButton, progression.HasPurchasedSolver ? $"Auto solve\n{FormatNumber(cost)}" : "Auto solve\nNeeds algorithm");
+                    SetButtonText(autoSolveButton, progression.HasPurchasedSolver ? $"Auto solve\n<sprite name=\"chips\"> {FormatNumber(cost)}" : "Auto solve\nNeeds algorithm");
                     autoSolveButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
                     SetButtonColor(autoSolveButton, HexColor("#0F766E"));
                 }
@@ -3135,7 +3257,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetAutoRestartCost();
-                    SetButtonText(autoRestartButton, progression.HasPurchasedSolver ? $"Auto restart\n{FormatNumber(cost)}" : "Auto restart\nNeeds algorithm");
+                    SetButtonText(autoRestartButton, progression.HasPurchasedSolver ? $"Auto restart\n<sprite name=\"chips\"> {FormatNumber(cost)}" : "Auto restart\nNeeds algorithm");
                     autoRestartButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
                     SetButtonColor(autoRestartButton, HexColor("#C2410C"));
                 }
@@ -3144,7 +3266,7 @@ namespace StackMerge
             if (tokenPackButton != null)
             {
                 long cost = progression.GetTokenPackCost();
-                SetButtonText(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens\n{FormatNumber(cost)} chips");
+                SetButtonText(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                 tokenPackButton.interactable = progression.Chips >= cost;
                 SetButtonColor(tokenPackButton, HexColor("#0369A1"));
             }
@@ -3160,7 +3282,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetSolverTuningUnlockCost();
-                    SetButtonText(solverTuningUnlockButton, $"Solver tuning\n{FormatNumber(cost)}");
+                    SetButtonText(solverTuningUnlockButton, $"Solver tuning\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     solverTuningUnlockButton.interactable = progression.Chips >= cost;
                     SetButtonColor(solverTuningUnlockButton, HexColor("#2563EB"));
                 }
@@ -3177,7 +3299,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetExtraAgentSlotUpgradeCost();
-                    SetButtonText(extraAgentSlotUpgradeButton, $"+1 Agent slot\n{FormatNumber(cost)}");
+                    SetButtonText(extraAgentSlotUpgradeButton, $"+1 Agent slot\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     extraAgentSlotUpgradeButton.interactable = progression.Chips >= cost;
                     SetButtonColor(extraAgentSlotUpgradeButton, HexColor("#7C3AED"));
                 }
@@ -3194,7 +3316,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetAgentsMenuUnlockCost();
-                    SetButtonText(agentsMenuUnlockButton, $"Unlock Agents\n{FormatNumber(cost)}");
+                    SetButtonText(agentsMenuUnlockButton, $"Unlock Agents\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     agentsMenuUnlockButton.interactable = progression.Chips >= cost;
                     SetButtonColor(agentsMenuUnlockButton, HexColor("#9333EA"));
                 }
@@ -3217,7 +3339,7 @@ namespace StackMerge
                 else if (i == progression.StackCapacityLevel && !progression.IsMaxStackCapacity)
                 {
                     long cost = progression.GetStackCapacityUpgradeCost(i);
-                    SetButtonText(button, $"Cap {StackMergeGameState.DefaultStackCapacity + i + 1}\n{FormatNumber(cost)}");
+                    SetButtonText(button, $"Cap {StackMergeGameState.DefaultStackCapacity + i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     button.interactable = progression.Chips >= cost;
                     SetButtonColor(button, HexColor("#4F46E5"));
                 }
@@ -3275,7 +3397,7 @@ namespace StackMerge
                 else if (i == progression.DifficultyLevel && !progression.IsMaxDifficulty)
                 {
                     long cost = progression.GetDifficultyUpgradeCost(i);
-                    SetButtonText(button, $"Risk {i + 1}\n{FormatNumber(cost)}");
+                    SetButtonText(button, $"Risk {i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     button.interactable = progression.Chips >= cost;
                     SetButtonColor(button, HexColor("#DB2777"));
                 }
@@ -3304,7 +3426,7 @@ namespace StackMerge
                 else if (i == progression.IncomeLevel && !progression.IsMaxIncome)
                 {
                     long cost = progression.GetIncomeUpgradeCost(i);
-                    SetButtonText(button, $"+{(i + 1) * 12}%\n{FormatNumber(cost)}");
+                    SetButtonText(button, $"+{(i + 1) * 12}%\n<sprite name=\"chips\"> {FormatNumber(cost)}");
                     button.interactable = progression.Chips >= cost;
                     SetButtonColor(button, HexColor("#CA8A04"));
                 }
