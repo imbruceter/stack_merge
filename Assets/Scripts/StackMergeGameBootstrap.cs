@@ -52,6 +52,8 @@ namespace StackMerge
 
         [Header("AI UI")]
         [SerializeField] private TMP_Text[] chipsTexts = Array.Empty<TMP_Text>();
+        [SerializeField] private TMP_Text[] insightsTexts = Array.Empty<TMP_Text>();
+        [SerializeField] private TMP_Text tokensText;
         [SerializeField] private TMP_Text solverText;
         [SerializeField] private TMP_Text speedText;
         [SerializeField] private TMP_Text capacityText;
@@ -117,6 +119,24 @@ namespace StackMerge
         [SerializeField] private TMP_Text agentDetailStatusText;
         [SerializeField] private Button agentDetailActionButton;
 
+        [Header("Row Prefabs (assign in Inspector)")]
+        [Tooltip("One row of the Goals list. Needs a StackMergeGoalRow component on its root.")]
+        [SerializeField] private StackMergeGoalRow goalRowPrefab;
+        [Tooltip("One row of History > Solvers. Needs a StackMergeSolverStatRow component on its root.")]
+        [SerializeField] private StackMergeSolverStatRow solverStatRowPrefab;
+        [Tooltip("One row of History > Recent Runs. Needs a StackMergeRecentRunRow component on its root.")]
+        [SerializeField] private StackMergeRecentRunRow recentRunRowPrefab;
+
+        [Header("Solver Info Modal (assign in Inspector)")]
+        [Tooltip("Root overlay GameObject of the solver info modal — shown/hidden like the Gameplay Info Overlay.")]
+        [SerializeField] private GameObject solverInfoOverlay;
+        [SerializeField] private TMP_Text solverInfoTitle;
+        [SerializeField] private TMP_Text solverInfoStatsText;
+        [SerializeField] private TMP_Text solverInfoTuningText;
+        [Tooltip("Optional. A RectTransform where the score-history line chart is drawn. Leave empty to skip the chart.")]
+        [SerializeField] private RectTransform solverInfoChartRoot;
+        [SerializeField] private Button solverInfoCloseButton;
+
         [Header("Templates")]
         [SerializeField] private RectTransform blockTemplate;
         [SerializeField] private bool useGeneratedBlockSprites = true;
@@ -143,11 +163,6 @@ namespace StackMerge
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
         private RectTransform[] solverTuneSegmentContainers;
-        private RectTransform solverInfoModal;
-        private TMP_Text solverInfoTitle;
-        private TMP_Text solverInfoStatsText;
-        private TMP_Text solverInfoTuningText;
-        private RectTransform solverInfoChartRoot;
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -207,6 +222,8 @@ namespace StackMerge
 
         private void Start()
         {
+            Application.targetFrameRate = 120;
+
             highScore = PlayerPrefs.GetInt(HighScoreKey, 0);
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
@@ -626,6 +643,15 @@ namespace StackMerge
                 gameplayInfoCloseButton.onClick.AddListener(CloseGameplayInfo);
             }
 
+            if (solverInfoCloseButton != null)
+            {
+                solverInfoCloseButton.onClick.RemoveAllListeners();
+                solverInfoCloseButton.onClick.AddListener(HideSolverInfoModal);
+            }
+
+            // Start hidden, mirroring the Gameplay Info Overlay.
+            SetActive(solverInfoOverlay, false);
+
             if (achievementBackButton != null)
             {
                 achievementBackButton.onClick.RemoveAllListeners();
@@ -1011,7 +1037,7 @@ namespace StackMerge
 
         private void RefreshTabButtons()
         {
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Research", "Settings" };
+            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research", "Settings" };
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 Button button = tabButtons[i];
@@ -1275,7 +1301,7 @@ namespace StackMerge
             string learningText = progression.SelectedSolver == SolverId.MachineLearning
                 ? $" | PPO U{progression.MachineLearningAgent.Metrics.Updates}"
                 : string.Empty;
-            SetText(feedbackText, $"{moveText} | {chipText}{learningText} | {resultReason}");
+            SetText(feedbackText, $"{moveText}\n{chipText}{learningText}\n{resultReason}");
 
             // Per-move: only refresh the cheap game view. When a run actually ends, do a
             // single full refresh so the history / achievements / upgrade panels pick up the
@@ -2179,7 +2205,7 @@ namespace StackMerge
             }
 
             SetText(scoreText, FormatNumber(gameState.Score));
-            SetText(droppedText, $"Dobasok: {FormatNumber(gameState.BlocksDropped)}");
+            SetText(droppedText, $"{FormatNumber(gameState.BlocksDropped)} moves");
 
             bool trainingView = progression != null
                 && progression.IsMachineLearningTrainingActive
@@ -2337,18 +2363,21 @@ namespace StackMerge
             }
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
-            SetText(chipsTexts, $"Chips: {FormatNumber(progression.Chips)} | Tokens: {FormatNumber(progression.Tokens)} | Insight: {FormatNumber(progression.ResearchInsight)}");
+            SetText(chipsTexts, $"<sprite name=\"chips\"> {FormatNumber(progression.Chips)}");
+            SetText(insightsTexts, $"<sprite name=\"insight\"> {FormatNumber(progression.ResearchInsight)}");
+            SetText(tokensText, $"<sprite name=\"token\"> {FormatNumber(progression.Tokens)}");
             if (solverDeselected)
             {
-                SetText(solverText, $"Solver: Manual  ({GetSelectedSolver().DisplayName} paused)");
+                SetText(solverText, $"Manual  ({GetSelectedSolver().DisplayName} paused)");
+                SetText(solverText, $"Manual  ({GetSelectedSolver().DisplayName} paused)");
             }
             else if (progression.SelectedSolver == SolverId.MachineLearning)
             {
-                SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}");
+                SetText(solverText, $"{GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}");
             }
             else
             {
-                SetText(solverText, $"Solver: {GetSelectedSolver().DisplayName}");
+                SetText(solverText, $"{GetSelectedSolver().DisplayName}");
             }
             SetText(speedText, machineLearningTraining
                 ? $"Speed L{progression.SpeedLevel} | {progression.MoveInterval:0.000}s | training"
@@ -3412,7 +3441,7 @@ namespace StackMerge
                 SetText(historyInsightText, "Tip: use the editor benchmark window for large balance samples without touching player progression.");
                 DrawTrendChart(history);
                 BuildSolverList(Array.Empty<HistorySolverStats>());
-                CreateTable(historyRecentRunsRoot, new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" }, Array.Empty<string[]>(), "Recent runs will appear here.");
+                RefreshRecentRunsTable(history);
 
                 return;
             }
@@ -3455,30 +3484,40 @@ namespace StackMerge
             DrawLineChart(historyChartRoot, values, HexColor("#38BDF8"), "No runs yet");
         }
 
+        // Instantiates one recentRunRowPrefab per recent run under historyRecentRunsRoot.
         private void RefreshRecentRunsTable(RunHistoryEntry[] history)
         {
-            string[][] recentRows = history
-                .Take(12)
-                .Select(entry => new[]
-                {
-                    $"#{entry.runIndex}",
-                    SolverName(entry.solverId),
-                    FormatNumber(entry.score),
-                    entry.moves.ToString(),
-                    entry.merges.ToString(),
-                    FormatNumber(entry.highestMergedBlock),
-                    $"L{entry.difficultyLevel}"
-                })
-                .ToArray();
+            RectTransform root = historyRecentRunsRoot;
+            if (root == null)
+            {
+                return;
+            }
 
-            CreateTable(
-                historyRecentRunsRoot,
-                new[] { "Run", "Solver", "Score", "Moves", "Merges", "High", "Risk" },
-                recentRows,
-                "Recent runs will appear here.");
+            ClearInstantiatedRows<StackMergeRecentRunRow>(root);
+            if (recentRunRowPrefab == null)
+            {
+                Debug.LogWarning("StackMerge: Recent run row prefab not assigned — assign it on the Bootstrap in the Inspector.");
+                return;
+            }
+
+            float rowHeight = RowHeightOf((RectTransform)recentRunRowPrefab.transform, 44f);
+            float y = 0f;
+            foreach (RunHistoryEntry entry in history.Take(40))
+            {
+                StackMergeRecentRunRow row = Instantiate(recentRunRowPrefab, root, false);
+                PositionRow((RectTransform)row.transform, y, rowHeight);
+                SetText(row.runText, $"{entry.runIndex}");
+                SetText(row.solverText, SolverName(entry.solverId));
+                SetText(row.scoreText, FormatNumber(entry.score));
+                SetText(row.movesText, entry.moves.ToString());
+                SetText(row.mergesText, entry.merges.ToString());
+                SetText(row.highText, FormatNumber(entry.highestMergedBlock));
+                y += rowHeight + 3f;
+            }
         }
 
-        // Per-solver list with an info button on each row that opens a detail window.
+        // Instantiates one solverStatRowPrefab per solver under historySolverTableRoot.
+        // The optional "i" button on each row opens the solver info modal.
         private void BuildSolverList(HistorySolverStats[] stats)
         {
             RectTransform root = historySolverTableRoot;
@@ -3487,93 +3526,89 @@ namespace StackMerge
                 return;
             }
 
-            ClearChildren(root);
-            float width = Mathf.Max(620f, root.rect.width);
-            float rowHeight = 40f;
-            float y = 0f;
-
-            CreateSolverListRow(root, width, y, rowHeight, "Solver", "Runs", "Median", "Best", "High", true, SolverId.Rand);
-            y += rowHeight + 4f;
-
-            if (stats.Length == 0)
+            ClearInstantiatedRows<StackMergeSolverStatRow>(root);
+            if (solverStatRowPrefab == null)
             {
-                TMP_Text empty = CreateRuntimeText("Empty", root, "No solver data yet.", 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
-                RectTransform emptyRect = empty.rectTransform;
-                emptyRect.anchorMin = new Vector2(0f, 1f);
-                emptyRect.anchorMax = new Vector2(0f, 1f);
-                emptyRect.pivot = new Vector2(0f, 1f);
-                emptyRect.anchoredPosition = new Vector2(0f, -y - 18f);
-                emptyRect.sizeDelta = new Vector2(width, 44f);
+                Debug.LogWarning("StackMerge: Solver stat row prefab not assigned — assign it on the Bootstrap in the Inspector.");
                 return;
             }
 
+            float rowHeight = RowHeightOf((RectTransform)solverStatRowPrefab.transform, 44f);
+            float y = 0f;
             foreach (HistorySolverStats stat in stats.OrderByDescending(s => s.MedianScore))
             {
-                CreateSolverListRow(
-                    root, width, y, rowHeight,
-                    stat.SolverName,
-                    stat.SolverId < 0 ? FormatNumber(stat.Runs) : FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)),
-                    FormatNumber(stat.MedianScore),
-                    FormatNumber(stat.MaxScore),
-                    FormatNumber(stat.BestHighestMerged),
-                    false,
-                    (SolverId)stat.SolverId);
+                StackMergeSolverStatRow row = Instantiate(solverStatRowPrefab, root, false);
+                PositionRow((RectTransform)row.transform, y, rowHeight);
+                SetText(row.solverText, stat.SolverName);
+                SetText(row.runsText, stat.SolverId < 0
+                    ? FormatNumber(stat.Runs)
+                    : FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)));
+                SetText(row.medianText, FormatNumber(stat.MedianScore));
+                SetText(row.bestText, FormatNumber(stat.MaxScore));
+                SetText(row.highText, FormatNumber(stat.BestHighestMerged));
+
+                if (row.infoButton != null)
+                {
+                    // Manual runs (solverId < 0) have no catalog entry, so hide the info button for them.
+                    bool hasInfo = stat.SolverId >= 0;
+                    row.infoButton.gameObject.SetActive(hasInfo);
+                    if (hasInfo)
+                    {
+                        SolverId captured = (SolverId)stat.SolverId;
+                        row.infoButton.onClick.RemoveAllListeners();
+                        row.infoButton.onClick.AddListener(() => ShowSolverInfoModal(captured));
+                    }
+                }
+
                 y += rowHeight + 3f;
             }
         }
 
-        private void CreateSolverListRow(RectTransform root, float width, float y, float height, string c0, string c1, string c2, string c3, string c4, bool header, SolverId solverId)
+        // Destroys only the rows this code instantiated (children carrying the row component),
+        // leaving any static header / decoration you placed in the container untouched.
+        private static void ClearInstantiatedRows<T>(Transform root) where T : Component
         {
-            RectTransform row = CreateRuntimePanel("Solver Row", root, header ? HexColor("#0B1322") : HexColor("#141C2B"));
-            row.anchorMin = new Vector2(0f, 1f);
-            row.anchorMax = new Vector2(0f, 1f);
-            row.pivot = new Vector2(0f, 1f);
-            row.anchoredPosition = new Vector2(0f, -y);
-            row.sizeDelta = new Vector2(width, height);
-
-            float[] frac = { 0.30f, 0.15f, 0.18f, 0.18f, 0.11f };
-            string[] cells = { c0, c1, c2, c3, c4 };
-            float x = 10f;
-            for (int i = 0; i < cells.Length; i++)
+            if (root == null)
             {
-                float columnWidth = width * frac[i];
-                TMP_Text text = CreateRuntimeText($"Cell{i}", row, cells[i], header ? 15 : 14, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, header ? HexColor("#FDE68A") : HexColor("#E5E7EB"));
-                text.enableAutoSizing = true;
-                text.fontSizeMin = 9;
-                text.fontSizeMax = header ? 15 : 14;
-                RectTransform rect = text.rectTransform;
-                rect.anchorMin = new Vector2(0f, 0f);
-                rect.anchorMax = new Vector2(0f, 1f);
-                rect.pivot = new Vector2(0f, 0.5f);
-                rect.offsetMin = new Vector2(x, 0f);
-                rect.offsetMax = new Vector2(x + columnWidth - 6f, 0f);
-                x += columnWidth;
+                return;
             }
 
-            if (!header)
+            for (int i = root.childCount - 1; i >= 0; i--)
             {
-                RectTransform infoRect = CreateRuntimePanel("Info", row, HexColor("#2563EB"));
-                infoRect.anchorMin = new Vector2(1f, 0.5f);
-                infoRect.anchorMax = new Vector2(1f, 0.5f);
-                infoRect.pivot = new Vector2(1f, 0.5f);
-                infoRect.anchoredPosition = new Vector2(-10f, 0f);
-                infoRect.sizeDelta = new Vector2(40f, height - 12f);
-                Image infoImage = infoRect.GetComponent<Image>();
-                if (infoImage != null)
+                Transform child = root.GetChild(i);
+                if (child.GetComponent<T>() != null)
                 {
-                    infoImage.sprite = GetRoundedSprite(Color.white, Color.white, 12);
-                    infoImage.type = Image.Type.Sliced;
-                    infoImage.color = HexColor("#2563EB");
+                    Destroy(child.gameObject);
                 }
-
-                Button infoButton = infoRect.gameObject.AddComponent<Button>();
-                infoButton.targetGraphic = infoImage;
-                SolverId captured = solverId;
-                infoButton.onClick.AddListener(() => ShowSolverInfoModal(captured));
-
-                TMP_Text infoLabel = CreateRuntimeText("i", infoRect, "i", 18, FontStyles.Bold, TextAlignmentOptions.Center, Color.white);
-                Stretch(infoLabel.rectTransform, 2f, 2f, 2f, 2f);
             }
+        }
+
+        // Reads the prefab's designed height; falls back if it has none yet.
+        private static float RowHeightOf(RectTransform prefabRect, float fallback)
+        {
+            if (prefabRect == null)
+            {
+                return fallback;
+            }
+
+            float height = prefabRect.sizeDelta.y;
+            return height > 1f ? height : fallback;
+        }
+
+        // Top-anchored, full-width row stacked downward by `y`. Matches the spacing the old
+        // tables used so prefab rows drop straight into the existing containers.
+        private static void PositionRow(RectTransform rt, float y, float height)
+        {
+            if (rt == null)
+            {
+                return;
+            }
+
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.offsetMin = new Vector2(0f, -y - height);
+            rt.offsetMax = new Vector2(0f, -y);
         }
 
         private void RefreshAchievements()
@@ -3594,27 +3629,42 @@ namespace StackMerge
                 $"Spent: {FormatNumber(progression.TotalChipsSpent)}\n" +
                 $"Best run: {FormatNumber(progression.BestRunScore)}");
 
-            string[][] rows = StackMergeProgression.Achievements
-                .Select(achievement =>
-                {
-                    long progress = progression.GetAchievementProgress(achievement);
-                    long cappedProgress = Math.Min(progress, achievement.Target);
-                    bool complete = progression.IsAchievementComplete(achievement);
-                    float percent = achievement.Target <= 0 ? 1f : Mathf.Clamp01(progress / (float)achievement.Target);
-                    return new[]
-                    {
-                        achievement.Description,
-                        $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}",
-                        complete ? "Complete" : $"{percent * 100f:0}%"
-                    };
-                })
-                .ToArray();
+            BuildGoalRows();
+        }
 
-            CreateTable(
-                achievementListRoot,
-                new[] { "Goal", "Progress", "Status" },
-                rows,
-                "No achievements configured.");
+        // Instantiates one goalRowPrefab per achievement under achievementListRoot.
+        private void BuildGoalRows()
+        {
+            RectTransform root = achievementListRoot;
+            if (root == null)
+            {
+                return;
+            }
+
+            ClearInstantiatedRows<StackMergeGoalRow>(root);
+            if (goalRowPrefab == null)
+            {
+                Debug.LogWarning("StackMerge: Goal row prefab not assigned — assign it on the Bootstrap in the Inspector.");
+                return;
+            }
+
+            float rowHeight = RowHeightOf((RectTransform)goalRowPrefab.transform, 50f);
+            float y = 0f;
+            foreach (AchievementDefinition achievement in StackMergeProgression.Achievements)
+            {
+                long progress = progression.GetAchievementProgress(achievement);
+                long cappedProgress = Math.Min(progress, achievement.Target);
+                bool complete = progression.IsAchievementComplete(achievement);
+
+                StackMergeGoalRow row = Instantiate(goalRowPrefab, root, false);
+                PositionRow((RectTransform)row.transform, y, rowHeight);
+                SetText(row.goalText, achievement.Description);
+                SetText(row.progressText, complete
+                    ? "Completed"
+                    : $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}");
+
+                y += rowHeight + 4f;
+            }
         }
 
         // Simple runtime line chart: connects the values with rotated thin segments, draws dots for
@@ -3766,23 +3816,32 @@ namespace StackMerge
                 return;
             }
 
-            EnsureSolverInfoModal();
+            if (solverInfoOverlay == null)
+            {
+                Debug.LogWarning("StackMerge: Solver Info overlay not assigned — assign it on the Bootstrap in the Inspector.");
+                return;
+            }
+
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(solverId);
             RunHistoryEntry[] solverRuns = progression.RunHistory.Where(entry => entry.solverId == (int)solverId).ToArray();
             int lifetime = progression.GetSolverLifetimeRuns(solverId);
 
-            SetText(solverInfoTitle, $"{definition.DisplayName}  •  detail");
+            SetText(solverInfoTitle, $"{definition.DisplayName} detail");
 
             var stats = new StringBuilder();
             stats.AppendLine(definition.Description);
             stats.AppendLine();
-            stats.AppendLine($"Lifetime runs: {FormatNumber(lifetime)}    (stored history: {solverRuns.Length})");
+            stats.AppendLine($"<b>Lifetime runs</b>\n" +
+                $"{FormatNumber(lifetime)} (stored history: {solverRuns.Length})");
             if (solverRuns.Length > 0)
             {
                 long[] scores = solverRuns.Select(entry => entry.score).OrderBy(value => value).ToArray();
-                stats.AppendLine($"Best {FormatNumber(scores[^1])}   Median {FormatNumber(Median(scores))}   Avg {FormatNumber((long)scores.Average())}");
+                stats.AppendLine($"Best {FormatNumber(scores[^1])}\n" +
+                    $"Median {FormatNumber(Median(scores))}\n" +
+                    $"Average {FormatNumber((long)scores.Average())}");
                 stats.AppendLine($"Range {FormatNumber(scores[0])} – {FormatNumber(scores[^1])}");
-                stats.AppendLine($"Best high tile {FormatNumber(solverRuns.Max(entry => entry.highestMergedBlock))}   Avg moves {solverRuns.Average(entry => entry.moves):0}");
+                stats.AppendLine($"Best high tile {FormatNumber(solverRuns.Max(entry => entry.highestMergedBlock))}\n" +
+                    $"Average moves {solverRuns.Average(entry => entry.moves):0}");
             }
             else
             {
@@ -3814,7 +3873,7 @@ namespace StackMerge
 
             DrawLineChart(solverInfoChartRoot, values, HexColor("#34D399"), "No score history for this solver yet");
 
-            SetActive(solverInfoModal.gameObject, true);
+            SetActive(solverInfoOverlay, true);
         }
 
         private string BuildTuningSummary(SolverId solverId)
@@ -3845,153 +3904,9 @@ namespace StackMerge
             return builder.ToString();
         }
 
-        private void EnsureSolverInfoModal()
-        {
-            if (solverInfoModal != null || canvas == null)
-            {
-                return;
-            }
-
-            solverInfoModal = CreateRuntimePanel("Solver Info Modal", canvas.transform, HexColor("#020617", 0.8f));
-            Stretch(solverInfoModal, 0f, 0f, 0f, 0f);
-            Button backdrop = solverInfoModal.gameObject.AddComponent<Button>();
-            backdrop.transition = Selectable.Transition.None;
-            backdrop.targetGraphic = solverInfoModal.GetComponent<Image>();
-            backdrop.onClick.AddListener(HideSolverInfoModal);
-
-            RectTransform card = CreateRuntimePanel("Card", solverInfoModal, HexColor("#111A2E", 1f));
-            card.anchorMin = new Vector2(0.5f, 0.5f);
-            card.anchorMax = new Vector2(0.5f, 0.5f);
-            card.pivot = new Vector2(0.5f, 0.5f);
-            card.anchoredPosition = Vector2.zero;
-            card.sizeDelta = new Vector2(460f, 700f);
-            Image cardImage = card.GetComponent<Image>();
-            if (cardImage != null)
-            {
-                cardImage.sprite = GetRoundedSprite(Color.white, Color.white, 28);
-                cardImage.type = Image.Type.Sliced;
-                cardImage.color = HexColor("#111A2E");
-            }
-
-            solverInfoTitle = CreateCardChildText("Title", card, "Solver", 26, new Vector2(0f, 308f), new Vector2(420f, 40f), HexColor("#F8FAFC"));
-
-            solverInfoStatsText = CreateInfoBlockText("Stats", card, new Vector2(0f, 138f), new Vector2(420f, 280f), 17);
-            solverInfoTuningText = CreateInfoBlockText("Tuning", card, new Vector2(0f, -78f), new Vector2(420f, 148f), 16);
-
-            RectTransform chartHolder = CreateRuntimePanel("Chart", card, HexColor("#0B1322", 1f));
-            chartHolder.anchorMin = new Vector2(0.5f, 0.5f);
-            chartHolder.anchorMax = new Vector2(0.5f, 0.5f);
-            chartHolder.pivot = new Vector2(0.5f, 0.5f);
-            chartHolder.anchoredPosition = new Vector2(0f, -232f);
-            chartHolder.sizeDelta = new Vector2(420f, 180f);
-            Image chartImage = chartHolder.GetComponent<Image>();
-            if (chartImage != null)
-            {
-                chartImage.sprite = GetRoundedSprite(Color.white, Color.white, 14);
-                chartImage.type = Image.Type.Sliced;
-                chartImage.color = HexColor("#0B1322");
-            }
-
-            solverInfoChartRoot = chartHolder;
-
-            Button close = CreateRuntimeButton("Close", card, "Close", HexColor("#334155"), new Vector2(0f, -322f), new Vector2(200f, 44f));
-            close.onClick.AddListener(HideSolverInfoModal);
-
-            solverInfoModal.gameObject.SetActive(false);
-        }
-
-        private TMP_Text CreateInfoBlockText(string name, Transform parent, Vector2 anchoredPosition, Vector2 size, int fontSize)
-        {
-            TMP_Text text = CreateRuntimeText(name, parent, string.Empty, fontSize, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
-            RectTransform rect = text.rectTransform;
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = anchoredPosition;
-            rect.sizeDelta = size;
-            text.richText = true;
-            text.overflowMode = TextOverflowModes.Overflow;
-            return text;
-        }
-
         private void HideSolverInfoModal()
         {
-            if (solverInfoModal != null)
-            {
-                SetActive(solverInfoModal.gameObject, false);
-            }
-        }
-
-        private static void CreateTable(RectTransform root, string[] headers, string[][] rows, string emptyText)
-        {
-            if (root == null)
-            {
-                return;
-            }
-
-            ClearChildren(root);
-            float tableWidth = Mathf.Max(620f, root.rect.width);
-            float rowHeight = 34f;
-            float y = 0f;
-            float[] widths = BuildEqualWidths(headers.Length, tableWidth);
-            CreateTableRow(root, headers, widths, y, rowHeight, true);
-            y += rowHeight + 4f;
-
-            if (rows.Length == 0)
-            {
-                TMP_Text empty = CreateRuntimeText("Empty Table", root, emptyText, 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
-                RectTransform emptyRect = empty.rectTransform;
-                emptyRect.anchorMin = new Vector2(0f, 1f);
-                emptyRect.anchorMax = new Vector2(0f, 1f);
-                emptyRect.pivot = new Vector2(0f, 1f);
-                emptyRect.anchoredPosition = new Vector2(0f, -y - 18f);
-                emptyRect.sizeDelta = new Vector2(tableWidth, 44f);
-                return;
-            }
-
-            for (int i = 0; i < rows.Length; i++)
-            {
-                CreateTableRow(root, rows[i], widths, y, rowHeight, false, i);
-                y += rowHeight + 3f;
-            }
-        }
-
-        private static void CreateTableRow(RectTransform root, string[] cells, float[] widths, float y, float height, bool header, int rowIndex = 0)
-        {
-            RectTransform row = CreateRuntimePanel($"Table Row {rowIndex}", root, header ? HexColor("#0F172A") : rowIndex % 2 == 0 ? HexColor("#172033") : HexColor("#111827", 0.86f));
-            row.anchorMin = new Vector2(0f, 1f);
-            row.anchorMax = new Vector2(0f, 1f);
-            row.pivot = new Vector2(0f, 1f);
-            row.anchoredPosition = new Vector2(0f, -y);
-            row.sizeDelta = new Vector2(widths.Sum(), height);
-
-            float x = 0f;
-            for (int i = 0; i < cells.Length && i < widths.Length; i++)
-            {
-                TMP_Text text = CreateRuntimeText($"Cell {i}", row, cells[i], header ? 15 : 14, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, header ? HexColor("#FDE68A") : HexColor("#E5E7EB"));
-                text.enableAutoSizing = true;
-                text.fontSizeMin = 9;
-                text.fontSizeMax = header ? 15 : 14;
-                RectTransform rect = text.rectTransform;
-                rect.anchorMin = new Vector2(0f, 0f);
-                rect.anchorMax = new Vector2(0f, 1f);
-                rect.pivot = new Vector2(0f, 0.5f);
-                rect.offsetMin = new Vector2(x + 8f, 0f);
-                rect.offsetMax = new Vector2(x + widths[i] - 6f, 0f);
-                x += widths[i];
-            }
-        }
-
-        private static float[] BuildEqualWidths(int columnCount, float tableWidth)
-        {
-            float[] widths = new float[columnCount];
-            float width = tableWidth / Math.Max(1, columnCount);
-            for (int i = 0; i < widths.Length; i++)
-            {
-                widths[i] = width;
-            }
-
-            return widths;
+            SetActive(solverInfoOverlay, false);
         }
 
         private static long Median(long[] orderedValues)
@@ -4277,7 +4192,7 @@ namespace StackMerge
                 return;
             }
 
-            const float top = 360f;
+            const float top = 470f;
             float height = CalculateBoardHeight(gameState.StackCapacity);
             board.anchorMin = new Vector2(0f, 1f);
             board.anchorMax = new Vector2(1f, 1f);
@@ -4633,22 +4548,61 @@ namespace StackMerge
 
         private static string FormatNumber(long value)
         {
-            if (value >= 1_000_000_000)
+            // Negatív számok kezelése (opcionális)
+            if (value < 0)
+                return "-" + FormatNumber(-value);
+
+            // 100 000 alatt nem rövidítünk
+            if (value < 100_000)
+                return value.ToString();
+
+            // Egységek: osztó, szöveg, minimális érték (csak a K-nál tér el)
+            var units = new (long divisor, string suffix, long minValue)[]
             {
-                return $"{value / 1_000_000_000f:0.#}B";
+                (1_000_000_000_000_000_000L, "Qi", 1_000_000_000_000_000_000L),
+                (1_000_000_000_000_000L, "Qa", 1_000_000_000_000_000L),
+                (1_000_000_000_000L, "T", 1_000_000_000_000L),
+                (1_000_000_000L, "B", 1_000_000_000L),
+                (1_000_000L, "M", 1_000_000L),
+                (1000L, "K", 100_000L)
+            };
+
+            // Kiválasztjuk a legnagyobb egységet, amelyre value >= minValue
+            int selectedIndex = -1;
+            for (int i = 0; i < units.Length; i++)
+            {
+                if (value >= units[i].minValue)
+                {
+                    selectedIndex = i;
+                    break;
+                }
             }
 
-            if (value >= 1_000_000)
-            {
-                return $"{value / 1_000_000f:0.#}M";
-            }
+            // Biztonsági visszatérés (ide nem juthatunk, mert value >= 100_000)
+            if (selectedIndex == -1)
+                return value.ToString();
 
-            if (value >= 10_000)
+            // Addig lépünk felfelé a nagyobb egységek felé, amíg a kerekített érték < 1000,
+            // vagy elérjük a legnagyobb egységet.
+            int currentIndex = selectedIndex;
+            while (true)
             {
-                return $"{value / 1_000f:0.#}k";
-            }
+                double d = (double)value / units[currentIndex].divisor;
+                double rounded = Math.Round(d, 2, MidpointRounding.AwayFromZero);
 
-            return value.ToString();
+                // Ha a kerekített érték kisebb, mint 1000, vagy már a legnagyobb egységnél vagyunk
+                if (rounded < 1000 || currentIndex == 0)
+                {
+                    // `0.##` formátum: levágja a felesleges tizedes nullákat
+                    string formatted = rounded.ToString("0.##");
+                    return formatted + units[currentIndex].suffix;
+                }
+                else
+                {
+                    // Lépünk a következő nagyobb egységre (kisebb index)
+                    currentIndex--;
+                }
+            }
         }
 
         private static string FormatNumber(double value)
