@@ -33,6 +33,10 @@ namespace StackMerge
         [SerializeField] private Button[] newGameButtons = Array.Empty<Button>();
         [SerializeField] private Button historyButton;
         [SerializeField] private Button achievementsButton;
+        [Tooltip("Settings button in the Gameplay footer (replaces the old bottom-bar Settings tab). Opens the Settings panel.")]
+        [SerializeField] private Button settingsButton;
+        [Tooltip("Back button inside the Settings panel — returns to the Gameplay view.")]
+        [SerializeField] private Button settingsBackButton;
         [SerializeField] private Button gameplayInfoButton;
         [SerializeField] private GameObject gameplayInfoOverlay;
         [SerializeField] private TMP_Text gameplayInfoText;
@@ -70,6 +74,14 @@ namespace StackMerge
         [SerializeField] private GameObject solverTunePanel;
         [SerializeField] private TMP_Text solverTuneTitleText;
         [SerializeField] private TMP_Text solverTuneSummaryText;
+        [Tooltip("Container that the tuning parameter rows are instantiated into (one row per parameter).")]
+        [SerializeField] private RectTransform solverTuneRowsRoot;
+        [Tooltip("Prefab for a slider parameter. Needs a StackMergeTuneSliderRow component on its root.")]
+        [SerializeField] private StackMergeTuneSliderRow tuneSliderRowPrefab;
+        [Tooltip("Prefab for a button parameter (small whole-number values). Needs a StackMergeTuneButtonRow component on its root.")]
+        [SerializeField] private StackMergeTuneButtonRow tuneButtonRowPrefab;
+        // Legacy pre-built rows (no longer used — parameters are instantiated from prefabs now).
+        // Kept so the editor scene-builder reference wiring still compiles; hidden at runtime.
         [SerializeField] private GameObject[] solverTuneRows = Array.Empty<GameObject>();
         [SerializeField] private TMP_Text[] solverTuneNameTexts = Array.Empty<TMP_Text>();
         [SerializeField] private TMP_Text[] solverTuneValueTexts = Array.Empty<TMP_Text>();
@@ -162,7 +174,6 @@ namespace StackMerge
         private Button ppoTrainingButton;
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
-        private RectTransform[] solverTuneSegmentContainers;
         private int lastRenderedCapacity = -1;
         private bool boardLayoutDirty = true;
         private int lastScreenWidth;
@@ -658,6 +669,18 @@ namespace StackMerge
                 achievementBackButton.onClick.AddListener(CloseAchievementsPanel);
             }
 
+            if (settingsButton != null)
+            {
+                settingsButton.onClick.RemoveAllListeners();
+                settingsButton.onClick.AddListener(OpenSettingsPanel);
+            }
+
+            if (settingsBackButton != null)
+            {
+                settingsBackButton.onClick.RemoveAllListeners();
+                settingsBackButton.onClick.AddListener(CloseSettingsPanel);
+            }
+
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 int tabIndex = i;
@@ -822,18 +845,8 @@ namespace StackMerge
                 solverDetailTuneButton.onClick.AddListener(OpenSolverTunePanel);
             }
 
-            for (int i = 0; i < solverTuneSliders.Length; i++)
-            {
-                int slotIndex = i;
-                Slider slider = solverTuneSliders[i];
-                if (slider == null)
-                {
-                    continue;
-                }
-
-                slider.onValueChanged.RemoveAllListeners();
-                slider.onValueChanged.AddListener(value => SetSelectedSolverTuningFromDisplay(slotIndex, value));
-            }
+            // Slider rows are instantiated dynamically; their onValueChanged is wired in
+            // RefreshSolverTunePanel when each row is created.
 
             if (solverTuneBackButton != null)
             {
@@ -991,6 +1004,18 @@ namespace StackMerge
             SelectTab(0);
         }
 
+        // Settings is reached from the Gameplay footer (not the bottom bar). It still lives at
+        // tab index 6 internally, so SelectTab handles showing/hiding the panel.
+        private void OpenSettingsPanel()
+        {
+            SelectTab(6);
+        }
+
+        private void CloseSettingsPanel()
+        {
+            SelectTab(0);
+        }
+
         private void OpenGameplayInfo()
         {
             gameplayInfoOpen = true;
@@ -1037,12 +1062,20 @@ namespace StackMerge
 
         private void RefreshTabButtons()
         {
-            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research", "Settings" };
+            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research" };
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 Button button = tabButtons[i];
                 if (button == null)
                 {
+                    continue;
+                }
+
+                // Settings is no longer a bottom-bar tab — it opens from the Gameplay footer.
+                // Hide any leftover 7th (or later) tab button so it doesn't show on the bar.
+                if (i >= 6)
+                {
+                    SetActive(button.gameObject, false);
                     continue;
                 }
 
@@ -1613,7 +1646,9 @@ namespace StackMerge
 
         private void EnsureResearchTabButton()
         {
-            if (tabButtons == null || tabButtons.Length >= 7 || tabButtons.Length == 0)
+            // A 6+ tab bar already contains Research at index 5, so nothing to inject. (Guard is
+            // >= 6, not >= 7, because Settings is no longer a bottom-bar tab.)
+            if (tabButtons == null || tabButtons.Length >= 6 || tabButtons.Length == 0)
             {
                 return;
             }
@@ -2478,9 +2513,8 @@ namespace StackMerge
             string lockedInfo = isMachineLearning
                 ? $"{progression.GetMachineLearningGateStatus()}\nCost: {FormatNumber(definition.Cost)} chips"
                 : $"Unlock this algorithm to reveal details.\nCost: {FormatNumber(definition.Cost)} chips";
-            SetText(solverDetailInfoText, unlocked
-                ? isMachineLearning ? $"{definition.Description}\n\n{progression.GetMachineLearningStatus()}" : definition.Description
-                : lockedInfo);
+            // PPO runtime statistics are intentionally not shown here — they live in the History menu.
+            SetText(solverDetailInfoText, unlocked ? definition.Description : lockedInfo);
             SetButtonText(solverDetailTuneButton,
                 !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
             if (solverDetailTuneButton != null)
@@ -2499,9 +2533,9 @@ namespace StackMerge
                 return;
             }
 
-            string statusLabel = isMachineLearning
-                ? active ? $"Active | Lv {progression.MachineLearningLevel}" : $"Unlocked | Lv {progression.MachineLearningLevel}"
-                : active ? (solverDeselected ? "Paused — manual mode" : "Active") : "Unlocked";
+            string statusLabel = active
+                ? (!isMachineLearning && solverDeselected ? "Paused — manual mode" : "Active")
+                : "Unlocked";
             SetText(solverDetailStatusText, statusLabel);
             if (!isMachineLearning && active)
             {
@@ -2529,27 +2563,34 @@ namespace StackMerge
             SetText(solverTuneTitleText, $"{solverDefinition.DisplayName} tuning");
             SetText(solverTuneSummaryText, tuningDefinition.Summary);
 
-            for (int i = 0; i < solverTuneRows.Length; i++)
-            {
-                bool visible = i < tuningDefinition.Parameters.Length;
-                SetActive(solverTuneRows[i], visible);
-                if (!visible)
-                {
-                    continue;
-                }
+            HideLegacyTuneRows();
+            BuildTuneRows(tuningDefinition, tuning);
 
+            if (solverTuneResetButton != null)
+            {
+                solverTuneResetButton.interactable = !tuning.IsNeutral;
+            }
+        }
+
+        // Instantiates one row prefab per tuning parameter into solverTuneRowsRoot: a slider
+        // prefab for continuous parameters, a button prefab (one button per value) for the small
+        // whole-number ones.
+        private void BuildTuneRows(SolverTuningDefinition tuningDefinition, SolverTuningSettings tuning)
+        {
+            RectTransform root = solverTuneRowsRoot;
+            if (root == null)
+            {
+                return;
+            }
+
+            ClearInstantiatedRows<StackMergeTuneSliderRow>(root);
+            ClearInstantiatedRows<StackMergeTuneButtonRow>(root);
+
+            float y = 0f;
+            for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
+            {
                 SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
                 int value = tuning.GetSlotValue(i);
-
-                if (i < solverTuneNameTexts.Length)
-                {
-                    SetText(solverTuneNameTexts[i], parameter.DisplayName);
-                }
-
-                if (i < solverTuneDescriptionTexts.Length)
-                {
-                    SetText(solverTuneDescriptionTexts[i], parameter.Description);
-                }
 
                 // Small whole-number parameters become a row of buttons (one per value) showing the
                 // real resolved value, which is far clearer than a slider snapping to "-3".
@@ -2557,36 +2598,113 @@ namespace StackMerge
                     && parameter.MaxValue > parameter.MinValue
                     && (parameter.MaxValue - parameter.MinValue) <= 6;
 
-                if (i < solverTuneValueTexts.Length)
+                if (useSegments)
                 {
-                    SetText(solverTuneValueTexts[i], useSegments
-                        ? FormatWholeParamValue(selectedSolverId, parameter.Id, value)
-                        : parameter.FormatValue(value));
-                }
+                    if (tuneButtonRowPrefab == null)
+                    {
+                        Debug.LogWarning("StackMerge: Tune button row prefab not assigned — assign it on the Bootstrap in the Inspector.");
+                        continue;
+                    }
 
-                Slider slider = i < solverTuneSliders.Length ? solverTuneSliders[i] : null;
-                if (useSegments && slider != null)
-                {
-                    SetActive(slider.gameObject, false);
-                    BuildTuneSegments(i, slider.GetComponent<RectTransform>(), parameter, value);
+                    float height = RowHeightOf((RectTransform)tuneButtonRowPrefab.transform, 92f);
+                    StackMergeTuneButtonRow row = Instantiate(tuneButtonRowPrefab, root, false);
+                    PositionRow((RectTransform)row.transform, y, height);
+                    SetText(row.nameText, parameter.DisplayName);
+                    SetText(row.descriptionText, parameter.Description);
+                    SetText(row.valueText, FormatWholeParamValue(selectedSolverId, parameter.Id, value));
+                    BuildTuneButtons(row, i, parameter, value);
+                    y += height + 6f;
                 }
                 else
                 {
-                    HideTuneSegments(i);
-                    if (slider != null)
+                    if (tuneSliderRowPrefab == null)
                     {
-                        SetActive(slider.gameObject, true);
-                        slider.minValue = parameter.MinDisplayValue;
-                        slider.maxValue = parameter.MaxDisplayValue;
-                        slider.wholeNumbers = parameter.WholeNumbers;
-                        slider.SetValueWithoutNotify(parameter.ToDisplayValue(value));
+                        Debug.LogWarning("StackMerge: Tune slider row prefab not assigned — assign it on the Bootstrap in the Inspector.");
+                        continue;
                     }
+
+                    float height = RowHeightOf((RectTransform)tuneSliderRowPrefab.transform, 92f);
+                    StackMergeTuneSliderRow row = Instantiate(tuneSliderRowPrefab, root, false);
+                    PositionRow((RectTransform)row.transform, y, height);
+                    SetText(row.nameText, parameter.DisplayName);
+                    SetText(row.descriptionText, parameter.Description);
+                    SetText(row.valueText, parameter.FormatValue(value));
+
+                    if (row.slider != null)
+                    {
+                        int slot = i;
+                        row.slider.minValue = parameter.MinDisplayValue;
+                        row.slider.maxValue = parameter.MaxDisplayValue;
+                        row.slider.wholeNumbers = parameter.WholeNumbers;
+                        row.slider.SetValueWithoutNotify(parameter.ToDisplayValue(value));
+                        row.slider.onValueChanged.RemoveAllListeners();
+                        row.slider.onValueChanged.AddListener(v => SetSelectedSolverTuningFromDisplay(slot, v));
+                    }
+
+                    y += height + 6f;
                 }
             }
+        }
 
-            if (solverTuneResetButton != null)
+        // Clones the row prefab's single button once per selectable value. The active value's
+        // button is shown non-interactable so the Button's own disabled colour marks it.
+        private void BuildTuneButtons(StackMergeTuneButtonRow row, int slotIndex, SolverTuningParameterDefinition parameter, int currentValue)
+        {
+            Button template = row.buttonTemplate;
+            if (template == null)
             {
-                solverTuneResetButton.interactable = !tuning.IsNeutral;
+                return;
+            }
+
+            Transform parent = template.transform.parent;
+
+            // The row is freshly instantiated, so the prefab's single button is the only child.
+            // Make sure clones lay out side by side — but only add a layout group if the prefab's
+            // button container doesn't already have one (respects whatever you set up).
+            if (parent.GetComponent<LayoutGroup>() == null)
+            {
+                HorizontalLayoutGroup layout = parent.gameObject.AddComponent<HorizontalLayoutGroup>();
+                layout.spacing = 4f;
+                layout.childControlWidth = true;
+                layout.childControlHeight = true;
+                layout.childForceExpandWidth = true;
+                layout.childForceExpandHeight = true;
+                layout.childAlignment = TextAnchor.MiddleCenter;
+            }
+
+            int index = 0;
+            for (int raw = parameter.MinValue; raw <= parameter.MaxValue; raw++)
+            {
+                Button button = index == 0 ? template : Instantiate(template, parent, false);
+                index++;
+
+                int captured = raw;
+                bool selected = raw == currentValue;
+                SetButtonText(button, ResolveWholeParamValue(selectedSolverId, parameter.Id, raw).ToString());
+                button.onClick.RemoveAllListeners();
+                button.onClick.AddListener(() => SetSelectedSolverTuningRaw(slotIndex, captured));
+                button.interactable = !selected;
+
+                LayoutElement layoutElement = EnsureComponent<LayoutElement>(button.gameObject);
+                layoutElement.flexibleWidth = 1f;
+                layoutElement.minWidth = 24f;
+            }
+        }
+
+        // Defensively hides any legacy pre-built tuning rows still left in the scene.
+        private void HideLegacyTuneRows()
+        {
+            if (solverTuneRows == null)
+            {
+                return;
+            }
+
+            foreach (GameObject row in solverTuneRows)
+            {
+                if (row != null)
+                {
+                    row.SetActive(false);
+                }
             }
         }
 
@@ -2621,100 +2739,6 @@ namespace StackMerge
             }
         }
 
-        private void BuildTuneSegments(int rowIndex, RectTransform sliderRect, SolverTuningParameterDefinition parameter, int currentValue)
-        {
-            if (sliderRect == null)
-            {
-                return;
-            }
-
-            solverTuneSegmentContainers ??= new RectTransform[solverTuneRows.Length];
-            RectTransform container = rowIndex < solverTuneSegmentContainers.Length ? solverTuneSegmentContainers[rowIndex] : null;
-            if (container == null)
-            {
-                container = CreateRuntimePanel($"Tune Segments {rowIndex}", sliderRect.parent, new Color(0f, 0f, 0f, 0f));
-                Image containerImage = container.GetComponent<Image>();
-                if (containerImage != null)
-                {
-                    containerImage.raycastTarget = false;
-                }
-
-                HorizontalLayoutGroup layout = container.gameObject.AddComponent<HorizontalLayoutGroup>();
-                layout.spacing = 4f;
-                layout.childControlWidth = true;
-                layout.childControlHeight = true;
-                layout.childForceExpandWidth = true;
-                layout.childForceExpandHeight = true;
-                layout.childAlignment = TextAnchor.MiddleCenter;
-                if (rowIndex < solverTuneSegmentContainers.Length)
-                {
-                    solverTuneSegmentContainers[rowIndex] = container;
-                }
-            }
-
-            // Occupy exactly the slider's slot.
-            container.anchorMin = sliderRect.anchorMin;
-            container.anchorMax = sliderRect.anchorMax;
-            container.pivot = sliderRect.pivot;
-            container.offsetMin = sliderRect.offsetMin;
-            container.offsetMax = sliderRect.offsetMax;
-            SetActive(container.gameObject, true);
-
-            for (int c = container.childCount - 1; c >= 0; c--)
-            {
-                Destroy(container.GetChild(c).gameObject);
-            }
-
-            Sprite rounded = GetRoundedSprite(Color.white, Color.white, 12);
-            for (int raw = parameter.MinValue; raw <= parameter.MaxValue; raw++)
-            {
-                int captured = raw;
-                bool selected = raw == currentValue;
-                string label = ResolveWholeParamValue(selectedSolverId, parameter.Id, raw).ToString();
-                CreateSegmentButton(container, label, selected, rounded, () => SetSelectedSolverTuningRaw(rowIndex, captured));
-            }
-        }
-
-        private void HideTuneSegments(int rowIndex)
-        {
-            if (solverTuneSegmentContainers == null || rowIndex >= solverTuneSegmentContainers.Length)
-            {
-                return;
-            }
-
-            RectTransform container = solverTuneSegmentContainers[rowIndex];
-            if (container != null)
-            {
-                SetActive(container.gameObject, false);
-            }
-        }
-
-        private void CreateSegmentButton(RectTransform container, string label, bool selected, Sprite rounded, UnityEngine.Events.UnityAction onClick)
-        {
-            Color color = selected ? HexColor("#2563EB") : HexColor("#1E293B");
-            RectTransform rect = CreateRuntimePanel("Seg", container, color);
-            Image image = rect.GetComponent<Image>();
-            if (image != null)
-            {
-                image.sprite = rounded;
-                image.type = Image.Type.Sliced;
-                image.color = color;
-            }
-
-            Button button = rect.gameObject.AddComponent<Button>();
-            button.targetGraphic = image;
-            button.onClick.AddListener(onClick);
-
-            LayoutElement layoutElement = rect.gameObject.AddComponent<LayoutElement>();
-            layoutElement.flexibleWidth = 1f;
-            layoutElement.minWidth = 24f;
-
-            TMP_Text text = CreateRuntimeText("Label", rect, label, 15, FontStyles.Bold, TextAlignmentOptions.Center, selected ? Color.white : HexColor("#CBD5E1"));
-            Stretch(text.rectTransform, 1f, 1f, 1f, 1f);
-            text.enableAutoSizing = true;
-            text.fontSizeMin = 9;
-            text.fontSizeMax = 15;
-        }
 
         private void SetSelectedSolverTuningRaw(int slotIndex, int rawValue)
         {
@@ -3026,8 +3050,9 @@ namespace StackMerge
                     : !progression.AllModifiersMaxed ? "Stage 3 - Modifier Lab"
                     : !progression.IsSolverUnlocked(SolverId.MachineLearning) ? "Stage 4 - Machine Learning"
                     : "Endgame - PPO training";
+                // PPO runtime statistics are intentionally not shown here — they live in the History menu.
                 string nextGoal = progression.IsSolverUnlocked(SolverId.MachineLearning)
-                    ? progression.GetMachineLearningStatus()
+                    ? "Train PPO, then prestige from the Research menu."
                     : progression.ModifiersMenuUnlocked
                     ? progression.AllModifiersMaxed ? "PPO is ready to unlock in Algorithms." : "Max every Modifier to open the Machine Learning layer."
                     : progression.GetModifiersGateStatus();

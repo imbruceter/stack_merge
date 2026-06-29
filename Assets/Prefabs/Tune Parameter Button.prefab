@@ -829,6 +829,7 @@ GameObject:
   - component: {fileID: 7054678544982129631}
   - component: {fileID: 597444120145183446}
   - component: {fileID: 5862826932748111807}
+  - component: {fileID: 6258750238222947367}
   m_Layer: 0
   m_Name: Tune Parameter Button
   m_TagString: Untagged
@@ -936,6 +937,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.ContentSizeFitter
   m_HorizontalFit: 0
   m_VerticalFit: 2
+--- !u!114 &6258750238222947367
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7212154217166644843}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2b1509b91b5b48247ba4c8f3d5d652b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeTuneButtonRow
+  nameText: {fileID: 931427638997298687}
+  valueText: {fileID: 5220970649259273912}
+  descriptionText: {fileID: 956385035290155923}
+  buttonTemplate: {fileID: 4538811734424458197}
 --- !u!1 &8906139137638424120
 GameObject:
   m_ObjectHideFlags: 0
