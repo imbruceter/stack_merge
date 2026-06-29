@@ -3426,11 +3426,14 @@ namespace StackMerge
 
             SetText(
                 historySummaryText,
-                $"Stored runs: {history.Length}/250 | Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)}) | Best: {FormatNumber(best.score)} ({SolverName(best.solverId)})  —  tap a solver's  i  for its detail & score history");
+                $"Stored runs: {history.Length}/250\n" +
+                $"Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)})\n" +
+                $"Highest: {FormatNumber(best.score)} ({SolverName(best.solverId)})\n" +
+                $"Highest median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)})");
 
-            SetText(
-                historyInsightText,
-                $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Trend = last {trendCount} runs (chronological), more honest than a single aggregate median");
+            //SetText(
+            //    historyInsightText,
+            //    $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Trend = last {trendCount} runs (chronological), more honest than a single aggregate median");
 
             DrawTrendChart(history);
             BuildSolverList(solverStats);
@@ -3583,7 +3586,13 @@ namespace StackMerge
             int completed = StackMergeProgression.Achievements.Count(progression.IsAchievementComplete);
             SetText(
                 achievementStatsText,
-                $"Completed goals: {completed}/{StackMergeProgression.Achievements.Length} | Runs: {FormatNumber(progression.RunsCompleted)} ({FormatNumber(progression.ManualRunsCompleted)} manual) | Merges: {FormatNumber(progression.TotalMerges)} | Highest: {FormatNumber(progression.HighestBlockEver)} | Earned: {FormatNumber(progression.TotalChipsEarned)} | Spent: {FormatNumber(progression.TotalChipsSpent)} | Best run: {FormatNumber(progression.BestRunScore)}");
+                $"Completed goals: {completed}/{StackMergeProgression.Achievements.Length}\n" +
+                $"Runs: {FormatNumber(progression.RunsCompleted)} ({FormatNumber(progression.ManualRunsCompleted)} manual)\n" +
+                $"Merges: {FormatNumber(progression.TotalMerges)}\n" +
+                $"Highest: {FormatNumber(progression.HighestBlockEver)}\n" +
+                $"Earned: {FormatNumber(progression.TotalChipsEarned)}\n" +
+                $"Spent: {FormatNumber(progression.TotalChipsSpent)}\n" +
+                $"Best run: {FormatNumber(progression.BestRunScore)}");
 
             string[][] rows = StackMergeProgression.Achievements
                 .Select(achievement =>
