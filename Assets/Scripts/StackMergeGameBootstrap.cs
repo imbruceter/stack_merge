@@ -190,6 +190,7 @@ namespace StackMerge
         private bool currentRunUsedAutoSolve;
         private int currentRunManualMoves;
         private float currentRunElapsed;
+        private long currentRunChipsEarned;
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
@@ -323,6 +324,7 @@ namespace StackMerge
             }
 
             TickAutomation();
+            MaybeEndStuckRun();
             TickBlockAnimations();
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -1211,6 +1213,12 @@ namespace StackMerge
             {
                 ApplySolverDecision(decision);
             }
+            else if (!gameState.IsGameOver && !gameState.HasLegalMove())
+            {
+                // Solver produced no move and there is no legal placement: it's stuck (it would
+                // have returned a pickaxe / queue-skip move if it wanted one). End the run.
+                EndStuckRun();
+            }
         }
 
         private IStackMergeSolver GetSelectedSolver()
@@ -1277,6 +1285,7 @@ namespace StackMerge
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             long chipsGained = progression.AwardMove(result, machineLearningTraining);
+            currentRunChipsEarned += chipsGained;
             if (progression.SelectedSolver == SolverId.MachineLearning && autoSolverMove)
             {
                 progression.ObserveMachineLearningMove(result, gameState, machineLearningTraining);
@@ -1294,26 +1303,7 @@ namespace StackMerge
             long runBonus = 0;
             if (!wasGameOver && result.IsGameOver)
             {
-                bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
-                SolverId histSolverId = manualRun ? (SolverId)(-1) : progression.SelectedSolver;
-                runBonus = progression.AwardRunCompleted(
-                    gameState.Score,
-                    histSolverId,
-                    gameState.BlocksDropped,
-                    gameState.TotalMerges,
-                    gameState.HighestMergedBlock,
-                    manualRun,
-                    currentRunElapsed,
-                    machineLearningTraining);
-                if (progression.SelectedSolver == SolverId.MachineLearning)
-                {
-                    progression.AwardMachineLearningRun(
-                        gameState.Score,
-                        gameState.BlocksDropped,
-                        gameState.TotalMerges,
-                        gameState.HighestMergedBlock,
-                        machineLearningTraining);
-                }
+                runBonus = CompleteRun(machineLearningTraining);
             }
 
             progression.Save();
@@ -1353,6 +1343,77 @@ namespace StackMerge
             }
         }
 
+        // Awards the run-completion rewards (chips, history, ML run) for the current game state.
+        // Shared by the normal end-of-run path and the stuck-run path.
+        private long CompleteRun(bool machineLearningTraining)
+        {
+            bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
+            SolverId histSolverId = manualRun ? (SolverId)(-1) : progression.SelectedSolver;
+            long runBonus = progression.AwardRunCompleted(
+                gameState.Score,
+                histSolverId,
+                gameState.BlocksDropped,
+                gameState.TotalMerges,
+                gameState.HighestMergedBlock,
+                manualRun,
+                currentRunElapsed,
+                machineLearningTraining);
+            if (progression.SelectedSolver == SolverId.MachineLearning)
+            {
+                progression.AwardMachineLearningRun(
+                    gameState.Score,
+                    gameState.BlocksDropped,
+                    gameState.TotalMerges,
+                    gameState.HighestMergedBlock,
+                    machineLearningTraining);
+            }
+
+            currentRunChipsEarned += runBonus;
+            return runBonus;
+        }
+
+        // Manual play has no pickaxe / queue-skip UI, so HasAvailableAction() can stay true (those
+        // tools are "available") while the player has no legal placement — a softlock. Detect that
+        // and end the run. The auto-solver handles its own stuck case in TickAutomation.
+        private void MaybeEndStuckRun()
+        {
+            if (gameState == null || progression == null || gameState.IsGameOver)
+            {
+                return;
+            }
+
+            if (progression.IsMachineLearningTrainingActive)
+            {
+                return;
+            }
+
+            // When the auto-solver is actively playing, let it use pickaxe / queue-skip; its tick
+            // ends the run if it returns no move.
+            bool autoSolverActive = progression.AutoSolveEnabled && !solverDeselected;
+            if (autoSolverActive)
+            {
+                return;
+            }
+
+            if (gameState.HasLegalMove())
+            {
+                return;
+            }
+
+            EndStuckRun();
+        }
+
+        private void EndStuckRun()
+        {
+            bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
+            gameState.ForceGameOver();
+            CompleteRun(machineLearningTraining);
+            progression.Save();
+            UpdateHighScore();
+            SetText(feedbackText, "No moves left — run over");
+            RefreshEverything();
+        }
+
         public void StartNewGame()
         {
             CreateFreshGame();
@@ -1372,6 +1433,7 @@ namespace StackMerge
             currentRunUsedAutoSolve = false;
             currentRunManualMoves = 0;
             currentRunElapsed = 0f;
+            currentRunChipsEarned = 0L;
         }
 
         private void UpdateHighScore()
@@ -2405,6 +2467,13 @@ namespace StackMerge
             SetText(chipsTexts, $"<sprite name=\"chips\"> {FormatNumber(progression.Chips)}");
             SetText(insightsTexts, $"<sprite name=\"insight\"> {FormatNumber(progression.ResearchInsight)}");
             SetText(tokensText, $"<sprite name=\"token\"> {FormatNumber(progression.Tokens)}");
+
+            // TMP reports a stale preferred width on the first frame (its mesh isn't generated yet),
+            // so ContentSizeFitter + Horizontal Layout Group pills mis-size until something forces a
+            // relayout. Force it here so the currency pills are correct immediately on start.
+            RebuildCurrencyLayout(chipsTexts);
+            RebuildCurrencyLayout(insightsTexts);
+            RebuildTextLayout(tokensText);
             if (solverDeselected)
             {
                 SetText(solverText, $"Manual  ({GetSelectedSolver().DisplayName} paused)");
@@ -2436,6 +2505,48 @@ namespace StackMerge
             if (feedbackText != null)
             {
                 feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#5EEAD4");
+            }
+        }
+
+        private static void RebuildCurrencyLayout(TMP_Text[] texts)
+        {
+            if (texts == null)
+            {
+                return;
+            }
+
+            foreach (TMP_Text text in texts)
+            {
+                RebuildTextLayout(text);
+            }
+        }
+
+        // Forces TMP to (re)generate its mesh and rebuilds the outermost Layout Group ancestor so
+        // ContentSizeFitter pills size to their content immediately, instead of after a stray click.
+        private static void RebuildTextLayout(TMP_Text text)
+        {
+            if (text == null)
+            {
+                return;
+            }
+
+            text.ForceMeshUpdate();
+
+            RectTransform target = null;
+            Transform t = text.transform;
+            while (t != null)
+            {
+                if (t.GetComponent<LayoutGroup>() != null)
+                {
+                    target = t as RectTransform;
+                }
+
+                t = t.parent;
+            }
+
+            if (target != null)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(target);
             }
         }
 
@@ -2974,7 +3085,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    label += $"\n{FormatNumber(definition.Cost)} chips";
+                    label += $"\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}";
                 }
 
                 SetButtonText(button, label);
@@ -3005,7 +3116,7 @@ namespace StackMerge
                 {
                     AgentDefinition definition = progression.GetAgentDefinition((AgentId)activeAgentId);
                     SetText(text, $"Slot {i + 1}\n{definition.DisplayName}");
-                    text.color = HexColor("#FDE68A");
+                    text.color = HexColor("#FFFFFF");
                 }
                 else if (i >= progression.ActiveAgentSlots)
                 {
@@ -3026,7 +3137,7 @@ namespace StackMerge
             if (!progression.AgentsMenuUnlocked)
             {
                 SetText(agentDetailNameText, "Agents Locked");
-                SetText(agentDetailInfoText, $"Unlock the Agents menu in Upgrades.\n<sprite name=\"chips\"> {FormatNumber(progression.GetAgentsMenuUnlockCost())}");
+                SetText(agentDetailInfoText, $"Unlock the Agents menu in Upgrades.");
                 SetText(agentDetailStatusText, "Locked");
                 SetButtonText(agentDetailActionButton, "Unlock in\nUpgrades");
                 if (agentDetailActionButton != null)
@@ -3041,12 +3152,12 @@ namespace StackMerge
             bool active = progression.IsAgentActive(selectedAgentId);
 
             SetText(agentDetailNameText, definition.DisplayName);
-            SetText(agentDetailInfoText, unlocked ? definition.Description : $"{definition.LockedHint}\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}");
+            SetText(agentDetailInfoText, unlocked ? definition.Description : $"{definition.LockedHint}");
 
             if (!unlocked)
             {
                 SetText(agentDetailStatusText, "Locked");
-                SetButtonText(agentDetailActionButton, $"Buy\n{FormatNumber(definition.Cost)}");
+                SetButtonText(agentDetailActionButton, $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
                 if (agentDetailActionButton != null)
                 {
                     agentDetailActionButton.interactable = progression.Chips >= definition.Cost;
@@ -4362,8 +4473,11 @@ namespace StackMerge
                 return;
             }
 
-            SetText(gameOverScoreText, $"Score: {FormatNumber(gameState.Score)}");
-            SetText(gameOverBestText, $"Highest: {FormatNumber(highScore)}");
+            SetText(gameOverScoreText, $"Score {FormatNumber(gameState.Score)}");
+            SetText(gameOverBestText,
+                $"Moves {FormatNumber(gameState.BlocksDropped)}   Merges {FormatNumber(gameState.TotalMerges)}\n" +
+                $"Highest block {FormatNumber(gameState.HighestMergedBlock)}\n" +
+                $"+{FormatNumber(currentRunChipsEarned)} chips earned");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");

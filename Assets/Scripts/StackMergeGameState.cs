@@ -190,6 +190,15 @@ namespace StackMerge
             return HasLegalMove() || (queueSkipsRemaining > 0 && nextBlocks.Count > 0) || HasPickaxeTarget();
         }
 
+        /// <summary>
+        /// Forces the run to end. Used when the player is stuck with no legal placement and the
+        /// only "available actions" (pickaxe / queue skip) have no manual UI to trigger them.
+        /// </summary>
+        public void ForceGameOver()
+        {
+            IsGameOver = true;
+        }
+
         public int[] GetLegalMoveIndices()
         {
             if (IsGameOver)
