@@ -1093,9 +1093,9 @@ namespace StackMerge
 
                 if (label != null)
                 {
-                    label.text = lockedModifierTab ? "Modifiers\nLocked"
-                        : lockedAgentTab ? "Agent\nLocked"
-                        : lockedResearchTab ? "Research\nLocked"
+                    label.text = lockedModifierTab ? "Modifiers"
+                        : lockedAgentTab ? "Agents"
+                        : lockedResearchTab ? "Research"
                         : i < labels.Length ? labels[i] : label.text;
                     label.color = locked ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
                 }
@@ -2516,7 +2516,7 @@ namespace StackMerge
             SetText(solverDetailNameText, definition.DisplayName);
             string lockedInfo = isMachineLearning
                 ? $"{progression.GetMachineLearningGateStatus()}\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}"
-                : $"Unlock this algorithm to reveal details.\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}";
+                : $"Unlock this algorithm to reveal details.";
             // PPO runtime statistics are intentionally not shown here — they live in the History menu.
             SetText(solverDetailInfoText, unlocked ? definition.Description : lockedInfo);
             SetButtonText(solverDetailTuneButton,
@@ -2529,7 +2529,7 @@ namespace StackMerge
             if (!unlocked)
             {
                 SetText(solverDetailStatusText, isMachineLearning && !machineLearningGateReady ? "Stage locked" : "Locked");
-                SetButtonText(solverDetailActionButton, isMachineLearning && !machineLearningGateReady ? "Needs all\nModifiers" : $"Unlock\n{FormatNumber(definition.Cost)}");
+                SetButtonText(solverDetailActionButton, isMachineLearning && !machineLearningGateReady ? "Needs all\nModifiers" : $"Unlock\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
                 if (solverDetailActionButton != null)
                 {
                     solverDetailActionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
@@ -4362,8 +4362,8 @@ namespace StackMerge
                 return;
             }
 
-            SetText(gameOverScoreText, $"Pont: {FormatNumber(gameState.Score)}");
-            SetText(gameOverBestText, $"Rekord: {FormatNumber(highScore)}");
+            SetText(gameOverScoreText, $"Score: {FormatNumber(gameState.Score)}");
+            SetText(gameOverBestText, $"Highest: {FormatNumber(highScore)}");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");
