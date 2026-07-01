@@ -363,7 +363,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1472892447}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.43199772}
+  m_AnchorMin: {x: 0, y: 0.43199778}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
@@ -1726,7 +1726,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 8
   nameText: {fileID: 67889665}
-  costText: {fileID: 180385182}
+  descriptionText: {fileID: 180385182}
   button: {fileID: 2002611735}
 --- !u!1 &55044472
 GameObject:
@@ -3139,7 +3139,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Risk 1 (1/3)
+  m_text: +odds (1/3)
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 9cfcd3e8a1adb3f43ba76bfe2cacfb4a, type: 2}
   m_sharedMaterial: {fileID: -3109377931784611548, guid: 9cfcd3e8a1adb3f43ba76bfe2cacfb4a, type: 2}
@@ -3612,7 +3612,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 3
   nameText: {fileID: 2090986369}
-  costText: {fileID: 1072806432}
+  descriptionText: {fileID: 1072806432}
   button: {fileID: 562265225}
 --- !u!1 &104551110
 GameObject:
@@ -13962,7 +13962,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 4
   nameText: {fileID: 284379380}
-  costText: {fileID: 1557002855}
+  descriptionText: {fileID: 1557002855}
   button: {fileID: 1570039309}
 --- !u!1 &405738656
 GameObject:
@@ -15495,9 +15495,9 @@ RectTransform:
   - {fileID: 704410338}
   m_Father: {fileID: 1062542011}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 573.34314, y: -35}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 70}
   m_Pivot: {x: 1, y: 0.5}
 --- !u!114 &441774914
@@ -18226,7 +18226,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 5
   nameText: {fileID: 692883778}
-  costText: {fileID: 1914482233}
+  descriptionText: {fileID: 1914482233}
   button: {fileID: 414057899}
 --- !u!1 &525200822
 GameObject:
@@ -24031,7 +24031,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 4
   nameText: {fileID: 1128981755}
-  costText: {fileID: 620598073}
+  descriptionText: {fileID: 620598073}
   button: {fileID: 869773639}
 --- !u!1 &691985576
 GameObject:
@@ -27368,7 +27368,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 0
   nameText: {fileID: 686740599}
-  costText: {fileID: 137080624}
+  descriptionText: {fileID: 137080624}
   button: {fileID: 242071656}
 --- !u!1 &762997339
 GameObject:
@@ -29432,7 +29432,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 6
   nameText: {fileID: 1579842417}
-  costText: {fileID: 153196805}
+  descriptionText: {fileID: 153196805}
   button: {fileID: 1820037478}
 --- !u!1 &849088301
 GameObject:
@@ -29643,9 +29643,9 @@ RectTransform:
   - {fileID: 805552369}
   m_Father: {fileID: 1062542011}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 453.34314, y: -35}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 70}
   m_Pivot: {x: 1, y: 0.5}
 --- !u!114 &855411279
@@ -32250,7 +32250,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 1
   nameText: {fileID: 272456507}
-  costText: {fileID: 1244549310}
+  descriptionText: {fileID: 1244549310}
   button: {fileID: 697116764}
 --- !u!1 &939098491
 GameObject:
@@ -33384,10 +33384,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1320885989}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 451.67157, y: -130.95998}
-  m_SizeDelta: {x: 883.34314, y: 161.27997}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &958621195
 CanvasRenderer:
@@ -38413,9 +38413,9 @@ RectTransform:
   - {fileID: 691706112}
   m_Father: {fileID: 1062542011}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 903.34314, y: -35}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 70}
   m_Pivot: {x: 1, y: 0.5}
 --- !u!114 &1116802858
@@ -40319,7 +40319,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 1
   nameText: {fileID: 727144095}
-  costText: {fileID: 489427442}
+  descriptionText: {fileID: 489427442}
   button: {fileID: 235095878}
 --- !u!1 &1160532596
 GameObject:
@@ -41241,7 +41241,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 6
   nameText: {fileID: 154999273}
-  costText: {fileID: 836359354}
+  descriptionText: {fileID: 836359354}
   button: {fileID: 539556622}
 --- !u!1 &1190652079
 GameObject:
@@ -42027,7 +42027,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 2
   nameText: {fileID: 1307758127}
-  costText: {fileID: 637691344}
+  descriptionText: {fileID: 637691344}
   button: {fileID: 1156739974}
 --- !u!1 &1206360154
 GameObject:
@@ -42797,7 +42797,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 7
   nameText: {fileID: 1071115154}
-  costText: {fileID: 145505278}
+  descriptionText: {fileID: 145505278}
   button: {fileID: 1371072976}
 --- !u!1 &1238798268
 GameObject:
@@ -46313,7 +46313,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: -674.4852}
-  m_SizeDelta: {x: 0, y: -1607.1246}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1320885990
 MonoBehaviour:
@@ -49172,7 +49172,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1414468460
 RectTransform:
   m_ObjectHideFlags: 0
@@ -50703,7 +50703,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 5
   nameText: {fileID: 20607627}
-  costText: {fileID: 942411572}
+  descriptionText: {fileID: 942411572}
   button: {fileID: 1490278663}
 --- !u!1 &1477893504
 GameObject:
@@ -55360,7 +55360,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 3
   nameText: {fileID: 590054134}
-  costText: {fileID: 1727895967}
+  descriptionText: {fileID: 1727895967}
   button: {fileID: 943023847}
 --- !u!1 &1620909421
 GameObject:
@@ -56305,7 +56305,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Difficulty Scaling
+  m_text: Higher blocks spawn
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 9cfcd3e8a1adb3f43ba76bfe2cacfb4a, type: 2}
   m_sharedMaterial: {fileID: -3109377931784611548, guid: 9cfcd3e8a1adb3f43ba76bfe2cacfb4a, type: 2}
@@ -59052,10 +59052,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1594081684}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 451.67157, y: 0}
-  m_SizeDelta: {x: 903.34314, y: 56.38}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 1}
 --- !u!114 &1761760798
 MonoBehaviour:
@@ -60588,9 +60588,9 @@ RectTransform:
   - {fileID: 599692229}
   m_Father: {fileID: 1062542011}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 783.34314, y: -35}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 190, y: 70}
   m_Pivot: {x: 1, y: 0.5}
 --- !u!114 &1814192214
@@ -62080,10 +62080,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1320885989}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 451.67157, y: -30.159973}
-  m_SizeDelta: {x: 883.34314, y: 40.319992}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &1868250500
 CanvasRenderer:
@@ -64495,7 +64495,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeModifierCard
   modifierId: 2
   nameText: {fileID: 712758913}
-  costText: {fileID: 609008107}
+  descriptionText: {fileID: 609008107}
   button: {fileID: 1140091372}
 --- !u!1 &1936702157
 GameObject:
@@ -66177,10 +66177,10 @@ RectTransform:
   - {fileID: 2129006257}
   m_Father: {fileID: 1594081684}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 451.67157, y: -118.19}
-  m_SizeDelta: {x: 903.34314, y: 123.62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1979220854
 MonoBehaviour:
@@ -71687,7 +71687,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: StackMerge.Runtime::StackMerge.StackMergeAgentCard
   agentId: 0
   nameText: {fileID: 371678642}
-  costText: {fileID: 419603724}
+  descriptionText: {fileID: 419603724}
   button: {fileID: 1979608847}
 --- !u!1 &2139986280
 GameObject:

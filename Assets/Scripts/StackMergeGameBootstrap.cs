@@ -3236,7 +3236,7 @@ namespace StackMerge
                 if (!progression.AgentsMenuUnlocked)
                 {
                     SetText(text, i == 0 ? "Agents\nLocked" : "Unlock in\nUpgrades");
-                    text.color = HexColor("#64748B");
+                    //text.color = HexColor("#64748B");
                     continue;
                 }
 
@@ -3245,17 +3245,17 @@ namespace StackMerge
                 {
                     AgentDefinition definition = progression.GetAgentDefinition((AgentId)activeAgentId);
                     SetText(text, $"Slot {i + 1}\n{definition.DisplayName}");
-                    text.color = HexColor("#FFFFFF");
+                    //text.color = HexColor("#FFFFFF");
                 }
                 else if (i >= progression.ActiveAgentSlots)
                 {
                     SetText(text, "Bonus slot\nNeeds upgrade");
-                    text.color = HexColor("#64748B");
+                    //text.color = HexColor("#64748B");
                 }
                 else
                 {
                     SetText(text, $"Slot {i + 1}\nEmpty");
-                    text.color = HexColor("#CBD5E1");
+                    //text.color = HexColor("#CBD5E1");
                 }
             }
         }
@@ -3332,10 +3332,11 @@ namespace StackMerge
 
                 AgentDefinition definition = progression.GetAgentDefinition(card.agentId);
                 SetText(card.nameText, definition.DisplayName);
+                SetText(card.descriptionText, definition.Description);
 
                 if (!progression.AgentsMenuUnlocked)
                 {
-                    SetText(card.costText, "Locked");
+                    SetButtonText(card.button, "Locked");
                     if (card.button != null) card.button.interactable = false;
                     continue;
                 }
@@ -3343,7 +3344,7 @@ namespace StackMerge
                 bool unlocked = progression.IsAgentUnlocked(card.agentId);
                 if (!unlocked)
                 {
-                    SetText(card.costText, $"<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                    SetButtonText(card.button, $"<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
                     if (card.button != null) card.button.interactable = progression.Chips >= definition.Cost;
                     continue;
                 }
@@ -3351,13 +3352,13 @@ namespace StackMerge
                 bool active = progression.IsAgentActive(card.agentId);
                 if (active)
                 {
-                    SetText(card.costText, "Deselect");
+                    SetButtonText(card.button, "Deselect");
                     if (card.button != null) card.button.interactable = true;
                 }
                 else
                 {
                     bool hasFreeSlot = progression.ActiveAgentCount < progression.ActiveAgentSlots;
-                    SetText(card.costText, "Select");
+                    SetButtonText(card.button, "Select");
                     if (card.button != null) card.button.interactable = hasFreeSlot;
                 }
             }
@@ -3511,10 +3512,11 @@ namespace StackMerge
 
                 ModifierDefinition definition = progression.GetModifierDefinition(card.modifierId);
                 SetText(card.nameText, definition.DisplayName);
+                SetText(card.descriptionText, definition.Description);
 
                 if (!progression.ModifiersMenuUnlocked)
                 {
-                    SetText(card.costText, "Locked");
+                    SetButtonText(card.button, "Locked");
                     if (card.button != null) card.button.interactable = false;
                     continue;
                 }
@@ -3522,13 +3524,13 @@ namespace StackMerge
                 bool maxed = progression.IsModifierMaxed(card.modifierId);
                 if (maxed)
                 {
-                    SetText(card.costText, "Maxed");
+                    SetButtonText(card.button, "Maxed");
                     if (card.button != null) card.button.interactable = false;
                 }
                 else
                 {
                     long cost = progression.GetModifierUpgradeCost(card.modifierId);
-                    SetText(card.costText, $"<sprite name=\"chips\"> {FormatNumber(cost)}");
+                    SetButtonText(card.button, $"<sprite name=\"chips\"> {FormatNumber(cost)}");
                     if (card.button != null) card.button.interactable = progression.Chips >= cost;
                 }
             }
@@ -3713,7 +3715,7 @@ namespace StackMerge
             {
                 int level = progression.DifficultyLevel;
                 int maxLevel = progression.MaxDifficultyLevel;
-                string name = $"Harder blocks spawn ({level}/{maxLevel})";
+                string name = $"+odds ({level}/{maxLevel})";
                 if (progression.IsMaxDifficulty)
                 {
                     SetUpgradeButtonLabels(difficultyUpgradeButton, name, "Maxed", false);
