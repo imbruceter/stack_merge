@@ -263,26 +263,26 @@ namespace StackMerge
 
         public static readonly AgentDefinition[] Agents =
         {
-            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% chips from merge rewards."),
-            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% chips from new highest-block rewards."),
-            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into chips.", "+60% chips from end-of-run score bonus."),
+            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% <sprite name=\"chips\"> from merge rewards."),
+            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% <sprite name=\"chips\"> from new highest-block rewards."),
+            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into <sprite name=\"chips\">.", "+60% <sprite name=\"chips\"> from end-of-run score bonus."),
             new(AgentId.Overclocker, "Overclocker", 400000, "Runs the solver faster.", "Solver move interval is 25% shorter."),
-            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 chips on every successful placement."),
+            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 <sprite name=\"chips\"> on every successful placement."),
             new(AgentId.RestartSponsor, "Restart Sponsor", 1000000, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
             new(AgentId.TokenProspector, "Token Prospector", 1500000, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
-            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run chips gain a bonus from total moves completed."),
-            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run chips gain a throughput bonus from moves per second.")
+            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run <sprite name=\"chips\"> gain a bonus from total moves completed."),
+            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run <sprite name=\"chips\"> gain a throughput bonus from moves per second.")
         };
 
         public static readonly ModifierDefinition[] Modifiers =
         {
-            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run: if a full stack receives a non-merge block, its bottom block is removed without reducing score.", 800000, 1600000, 3200000, 6400000, 12800000),
-            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more chips.", "Permanent unlock: merge rewards are doubled on every run after purchase.", 3000000),
-            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge: if the top and bottom block of a stack match, they merge through the stack.", 3000000),
+            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run. If a full stack receives a non-merge block, its bottom block is removed without reducing score.", 800000, 1600000, 3200000, 6400000, 12800000),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more <sprite name=\"chips\">.", "Merge rewards are permanently doubled on every run after purchase.", 3000000),
+            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge. If the top and bottom block of a stack match, they merge through the stack.", 3000000),
             new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 4500000),
-            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one solver-controlled pickaxe use per run. The solver may delete any block in any stack, including middle blocks, to open space or trigger merges.", 2000000, 4000000, 8000000, 16000000, 32000000),
-            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one solver-controlled queue skip per run. The current next block is removed and the following block moves forward.", 1800000, 3600000, 7200000, 14400000, 28800000),
-            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "Permanent unlock: MOCA, MOCA+, and MCTS run about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 6000000)
+            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one pickaxe use per run. The solver may delete any block in any stack.", 2000000, 4000000, 8000000, 16000000, 32000000),
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one queue skip per run. The current next block is removed and the following block moves forward.", 1800000, 3600000, 7200000, 14400000, 28800000),
+            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "MOCA, MOCA+, and MCTS run permanently about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 6000000)
         };
 
         public static readonly AchievementDefinition[] Achievements =
@@ -507,6 +507,17 @@ namespace StackMerge
         public int MonteCarloRolloutDepth => 3 + data.speedLevel;
 
         public float MoveInterval => GetMoveInterval(SelectedSolver);
+
+        /// <summary>
+        /// Raw speed-upgrade effect at a given level, expressed as "% faster than base". Independent
+        /// of the active solver's own pacing multiplier and agent bonuses, so it's a stable number
+        /// for UI to display (unlike <see cref="MoveInterval"/>, which varies per solver).
+        /// </summary>
+        public static float GetSpeedUpgradeEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, MoveIntervals.Length - 1);
+            return (1f - MoveIntervals[clamped] / MoveIntervals[0]) * 100f;
+        }
 
         public bool IsMaxSpeed => data.speedLevel >= MoveIntervals.Length - 1;
 

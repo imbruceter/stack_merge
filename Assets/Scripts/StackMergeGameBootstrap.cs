@@ -99,15 +99,20 @@ namespace StackMerge
         [SerializeField] private Slider[] solverTuneSliders = Array.Empty<Slider>();
         [SerializeField] private Button solverTuneBackButton;
         [SerializeField] private Button solverTuneResetButton;
-        [SerializeField] private Button[] speedUpgradeButtons = Array.Empty<Button>();
+        [Tooltip("Single Solver Speed upgrade button (replaces the old one-button-per-level array). Needs a StackMergeButtonLabelPair component for its Name/Cost texts.")]
+        [SerializeField] private Button speedUpgradeButton;
         [SerializeField] private Button autoRestartButton;
         [SerializeField] private Button tokenPackButton;
         [SerializeField] private Button solverTuningUnlockButton;
         [SerializeField] private Button extraAgentSlotUpgradeButton;
-        [SerializeField] private Button[] stackCapacityUpgradeButtons = Array.Empty<Button>();
-        [SerializeField] private Button[] queuePreviewUpgradeButtons = Array.Empty<Button>();
-        [SerializeField] private Button[] incomeUpgradeButtons = Array.Empty<Button>();
-        [SerializeField] private Button[] difficultyUpgradeButtons = Array.Empty<Button>();
+        [Tooltip("Single Stack Capacity upgrade button. Needs a StackMergeButtonLabelPair component.")]
+        [SerializeField] private Button stackCapacityUpgradeButton;
+        [Tooltip("Single Next Preview upgrade button. Needs a StackMergeButtonLabelPair component.")]
+        [SerializeField] private Button queuePreviewUpgradeButton;
+        [Tooltip("Single Chip Yield upgrade button. Needs a StackMergeButtonLabelPair component.")]
+        [SerializeField] private Button incomeUpgradeButton;
+        [Tooltip("Single Difficulty Scaling upgrade button. Needs a StackMergeButtonLabelPair component.")]
+        [SerializeField] private Button difficultyUpgradeButton;
         [SerializeField] private TMP_Text progressionStageText;
         [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
@@ -125,6 +130,8 @@ namespace StackMerge
         [SerializeField] private TMP_Text modifierDetailInfoText;
         [SerializeField] private TMP_Text modifierDetailStatusText;
         [SerializeField] private Button modifierDetailActionButton;
+        [Tooltip("Static per-modifier cards already placed in the Modifiers menu (one per modifier, not instantiated at runtime).")]
+        [SerializeField] private StackMergeModifierCard[] modifierCards = Array.Empty<StackMergeModifierCard>();
         [SerializeField] private TMP_Text historySummaryText;
         [SerializeField] private RectTransform historyChartRoot;
         [SerializeField] private RectTransform historySolverTableRoot;
@@ -135,11 +142,16 @@ namespace StackMerge
         [SerializeField] private RectTransform achievementListRoot;
         [SerializeField] private Button achievementBackButton;
         [SerializeField] private Button[] agentButtons = Array.Empty<Button>();
+        // Legacy pre-redesign slot texts (no longer used — slots are StackMergeAgentSlot cards now).
         [SerializeField] private TMP_Text[] agentSlotTexts = Array.Empty<TMP_Text>();
         [SerializeField] private TMP_Text agentDetailNameText;
         [SerializeField] private TMP_Text agentDetailInfoText;
         [SerializeField] private TMP_Text agentDetailStatusText;
         [SerializeField] private Button agentDetailActionButton;
+        [Tooltip("Static per-agent cards already placed in the Agents menu (one per agent, not instantiated at runtime).")]
+        [SerializeField] private StackMergeAgentCard[] agentCards = Array.Empty<StackMergeAgentCard>();
+        [Tooltip("Static equipped-agent slot displays already placed in the Agents menu (one per slot, not instantiated at runtime).")]
+        [SerializeField] private StackMergeAgentSlot[] agentSlotCards = Array.Empty<StackMergeAgentSlot>();
 
         [Header("Row Prefabs (assign in Inspector)")]
         [Tooltip("One row of the Goals list. Needs a StackMergeGoalRow component on its root.")]
@@ -542,15 +554,17 @@ namespace StackMerge
             solverTuneSliders = tuneSliders;
             solverTuneBackButton = tuneBack;
             solverTuneResetButton = tuneReset;
-            speedUpgradeButtons = speedButtons;
+            // These upgrades collapsed from one-button-per-level to a single dynamic button; the
+            // scene builder still hands us an array, so just take its first slot.
+            speedUpgradeButton = speedButtons is { Length: > 0 } ? speedButtons[0] : null;
             autoRestartButton = restartButton;
             tokenPackButton = buyTokensButton;
             solverTuningUnlockButton = unlockSolverTuningButton;
             extraAgentSlotUpgradeButton = unlockExtraAgentSlotButton;
-            stackCapacityUpgradeButtons = capacityButtons;
-            queuePreviewUpgradeButtons = queueButtons;
-            incomeUpgradeButtons = incomeButtons;
-            difficultyUpgradeButtons = difficultyButtons;
+            stackCapacityUpgradeButton = capacityButtons is { Length: > 0 } ? capacityButtons[0] : null;
+            queuePreviewUpgradeButton = queueButtons is { Length: > 0 } ? queueButtons[0] : null;
+            incomeUpgradeButton = incomeButtons is { Length: > 0 } ? incomeButtons[0] : null;
+            difficultyUpgradeButton = difficultyButtons is { Length: > 0 } ? difficultyButtons[0] : null;
             progressionStageText = stageText;
             modifiersMenuUnlockButton = unlockModifiersButton;
             agentsMenuUnlockButton = unlockAgentsButton;
@@ -762,16 +776,34 @@ namespace StackMerge
                 agentButtons[i].onClick.AddListener(() => SelectAgent((AgentId)agentIndex));
             }
 
-            for (int i = 0; i < speedUpgradeButtons.Length; i++)
+            foreach (StackMergeAgentCard card in agentCards)
             {
-                int upgradeIndex = i;
-                if (speedUpgradeButtons[i] == null)
+                if (card == null || card.button == null)
                 {
                     continue;
                 }
 
-                speedUpgradeButtons[i].onClick.RemoveAllListeners();
-                speedUpgradeButtons[i].onClick.AddListener(() => BuySpeedUpgrade(upgradeIndex));
+                AgentId cardAgentId = card.agentId;
+                card.button.onClick.RemoveAllListeners();
+                card.button.onClick.AddListener(() => HandleAgentCardAction(cardAgentId));
+            }
+
+            foreach (StackMergeModifierCard card in modifierCards)
+            {
+                if (card == null || card.button == null)
+                {
+                    continue;
+                }
+
+                ModifierId cardModifierId = card.modifierId;
+                card.button.onClick.RemoveAllListeners();
+                card.button.onClick.AddListener(() => BuyModifierUpgrade(cardModifierId));
+            }
+
+            if (speedUpgradeButton != null)
+            {
+                speedUpgradeButton.onClick.RemoveAllListeners();
+                speedUpgradeButton.onClick.AddListener(BuySpeedUpgrade);
             }
 
             if (autoRestartButton != null)
@@ -804,52 +836,28 @@ namespace StackMerge
                 extraAgentSlotUpgradeButton.onClick.AddListener(BuyExtraAgentSlotUpgrade);
             }
 
-            for (int i = 0; i < stackCapacityUpgradeButtons.Length; i++)
+            if (stackCapacityUpgradeButton != null)
             {
-                int upgradeIndex = i;
-                if (stackCapacityUpgradeButtons[i] == null)
-                {
-                    continue;
-                }
-
-                stackCapacityUpgradeButtons[i].onClick.RemoveAllListeners();
-                stackCapacityUpgradeButtons[i].onClick.AddListener(() => BuyStackCapacityUpgrade(upgradeIndex));
+                stackCapacityUpgradeButton.onClick.RemoveAllListeners();
+                stackCapacityUpgradeButton.onClick.AddListener(BuyStackCapacityUpgrade);
             }
 
-            for (int i = 0; i < queuePreviewUpgradeButtons.Length; i++)
+            if (queuePreviewUpgradeButton != null)
             {
-                int upgradeIndex = i;
-                if (queuePreviewUpgradeButtons[i] == null)
-                {
-                    continue;
-                }
-
-                queuePreviewUpgradeButtons[i].onClick.RemoveAllListeners();
-                queuePreviewUpgradeButtons[i].onClick.AddListener(() => BuyQueuePreviewUpgrade(upgradeIndex));
+                queuePreviewUpgradeButton.onClick.RemoveAllListeners();
+                queuePreviewUpgradeButton.onClick.AddListener(BuyQueuePreviewUpgrade);
             }
 
-            for (int i = 0; i < incomeUpgradeButtons.Length; i++)
+            if (incomeUpgradeButton != null)
             {
-                int upgradeIndex = i;
-                if (incomeUpgradeButtons[i] == null)
-                {
-                    continue;
-                }
-
-                incomeUpgradeButtons[i].onClick.RemoveAllListeners();
-                incomeUpgradeButtons[i].onClick.AddListener(() => BuyIncomeUpgrade(upgradeIndex));
+                incomeUpgradeButton.onClick.RemoveAllListeners();
+                incomeUpgradeButton.onClick.AddListener(BuyIncomeUpgrade);
             }
 
-            for (int i = 0; i < difficultyUpgradeButtons.Length; i++)
+            if (difficultyUpgradeButton != null)
             {
-                int upgradeIndex = i;
-                if (difficultyUpgradeButtons[i] == null)
-                {
-                    continue;
-                }
-
-                difficultyUpgradeButtons[i].onClick.RemoveAllListeners();
-                difficultyUpgradeButtons[i].onClick.AddListener(() => BuyDifficultyUpgrade(upgradeIndex));
+                difficultyUpgradeButton.onClick.RemoveAllListeners();
+                difficultyUpgradeButton.onClick.AddListener(BuyDifficultyUpgrade);
             }
 
             if (modifiersMenuUnlockButton != null)
@@ -2010,14 +2018,14 @@ namespace StackMerge
             RefreshGameplayInfo();
         }
 
-        private void BuySpeedUpgrade(int upgradeIndex)
+        private void BuySpeedUpgrade()
         {
             if (progression == null)
             {
                 return;
             }
 
-            bool bought = progression.BuySpeedUpgrade(upgradeIndex);
+            bool bought = progression.BuySpeedUpgrade();
             SetText(feedbackText, bought ? $"Speed level {progression.SpeedLevel}" : "Speed upgrade unavailable");
             progression.Save();
             RefreshEverything();
@@ -2161,14 +2169,14 @@ namespace StackMerge
             RefreshEverything();
         }
 
-        private void BuyStackCapacityUpgrade(int upgradeIndex)
+        private void BuyStackCapacityUpgrade()
         {
             if (progression == null)
             {
                 return;
             }
 
-            bool bought = progression.BuyStackCapacityUpgrade(upgradeIndex);
+            bool bought = progression.BuyStackCapacityUpgrade();
             SetText(feedbackText, bought ? $"Stack capacity: {progression.StackCapacity}" : "Stack upgrade unavailable");
             if (bought)
             {
@@ -2179,14 +2187,14 @@ namespace StackMerge
             RefreshEverything();
         }
 
-        private void BuyQueuePreviewUpgrade(int upgradeIndex)
+        private void BuyQueuePreviewUpgrade()
         {
             if (progression == null)
             {
                 return;
             }
 
-            bool bought = progression.BuyQueuePreviewUpgrade(upgradeIndex);
+            bool bought = progression.BuyQueuePreviewUpgrade();
             SetText(feedbackText, bought ? $"Next preview: {progression.QueueLength} blocks" : "Next preview upgrade unavailable");
             if (bought)
             {
@@ -2197,27 +2205,27 @@ namespace StackMerge
             RefreshEverything();
         }
 
-        private void BuyIncomeUpgrade(int upgradeIndex)
+        private void BuyIncomeUpgrade()
         {
             if (progression == null)
             {
                 return;
             }
 
-            bool bought = progression.BuyIncomeUpgrade(upgradeIndex);
+            bool bought = progression.BuyIncomeUpgrade();
             SetText(feedbackText, bought ? $"Chip yield level {progression.IncomeLevel}" : "Income upgrade unavailable");
             progression.Save();
             RefreshEverything();
         }
 
-        private void BuyDifficultyUpgrade(int upgradeIndex)
+        private void BuyDifficultyUpgrade()
         {
             if (progression == null)
             {
                 return;
             }
 
-            bool bought = progression.BuyDifficultyUpgrade(upgradeIndex);
+            bool bought = progression.BuyDifficultyUpgrade();
             SetText(feedbackText, bought ? $"Risk level {progression.DifficultyLevel}" : "Risk upgrade unavailable");
             if (bought)
             {
@@ -2276,6 +2284,13 @@ namespace StackMerge
 
         private void HandleSelectedAgentAction()
         {
+            HandleAgentCardAction(selectedAgentId);
+        }
+
+        // Buy / Equip (Select) / Unequip (Deselect) for a specific agent — used both by the legacy
+        // shared detail panel (via selectedAgentId) and directly by each static Agent card's button.
+        private void HandleAgentCardAction(AgentId id)
+        {
             if (progression == null)
             {
                 return;
@@ -2288,21 +2303,21 @@ namespace StackMerge
                 return;
             }
 
-            AgentDefinition definition = progression.GetAgentDefinition(selectedAgentId);
+            AgentDefinition definition = progression.GetAgentDefinition(id);
             bool changed;
-            if (!progression.IsAgentUnlocked(selectedAgentId))
+            if (!progression.IsAgentUnlocked(id))
             {
-                changed = progression.BuyAgent(selectedAgentId);
+                changed = progression.BuyAgent(id);
                 SetText(feedbackText, changed ? $"Agent bought: {definition.DisplayName}" : "Not enough chips");
             }
-            else if (progression.IsAgentActive(selectedAgentId))
+            else if (progression.IsAgentActive(id))
             {
-                changed = progression.UnequipAgent(selectedAgentId);
+                changed = progression.UnequipAgent(id);
                 SetText(feedbackText, changed ? $"Agent unequipped: {definition.DisplayName}" : "Agent unavailable");
             }
             else
             {
-                changed = progression.EquipAgent(selectedAgentId);
+                changed = progression.EquipAgent(id);
                 SetText(feedbackText, changed ? $"Agent equipped: {definition.DisplayName}" : "No free agent slot");
             }
 
@@ -2622,8 +2637,11 @@ namespace StackMerge
             RefreshAgentButtons();
             RefreshAgentSlots();
             RefreshAgentDetails();
+            RefreshAgentCards();
+            RefreshAgentSlotCards();
             RefreshModifierButtons();
             RefreshModifierDetails();
+            RefreshModifierCards();
             RefreshUpgradeButtons();
             RefreshResearchMenu();
             RefreshHistory();
@@ -2708,7 +2726,7 @@ namespace StackMerge
             SetText(solverDetailStatusText, statusLabel);
             if (!isMachineLearning && active)
             {
-                SetButtonText(solverDetailActionButton, solverDeselected ? "Resume solver" : "Deselect");
+                SetButtonText(solverDetailActionButton, solverDeselected ? "Select" : "Deselect");
                 if (solverDetailActionButton != null) solverDetailActionButton.interactable = true;
             }
             else
@@ -3296,6 +3314,96 @@ namespace StackMerge
             }
         }
 
+        // Drives every static Agent card (Name/Cost-InfoText/Button) straight from progression
+        // state. Cards are never instantiated — one already exists per agent in the Hierarchy.
+        private void RefreshAgentCards()
+        {
+            if (progression == null || agentCards == null)
+            {
+                return;
+            }
+
+            foreach (StackMergeAgentCard card in agentCards)
+            {
+                if (card == null)
+                {
+                    continue;
+                }
+
+                AgentDefinition definition = progression.GetAgentDefinition(card.agentId);
+                SetText(card.nameText, definition.DisplayName);
+
+                if (!progression.AgentsMenuUnlocked)
+                {
+                    SetText(card.costText, "Locked");
+                    if (card.button != null) card.button.interactable = false;
+                    continue;
+                }
+
+                bool unlocked = progression.IsAgentUnlocked(card.agentId);
+                if (!unlocked)
+                {
+                    SetText(card.costText, $"<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                    if (card.button != null) card.button.interactable = progression.Chips >= definition.Cost;
+                    continue;
+                }
+
+                bool active = progression.IsAgentActive(card.agentId);
+                if (active)
+                {
+                    SetText(card.costText, "Deselect");
+                    if (card.button != null) card.button.interactable = true;
+                }
+                else
+                {
+                    bool hasFreeSlot = progression.ActiveAgentCount < progression.ActiveAgentSlots;
+                    SetText(card.costText, "Select");
+                    if (card.button != null) card.button.interactable = hasFreeSlot;
+                }
+            }
+        }
+
+        // Drives every static Agent Slot card (SlotText/NameText) from which agent (if any) is
+        // equipped at that slot index.
+        private void RefreshAgentSlotCards()
+        {
+            if (progression == null || agentSlotCards == null)
+            {
+                return;
+            }
+
+            foreach (StackMergeAgentSlot slot in agentSlotCards)
+            {
+                if (slot == null)
+                {
+                    continue;
+                }
+
+                SetText(slot.slotText, $"Slot {slot.slotIndex + 1}");
+
+                if (!progression.AgentsMenuUnlocked)
+                {
+                    SetText(slot.nameText, "Locked");
+                    continue;
+                }
+
+                int activeAgentId = progression.GetActiveAgentIdAtSlot(slot.slotIndex);
+                if (activeAgentId >= 0)
+                {
+                    AgentDefinition definition = progression.GetAgentDefinition((AgentId)activeAgentId);
+                    SetText(slot.nameText, definition.DisplayName);
+                }
+                else if (slot.slotIndex >= progression.ActiveAgentSlots)
+                {
+                    SetText(slot.nameText, "Needs upgrade");
+                }
+                else
+                {
+                    SetText(slot.nameText, "Empty");
+                }
+            }
+        }
+
         private void RefreshModifierButtons()
         {
             for (int i = 0; i < modifierButtons.Length && i < StackMergeProgression.Modifiers.Length; i++)
@@ -3385,6 +3493,47 @@ namespace StackMerge
             }
         }
 
+        // Drives every static Modifier card (Name/Cost-InfoText/Button) straight from progression
+        // state. Cards are never instantiated — one already exists per modifier in the Hierarchy.
+        private void RefreshModifierCards()
+        {
+            if (progression == null || modifierCards == null)
+            {
+                return;
+            }
+
+            foreach (StackMergeModifierCard card in modifierCards)
+            {
+                if (card == null)
+                {
+                    continue;
+                }
+
+                ModifierDefinition definition = progression.GetModifierDefinition(card.modifierId);
+                SetText(card.nameText, definition.DisplayName);
+
+                if (!progression.ModifiersMenuUnlocked)
+                {
+                    SetText(card.costText, "Locked");
+                    if (card.button != null) card.button.interactable = false;
+                    continue;
+                }
+
+                bool maxed = progression.IsModifierMaxed(card.modifierId);
+                if (maxed)
+                {
+                    SetText(card.costText, "Maxed");
+                    if (card.button != null) card.button.interactable = false;
+                }
+                else
+                {
+                    long cost = progression.GetModifierUpgradeCost(card.modifierId);
+                    SetText(card.costText, $"<sprite name=\"chips\"> {FormatNumber(cost)}");
+                    if (card.button != null) card.button.interactable = progression.Chips >= cost;
+                }
+            }
+        }
+
         private void RefreshUpgradeButtons()
         {
             if (progressionStageText != null)
@@ -3407,46 +3556,37 @@ namespace StackMerge
             {
                 if (progression.ModifiersMenuUnlocked)
                 {
-                    SetButtonText(modifiersMenuUnlockButton, "Modifier Lab\nUnlocked");
-                    modifiersMenuUnlockButton.interactable = false;
-                    SetButtonColor(modifiersMenuUnlockButton, HexColor("#0F766E"));
+                    SetUpgradeButtonLabels(modifiersMenuUnlockButton, "Modifier Lab", "Unlocked", false);
                 }
                 else
                 {
                     long cost = progression.GetModifiersMenuUnlockCost();
                     bool gateReady = progression.CanUnlockModifiersMenu;
-                    SetButtonText(modifiersMenuUnlockButton, gateReady ? $"Modifier Lab\n{FormatNumber(cost)}" : "Modifier Lab\nStage locked");
-                    modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
-                    SetButtonColor(modifiersMenuUnlockButton, gateReady ? HexColor("#B45309") : HexColor("#334155"));
+                    SetUpgradeButtonLabels(
+                        modifiersMenuUnlockButton,
+                        "Modifier Lab",
+                        gateReady ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Stage locked",
+                        gateReady && progression.Chips >= cost);
                 }
             }
 
-            for (int i = 0; i < speedUpgradeButtons.Length; i++)
+            // Solver Speed: collapsed from one button per level to a single button that always
+            // targets the next level. Name shows the effect buying grants (not what you already
+            // have — otherwise level 0 would misleadingly read "0% faster").
+            if (speedUpgradeButton != null)
             {
-                Button button = speedUpgradeButtons[i];
-                if (button == null)
+                int level = progression.SpeedLevel;
+                int maxLevel = progression.MaxSpeedLevel;
+                if (progression.IsMaxSpeed)
                 {
-                    continue;
-                }
-
-                if (i < progression.SpeedLevel)
-                {
-                    SetButtonText(button, $"L{i + 1}\nDone");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#0F766E"));
-                }
-                else if (i == progression.SpeedLevel && !progression.IsMaxSpeed)
-                {
-                    long cost = progression.GetSpeedUpgradeCost(i);
-                    SetButtonText(button, $"L{i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    button.interactable = progression.Chips >= cost;
-                    SetButtonColor(button, HexColor("#0891B2"));
+                    float percent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level);
+                    SetUpgradeButtonLabels(speedUpgradeButton, $"{percent:0}% faster ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
-                    SetButtonText(button, $"L{i + 1}\nLocked");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#334155"));
+                    float nextPercent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level + 1);
+                    long cost = progression.GetSpeedUpgradeCost();
+                    SetUpgradeButtonLabels(speedUpgradeButton, $"{nextPercent:0}% faster ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -3454,16 +3594,16 @@ namespace StackMerge
             {
                 if (progression.AutoSolveUnlocked)
                 {
-                    SetButtonText(autoSolveButton, progression.AutoSolveEnabled ? "Auto solve\nON" : "Auto solve\nOFF");
-                    autoSolveButton.interactable = true;
-                    SetButtonColor(autoSolveButton, progression.AutoSolveEnabled ? HexColor("#0F766E") : HexColor("#334155"));
+                    SetUpgradeButtonLabels(autoSolveButton, "Auto solve", progression.AutoSolveEnabled ? "ON" : "OFF", true);
                 }
                 else
                 {
                     long cost = progression.GetAutoSolveCost();
-                    SetButtonText(autoSolveButton, progression.HasPurchasedSolver ? $"Auto solve\n<sprite name=\"chips\"> {FormatNumber(cost)}" : "Auto solve\nNeeds algorithm");
-                    autoSolveButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
-                    SetButtonColor(autoSolveButton, HexColor("#0F766E"));
+                    SetUpgradeButtonLabels(
+                        autoSolveButton,
+                        "Auto solve",
+                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Needs algorithm",
+                        progression.HasPurchasedSolver && progression.Chips >= cost);
                 }
             }
 
@@ -3472,41 +3612,35 @@ namespace StackMerge
                 if (progression.AutoRestartUnlocked)
                 {
                     string tokenMode = progression.AutoRestartIsTokenFree ? "free" : $"{FormatNumber(progression.Tokens)} token";
-                    SetButtonText(autoRestartButton, progression.AutoRestartEnabled ? $"Auto restart\nON ({tokenMode})" : "Auto restart\nOFF");
-                    autoRestartButton.interactable = true;
-                    SetButtonColor(autoRestartButton, progression.AutoRestartEnabled ? HexColor("#C2410C") : HexColor("#334155"));
+                    SetUpgradeButtonLabels(autoRestartButton, "Auto restart", progression.AutoRestartEnabled ? $"ON ({tokenMode})" : "OFF", true);
                 }
                 else
                 {
                     long cost = progression.GetAutoRestartCost();
-                    SetButtonText(autoRestartButton, progression.HasPurchasedSolver ? $"Auto restart\n<sprite name=\"chips\"> {FormatNumber(cost)}" : "Auto restart\nNeeds algorithm");
-                    autoRestartButton.interactable = progression.HasPurchasedSolver && progression.Chips >= cost;
-                    SetButtonColor(autoRestartButton, HexColor("#C2410C"));
+                    SetUpgradeButtonLabels(
+                        autoRestartButton,
+                        "Auto restart",
+                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Needs algorithm",
+                        progression.HasPurchasedSolver && progression.Chips >= cost);
                 }
             }
 
             if (tokenPackButton != null)
             {
                 long cost = progression.GetTokenPackCost();
-                SetButtonText(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                tokenPackButton.interactable = progression.Chips >= cost;
-                SetButtonColor(tokenPackButton, HexColor("#0369A1"));
+                SetUpgradeButtonLabels(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
             }
 
             if (solverTuningUnlockButton != null)
             {
                 if (progression.SolverTuningUnlocked)
                 {
-                    SetButtonText(solverTuningUnlockButton, "Solver tuning\nUnlocked");
-                    solverTuningUnlockButton.interactable = false;
-                    SetButtonColor(solverTuningUnlockButton, HexColor("#0F766E"));
+                    SetUpgradeButtonLabels(solverTuningUnlockButton, "Solver tuning", "Unlocked", false);
                 }
                 else
                 {
                     long cost = progression.GetSolverTuningUnlockCost();
-                    SetButtonText(solverTuningUnlockButton, $"Solver tuning\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    solverTuningUnlockButton.interactable = progression.Chips >= cost;
-                    SetButtonColor(solverTuningUnlockButton, HexColor("#2563EB"));
+                    SetUpgradeButtonLabels(solverTuningUnlockButton, "Solver tuning", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -3514,16 +3648,12 @@ namespace StackMerge
             {
                 if (progression.ExtraAgentSlotUnlocked)
                 {
-                    SetButtonText(extraAgentSlotUpgradeButton, "+1 Agent slot\nUnlocked");
-                    extraAgentSlotUpgradeButton.interactable = false;
-                    SetButtonColor(extraAgentSlotUpgradeButton, HexColor("#0F766E"));
+                    SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", "Unlocked", false);
                 }
                 else
                 {
                     long cost = progression.GetExtraAgentSlotUpgradeCost();
-                    SetButtonText(extraAgentSlotUpgradeButton, $"+1 Agent slot\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    extraAgentSlotUpgradeButton.interactable = progression.Chips >= cost;
-                    SetButtonColor(extraAgentSlotUpgradeButton, HexColor("#7C3AED"));
+                    SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -3531,132 +3661,86 @@ namespace StackMerge
             {
                 if (progression.AgentsMenuUnlocked)
                 {
-                    SetButtonText(agentsMenuUnlockButton, "Agents\nUnlocked");
-                    agentsMenuUnlockButton.interactable = false;
-                    SetButtonColor(agentsMenuUnlockButton, HexColor("#0F766E"));
+                    SetUpgradeButtonLabels(agentsMenuUnlockButton, "Agents", "Unlocked", false);
                 }
                 else
                 {
                     long cost = progression.GetAgentsMenuUnlockCost();
-                    SetButtonText(agentsMenuUnlockButton, $"Unlock Agents\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    agentsMenuUnlockButton.interactable = progression.Chips >= cost;
-                    SetButtonColor(agentsMenuUnlockButton, HexColor("#9333EA"));
+                    SetUpgradeButtonLabels(agentsMenuUnlockButton, "Agents", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
-            for (int i = 0; i < stackCapacityUpgradeButtons.Length; i++)
+            // Stack Capacity: single button, always targets the next level. Name shows the
+            // capacity buying grants (not the current one — otherwise it'd repeat the same
+            // number you already have instead of telling you what you're paying for).
+            if (stackCapacityUpgradeButton != null)
             {
-                Button button = stackCapacityUpgradeButtons[i];
-                if (button == null)
+                int level = progression.StackCapacityLevel;
+                int maxLevel = progression.MaxStackCapacityLevel;
+                if (progression.IsMaxStackCapacity)
                 {
-                    continue;
-                }
-
-                if (i < progression.StackCapacityLevel)
-                {
-                    SetButtonText(button, $"Cap {StackMergeGameState.DefaultStackCapacity + i + 1}\nDone");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#0F766E"));
-                }
-                else if (i == progression.StackCapacityLevel && !progression.IsMaxStackCapacity)
-                {
-                    long cost = progression.GetStackCapacityUpgradeCost(i);
-                    SetButtonText(button, $"Cap {StackMergeGameState.DefaultStackCapacity + i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    button.interactable = progression.Chips >= cost;
-                    SetButtonColor(button, HexColor("#4F46E5"));
+                    SetUpgradeButtonLabels(stackCapacityUpgradeButton, $"{progression.StackCapacity} row ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
-                    SetButtonText(button, $"Cap {StackMergeGameState.DefaultStackCapacity + i + 1}\nLocked");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#334155"));
+                    int nextCapacity = progression.StackCapacity + 1;
+                    long cost = progression.GetStackCapacityUpgradeCost();
+                    SetUpgradeButtonLabels(stackCapacityUpgradeButton, $"{nextCapacity} row ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
-            for (int i = 0; i < queuePreviewUpgradeButtons.Length; i++)
+            // Next Preview: single button, always targets the next level. Name shows the queue
+            // length buying grants.
+            if (queuePreviewUpgradeButton != null)
             {
-                Button button = queuePreviewUpgradeButtons[i];
-                if (button == null)
+                int level = progression.QueuePreviewLevel;
+                int maxLevel = progression.MaxQueuePreviewLevel;
+                if (progression.IsMaxQueuePreview)
                 {
-                    continue;
-                }
-
-                if (i < progression.QueuePreviewLevel)
-                {
-                    SetButtonText(button, $"+{i + 1} next\nDone");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#0F766E"));
-                }
-                else if (i == progression.QueuePreviewLevel && !progression.IsMaxQueuePreview)
-                {
-                    long cost = progression.GetQueuePreviewUpgradeCost(i);
-                    SetButtonText(button, $"+{i + 1} next\n{FormatNumber(cost)}");
-                    button.interactable = progression.Chips >= cost;
-                    SetButtonColor(button, HexColor("#7C3AED"));
+                    SetUpgradeButtonLabels(queuePreviewUpgradeButton, $"+{level} block ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
-                    SetButtonText(button, $"+{i + 1} next\nLocked");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#334155"));
+                    long cost = progression.GetQueuePreviewUpgradeCost();
+                    SetUpgradeButtonLabels(queuePreviewUpgradeButton, $"+{level + 1} block ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
-            for (int i = 0; i < difficultyUpgradeButtons.Length; i++)
+            // Difficulty Scaling: single button, always targets the next level. Describes what the
+            // upgrade actually does (raises the odds/ceiling of high-value block spawns) instead of
+            // a bare "Risk L{level}" label that told the player nothing.
+            if (difficultyUpgradeButton != null)
             {
-                Button button = difficultyUpgradeButtons[i];
-                if (button == null)
+                int level = progression.DifficultyLevel;
+                int maxLevel = progression.MaxDifficultyLevel;
+                string name = $"Harder blocks spawn ({level}/{maxLevel})";
+                if (progression.IsMaxDifficulty)
                 {
-                    continue;
-                }
-
-                if (i < progression.DifficultyLevel)
-                {
-                    SetButtonText(button, $"Risk {i + 1}\nDone");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#0F766E"));
-                }
-                else if (i == progression.DifficultyLevel && !progression.IsMaxDifficulty)
-                {
-                    long cost = progression.GetDifficultyUpgradeCost(i);
-                    SetButtonText(button, $"Risk {i + 1}\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    button.interactable = progression.Chips >= cost;
-                    SetButtonColor(button, HexColor("#DB2777"));
+                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, "Maxed", false);
                 }
                 else
                 {
-                    SetButtonText(button, $"Risk {i + 1}\nLocked");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#334155"));
+                    long cost = progression.GetDifficultyUpgradeCost();
+                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
-            for (int i = 0; i < incomeUpgradeButtons.Length; i++)
+            // Chip Yield: single button, always targets the next level. Name shows the yield bonus
+            // buying grants (not what you already have — at level 0 that showed a misleading
+            // "+0% yield"). +35% per level matches ApplyIncomeMultiplier's actual formula (the
+            // previous per-level array showed +12%, stale relative to the real balance value).
+            if (incomeUpgradeButton != null)
             {
-                Button button = incomeUpgradeButtons[i];
-                if (button == null)
+                int level = progression.IncomeLevel;
+                int maxLevel = progression.MaxIncomeLevel;
+                if (progression.IsMaxIncome)
                 {
-                    continue;
-                }
-
-                if (i < progression.IncomeLevel)
-                {
-                    SetButtonText(button, $"+{(i + 1) * 12}%\nDone");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#0F766E"));
-                }
-                else if (i == progression.IncomeLevel && !progression.IsMaxIncome)
-                {
-                    long cost = progression.GetIncomeUpgradeCost(i);
-                    SetButtonText(button, $"+{(i + 1) * 12}%\n<sprite name=\"chips\"> {FormatNumber(cost)}");
-                    button.interactable = progression.Chips >= cost;
-                    SetButtonColor(button, HexColor("#CA8A04"));
+                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{level * 35}% yield ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
-                    SetButtonText(button, $"+{(i + 1) * 12}%\nLocked");
-                    button.interactable = false;
-                    SetButtonColor(button, HexColor("#334155"));
+                    long cost = progression.GetIncomeUpgradeCost();
+                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * 35}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
         }
@@ -4822,6 +4906,31 @@ namespace StackMerge
         {
             TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
             SetText(text, value);
+        }
+
+        // Redesigned Upgrades menu: every upgrade button carries its own NameText + Cost/InfoText
+        // children via a StackMergeButtonLabelPair component. Looked up per-call (not cached) since
+        // this only runs during UI refreshes, never per-frame. Falls back to the button's own combined
+        // text if no label-pair component is present yet, so nothing breaks while wiring is in progress.
+        private static void SetUpgradeButtonLabels(Button button, string name, string cost, bool interactable)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.interactable = interactable;
+
+            StackMergeButtonLabelPair labels = button.GetComponent<StackMergeButtonLabelPair>();
+            if (labels != null)
+            {
+                SetText(labels.nameText, name);
+                SetText(labels.costText, cost);
+            }
+            else
+            {
+                SetButtonText(button, $"{name}\n{cost}");
+            }
         }
 
         // Intentionally a no-op. Button background colours are owned by each Button's
