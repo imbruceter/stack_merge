@@ -74,6 +74,8 @@ namespace StackMerge
         [SerializeField] private TMP_Text agentSlotsText;
         [SerializeField] private Button autoSolveButton;
         [SerializeField] private Button[] solverButtons = Array.Empty<Button>();
+        [Tooltip("Static per-solver \"AlgorithmItem\" cards already placed in the Algorithms menu (one per solver, not instantiated at runtime). Each drives its own Buy/Select/Deselect and Tune button.")]
+        [SerializeField] private StackMergeAlgorithmCard[] algorithmCards = Array.Empty<StackMergeAlgorithmCard>();
         [SerializeField] private TMP_Text solverDetailNameText;
         [SerializeField] private TMP_Text solverDetailInfoText;
         [SerializeField] private TMP_Text solverDetailStatusText;
@@ -720,6 +722,32 @@ namespace StackMerge
 
                 solverButtons[i].onClick.RemoveAllListeners();
                 solverButtons[i].onClick.AddListener(() => SelectSolver((SolverId)solverIndex));
+            }
+
+            foreach (StackMergeAlgorithmCard card in algorithmCards)
+            {
+                if (card == null)
+                {
+                    continue;
+                }
+
+                SolverId cardSolverId = card.solverId;
+
+                if (card.actionButton != null)
+                {
+                    card.actionButton.onClick.RemoveAllListeners();
+                    card.actionButton.onClick.AddListener(() => HandleAlgorithmCardAction(cardSolverId));
+                }
+
+                if (card.tuneButton != null)
+                {
+                    card.tuneButton.onClick.RemoveAllListeners();
+                    card.tuneButton.onClick.AddListener(() =>
+                    {
+                        SelectSolver(cardSolverId);
+                        OpenSolverTunePanel();
+                    });
+                }
             }
 
             for (int i = 0; i < agentButtons.Length; i++)
@@ -1471,15 +1499,22 @@ namespace StackMerge
 
         private void HandleSelectedSolverAction()
         {
+            HandleAlgorithmCardAction(selectedSolverId);
+        }
+
+        // Buy / Select / Deselect for a specific solver — used both by the legacy shared detail
+        // panel (via selectedSolverId) and directly by each static AlgorithmItem card's own button.
+        private void HandleAlgorithmCardAction(SolverId id)
+        {
             if (progression == null)
             {
                 return;
             }
 
-            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(selectedSolverId);
+            SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(id);
 
             // PPO: unlock if needed, then let the player pick Training / Normal mode in a popup.
-            if (selectedSolverId == SolverId.MachineLearning)
+            if (id == SolverId.MachineLearning)
             {
                 if (!progression.IsSolverUnlocked(SolverId.MachineLearning))
                 {
@@ -1498,7 +1533,7 @@ namespace StackMerge
             }
 
             // If the solver is already active, toggle manual deselect mode.
-            if (progression.SelectedSolver == selectedSolverId && progression.IsSolverUnlocked(selectedSolverId))
+            if (progression.SelectedSolver == id && progression.IsSolverUnlocked(id))
             {
                 solverDeselected = !solverDeselected;
                 SetText(feedbackText, solverDeselected ? "Manual mode: solver paused" : $"Solver: {definition.DisplayName}");
@@ -1506,7 +1541,7 @@ namespace StackMerge
                 return;
             }
 
-            bool changed = progression.SelectOrUnlockSolver(selectedSolverId);
+            bool changed = progression.SelectOrUnlockSolver(id);
             if (changed) solverDeselected = false;
             SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
             progression.Save();
@@ -2579,6 +2614,7 @@ namespace StackMerge
 
             RefreshSolverButtons();
             RefreshSolverDetails();
+            RefreshAlgorithmCards();
             if (solverTuneOpen)
             {
                 RefreshSolverTunePanel();
@@ -2679,6 +2715,63 @@ namespace StackMerge
             {
                 SetButtonText(solverDetailActionButton, active ? "Selected" : "Select");
                 if (solverDetailActionButton != null) solverDetailActionButton.interactable = !active;
+            }
+        }
+
+        // Drives every static AlgorithmItem card (Name/Description/action button/Tune button)
+        // straight from progression state. Cards are never instantiated — one already exists per
+        // solver in the Hierarchy, so this just updates them in place.
+        private void RefreshAlgorithmCards()
+        {
+            if (progression == null || algorithmCards == null)
+            {
+                return;
+            }
+
+            foreach (StackMergeAlgorithmCard card in algorithmCards)
+            {
+                if (card == null)
+                {
+                    continue;
+                }
+
+                SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(card.solverId);
+                bool unlocked = progression.IsSolverUnlocked(card.solverId);
+                bool active = progression.SelectedSolver == card.solverId;
+                bool isMachineLearning = card.solverId == SolverId.MachineLearning;
+                bool machineLearningGateReady = !isMachineLearning || progression.CanUnlockMachineLearning;
+
+                SetText(card.nameText, definition.DisplayName);
+                SetText(card.descriptionText, definition.Description);
+
+                if (!unlocked)
+                {
+                    SetButtonText(card.actionButton, isMachineLearning && !machineLearningGateReady
+                        ? "Needs all\nModifiers"
+                        : $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                    if (card.actionButton != null)
+                    {
+                        card.actionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
+                    }
+                }
+                else if (!isMachineLearning && active)
+                {
+                    SetButtonText(card.actionButton, solverDeselected ? "Resume solver" : "Deselect");
+                    if (card.actionButton != null) card.actionButton.interactable = true;
+                }
+                else
+                {
+                    SetButtonText(card.actionButton, active ? "Selected" : "Select");
+                    if (card.actionButton != null) card.actionButton.interactable = !active;
+                }
+
+                if (card.tuneButton != null)
+                {
+                    SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(card.solverId);
+                    // RAND (and any other parameterless solver) has nothing to tune — hide the button entirely.
+                    card.tuneButton.gameObject.SetActive(tuningDefinition.HasParameters);
+                    card.tuneButton.interactable = unlocked && progression.SolverTuningUnlocked;
+                }
             }
         }
 

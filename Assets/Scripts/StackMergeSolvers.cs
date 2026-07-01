@@ -277,14 +277,14 @@ namespace StackMerge
             new(SolverId.Balance, "BAL", 6000, "Keeps stacks even.", "Avoids tall dangerous stacks and spreads risk across the board."),
             new(SolverId.Heur, "HEUR", 30000, "Scores every legal move.", "Uses handcrafted heuristics: merge value, danger, future queue fit, and free space."),
             new(SolverId.Look, "LOOK", 80000, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
-            new(SolverId.Moca, "MOCA", 220000, "Runs simulations.", "Monte Carlo solver: rolls out multiple futures and picks the best average result."),
-            new(SolverId.Plan3, "PLAN-3", 130000, "Reads the visible queue.", "Queue planner: searches lines through up to 3 visible next blocks before choosing."),
-            new(SolverId.Plan5, "PLAN-5", 400000, "Uses the extended queue.", "Deep queue planner: searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked."),
-            new(SolverId.MocaPlus, "MOCA+", 900000, "Smarter Monte Carlo rollouts.", "Enhanced Monte Carlo: each rollout uses short queue planning and an anti-stall board score."),
-            new(SolverId.Mcts, "MCTS", 1800000, "Builds a search tree.", "Monte Carlo Tree Search: balances exploring new lines with exploiting lines that already score well."),
-            new(SolverId.AntiStall, "STALL", 18000, "Avoids dead boards.", "Anti-stall solver: heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges."),
-            new(SolverId.Combo, "COMBO", 180000, "Sets up chain merges.", "Combo-focused solver: reads the queue and rewards positions that can cascade over the next 2-3 turns."),
-            new(SolverId.MachineLearning, "PPO", 100000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization solver: a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
+            new(SolverId.Moca, "MOCA", 220000, "Runs simulations.", "Rolls out multiple futures and picks the best average result."),
+            new(SolverId.Plan3, "PLAN-3", 130000, "Reads the visible queue.", "Queue planner. Searches lines through up to 3 visible next blocks before choosing."),
+            new(SolverId.Plan5, "PLAN-5", 400000, "Uses the extended queue.", "Deep queue planner. Searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked."),
+            new(SolverId.MocaPlus, "MOCA+", 900000, "Smarter Monte Carlo rollouts.", "Enhanced Monte Carlo. Each rollout uses short queue planning and an anti-stall board score."),
+            new(SolverId.Mcts, "MCTS", 1800000, "Builds a search tree.", "Monte Carlo Tree Search. Balances exploring new lines with exploiting lines that already score well."),
+            new(SolverId.AntiStall, "STALL", 18000, "Avoids dead boards.", "Anti-stall solver. Heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges."),
+            new(SolverId.Combo, "COMBO", 180000, "Sets up chain merges.", "Combo-focused solver. Reads the queue and rewards positions that can cascade over the next 2-3 turns."),
+            new(SolverId.MachineLearning, "PPO", 100000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
         };
 
         public static readonly SolverTuningDefinition[] TuningDefinitions =
