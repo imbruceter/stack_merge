@@ -41,6 +41,14 @@ namespace StackMerge
         [SerializeField] private GameObject gameplayInfoOverlay;
         [SerializeField] private TMP_Text gameplayInfoText;
         [SerializeField] private Button gameplayInfoCloseButton;
+        [Tooltip("Footer root (RectTransform) — used to compute where its top edge is, so Run Info can be centered above it.")]
+        [SerializeField] private RectTransform footerRoot;
+        [Tooltip("Run Info panel, now a sibling of Board/Footer instead of a child of Footer. Positioned automatically, vertically centered between the Board's bottom edge and the Footer's top edge.")]
+        [SerializeField] private RectTransform runInfoPanel;
+
+        [Header("Global Status Bar")]
+        [Tooltip("Root of the single shared status bar (\"New Status Bar\"), living outside Tab Content. Shown on Gameplay/Algorithms/Upgrades/Modifiers/Agents/Research; hidden on History/Goals/Settings.")]
+        [SerializeField] private GameObject globalStatusBarRoot;
 
         [Header("Tabs")]
         [SerializeField] private GameObject gameplayPanel;
@@ -174,6 +182,9 @@ namespace StackMerge
         private Button ppoTrainingButton;
         private Button ppoNormalButton;
         private TMP_Text ppoModeHintText;
+        // Captured once from the panel's own designed height, then reused every reposition so the
+        // panel doesn't grow/shrink as it gets moved around.
+        private float runInfoDesignHeight = -1f;
         // Tuning rows are built once per solver and then updated in place; rebuilding every
         // refresh would destroy/re-instantiate the prefabs each auto-move.
         private SolverId tuneRowsBuiltForSolver = (SolverId)(-999);
@@ -2458,6 +2469,13 @@ namespace StackMerge
 
         private void RefreshHud()
         {
+            // Global Status Bar lives outside Tab Content (a sibling, not a per-panel child), so its
+            // visibility has to be driven explicitly here instead of by the per-tab SetActive calls
+            // in SelectTab/OpenHistoryPanel/OpenAchievementsPanel. RefreshHud already runs after
+            // every one of those, so this one spot covers all navigation paths.
+            bool showGlobalStatusBar = !historyOpen && !achievementsOpen && selectedTabIndex != 6;
+            SetActive(globalStatusBarRoot, showGlobalStatusBar);
+
             if (progression == null)
             {
                 return;
@@ -4278,6 +4296,7 @@ namespace StackMerge
                 ResizeBoardToCapacity();
                 Canvas.ForceUpdateCanvases();
                 boardLayoutDirty = false;
+                PositionRunInfoPanel();
             }
 
             for (int stackIndex = 0; stackIndex < stackBlockLayers.Length; stackIndex++)
@@ -4457,6 +4476,46 @@ namespace StackMerge
             board.pivot = new Vector2(0.5f, 1f);
             board.offsetMin = new Vector2(0f, -top - height);
             board.offsetMax = new Vector2(0f, -top);
+        }
+
+        // Centers runInfoPanel in the vertical gap between the Board's bottom edge and the
+        // Footer's top edge, so it sits an equal distance from both — instead of a fixed offset
+        // that leaves a huge empty gap on tall screens. Reads Board's and Footer's *current*
+        // offsets directly (rather than hardcoding their layout constants), so it keeps working
+        // if either is resized by hand later. Horizontal anchoring/margins are left untouched —
+        // only the vertical position is taken over.
+        private void PositionRunInfoPanel()
+        {
+            if (runInfoPanel == null || boardRoot == null || footerRoot == null)
+            {
+                return;
+            }
+
+            RectTransform parent = boardRoot.parent as RectTransform;
+            if (parent == null || footerRoot.parent != parent || runInfoPanel.parent != parent)
+            {
+                // Only auto-position when Run Info actually is a sibling of Board/Footer under the
+                // same parent — otherwise the maths below wouldn't be meaningful.
+                return;
+            }
+
+            if (runInfoDesignHeight < 0f)
+            {
+                runInfoDesignHeight = Mathf.Max(40f, runInfoPanel.rect.height);
+            }
+
+            float boardBottomFromTop = -boardRoot.offsetMin.y;
+            float footerTopFromBottom = footerRoot.offsetMax.y;
+            float footerTopFromTop = parent.rect.height - footerTopFromBottom;
+
+            float gapCenterFromTop = (boardBottomFromTop + footerTopFromTop) * 0.5f;
+            float panelTopFromTop = gapCenterFromTop - runInfoDesignHeight * 0.5f;
+
+            runInfoPanel.anchorMin = new Vector2(runInfoPanel.anchorMin.x, 1f);
+            runInfoPanel.anchorMax = new Vector2(runInfoPanel.anchorMax.x, 1f);
+            runInfoPanel.pivot = new Vector2(runInfoPanel.pivot.x, 1f);
+            runInfoPanel.offsetMin = new Vector2(runInfoPanel.offsetMin.x, -(panelTopFromTop + runInfoDesignHeight));
+            runInfoPanel.offsetMax = new Vector2(runInfoPanel.offsetMax.x, -panelTopFromTop);
         }
 
         private void RefreshGameOver()
