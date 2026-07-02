@@ -61,6 +61,9 @@ namespace StackMerge
         [SerializeField] private GameObject researchPanel;
         [SerializeField] private GameObject settingsPanel;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
+        [Tooltip("Optional lock icon used by locked bottom-menu tabs. Drag your lock sprite here in the Inspector.")]
+        [SerializeField] private Sprite lockedTabIcon;
+        [SerializeField] private float bottomMenuHighlightSlideSeconds = 0.18f;
 
         [Header("AI UI")]
         [SerializeField] private TMP_Text[] chipsTexts = Array.Empty<TMP_Text>();
@@ -189,6 +192,18 @@ namespace StackMerge
         [SerializeField] private TMP_Text gameOverScoreText;
         [SerializeField] private TMP_Text gameOverBestText;
 
+        private sealed class BottomTabVisual
+        {
+            public Image iconBackground;
+            public RectTransform iconBackgroundRect;
+            public Image icon;
+            public TMP_Text label;
+            public Sprite unlockedIcon;
+            public string unlockedLabel;
+            public Color unlockedLabelColor;
+            public Vector2 iconBackgroundHomePosition;
+        }
+
         private StackMergeGameState gameState;
         private StackMergeProgression progression;
         private readonly System.Random solverRandom = new();
@@ -230,6 +245,13 @@ namespace StackMerge
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
         private bool solverDeselected = false;
+        private BottomTabVisual[] bottomTabVisuals = Array.Empty<BottomTabVisual>();
+        private int bottomMenuHighlightIndex = -1;
+        private bool bottomMenuHighlightAnimating;
+        private RectTransform bottomMenuHighlightRect;
+        private Vector3 bottomMenuHighlightStartWorld;
+        private Vector3 bottomMenuHighlightEndWorld;
+        private float bottomMenuHighlightTimer;
         private int blockDropStack = -1;
         private float blockDropTimer = 0f;
         private const float BlockDropDuration = 0.14f;
@@ -352,6 +374,7 @@ namespace StackMerge
             }
 
             TickAutomation();
+            TickBottomMenuHighlight();
             MaybeEndStuckRun();
             TickBlockAnimations();
             if (gameState != null && !gameState.IsGameOver)
@@ -1194,7 +1217,9 @@ namespace StackMerge
 
         private void RefreshTabButtons()
         {
-            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research" };
+            EnsureBottomTabVisualCache();
+            int activeIndex = GetBottomMenuActiveTabIndex();
+
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 Button button = tabButtons[i];
@@ -1211,28 +1236,276 @@ namespace StackMerge
                     continue;
                 }
 
-                TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
-                Image background = button.GetComponent<Image>();
-                bool selected = !historyOpen && !achievementsOpen && i == selectedTabIndex;
-                bool lockedModifierTab = i == 3 && progression != null && !progression.ModifiersMenuUnlocked;
-                bool lockedAgentTab = i == 4 && progression != null && !progression.AgentsMenuUnlocked;
-                bool lockedResearchTab = i == 5 && progression != null && !IsResearchMenuUnlocked();
-                bool locked = lockedModifierTab || lockedAgentTab || lockedResearchTab;
+                SetActive(button.gameObject, true);
 
-                if (label != null)
-                {
-                    label.text = lockedModifierTab ? "Modifiers"
-                        : lockedAgentTab ? "Agents"
-                        : lockedResearchTab ? "Research"
-                        : i < labels.Length ? labels[i] : label.text;
-                    label.color = locked ? HexColor("#64748B") : selected ? HexColor("#FDE68A") : Color.white;
-                }
-
-                // Tab background colour is owned by the Button component (Color Tint) in the
-                // Inspector; the code only marks locked tabs non-interactable so Unity shows
-                // your disabled colour.
+                bool locked = IsBottomTabLocked(i);
+                BottomTabVisual visual = i < bottomTabVisuals.Length ? bottomTabVisuals[i] : null;
+                ApplyBottomTabVisual(visual, locked, i == activeIndex);
                 button.interactable = !locked;
             }
+
+            UpdateBottomMenuHighlightTarget(activeIndex);
+        }
+
+        private void EnsureBottomTabVisualCache()
+        {
+            if (bottomTabVisuals.Length == tabButtons.Length)
+            {
+                return;
+            }
+
+            bottomTabVisuals = new BottomTabVisual[tabButtons.Length];
+            for (int i = 0; i < tabButtons.Length; i++)
+            {
+                Button button = tabButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                Transform iconBackgroundTransform = FindNamedDescendant(button.transform, "IconBackground");
+                Image iconBackground = iconBackgroundTransform != null ? iconBackgroundTransform.GetComponent<Image>() : null;
+                Transform iconTransform = iconBackgroundTransform != null ? FindNamedDescendant(iconBackgroundTransform, "Icon") : null;
+                if (iconTransform == null)
+                {
+                    iconTransform = FindNamedDescendant(button.transform, "Icon");
+                }
+
+                Transform textTransform = FindNamedDescendant(button.transform, "Text");
+                TMP_Text label = textTransform != null ? textTransform.GetComponent<TMP_Text>() : button.GetComponentInChildren<TMP_Text>(true);
+                Image icon = iconTransform != null ? iconTransform.GetComponent<Image>() : null;
+                RectTransform iconBackgroundRect = iconBackground != null ? iconBackground.rectTransform : null;
+
+                string labelText = label != null && !string.Equals(label.text, "Locked", StringComparison.OrdinalIgnoreCase)
+                    ? label.text
+                    : GetDefaultBottomTabLabel(i);
+
+                bottomTabVisuals[i] = new BottomTabVisual
+                {
+                    iconBackground = iconBackground,
+                    iconBackgroundRect = iconBackgroundRect,
+                    icon = icon,
+                    label = label,
+                    unlockedIcon = icon != null ? icon.sprite : null,
+                    unlockedLabel = labelText,
+                    unlockedLabelColor = label != null ? label.color : Color.white,
+                    iconBackgroundHomePosition = iconBackgroundRect != null ? iconBackgroundRect.anchoredPosition : Vector2.zero
+                };
+            }
+        }
+
+        private void ApplyBottomTabVisual(BottomTabVisual visual, bool locked, bool selected)
+        {
+            if (visual == null)
+            {
+                return;
+            }
+
+            if (visual.label != null)
+            {
+                visual.label.text = locked ? "Locked" : visual.unlockedLabel;
+                visual.label.color = locked ? HexColor("#808080") : visual.unlockedLabelColor;
+            }
+
+            if (visual.icon != null)
+            {
+                if (locked)
+                {
+                    if (lockedTabIcon != null)
+                    {
+                        visual.icon.sprite = lockedTabIcon;
+                    }
+
+                    visual.icon.color = HexColor("#808080");
+                }
+                else
+                {
+                    if (visual.unlockedIcon != null)
+                    {
+                        visual.icon.sprite = visual.unlockedIcon;
+                    }
+
+                    visual.icon.color = selected ? Color.white : Color.black;
+                }
+            }
+        }
+
+        private int GetBottomMenuActiveTabIndex()
+        {
+            if (historyOpen || achievementsOpen || selectedTabIndex < 0 || selectedTabIndex >= 6)
+            {
+                return -1;
+            }
+
+            return IsBottomTabLocked(selectedTabIndex) ? -1 : selectedTabIndex;
+        }
+
+        private bool IsBottomTabLocked(int tabIndex)
+        {
+            return (tabIndex == 3 && progression != null && !progression.ModifiersMenuUnlocked)
+                || (tabIndex == 4 && progression != null && !progression.AgentsMenuUnlocked)
+                || (tabIndex == 5 && progression != null && !IsResearchMenuUnlocked());
+        }
+
+        private static string GetDefaultBottomTabLabel(int tabIndex)
+        {
+            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research" };
+            return tabIndex >= 0 && tabIndex < labels.Length ? labels[tabIndex] : string.Empty;
+        }
+
+        private static Transform FindNamedDescendant(Transform root, string targetName)
+        {
+            if (root == null)
+            {
+                return null;
+            }
+
+            foreach (Transform child in root)
+            {
+                if (child.name == targetName)
+                {
+                    return child;
+                }
+
+                Transform match = FindNamedDescendant(child, targetName);
+                if (match != null)
+                {
+                    return match;
+                }
+            }
+
+            return null;
+        }
+
+        private void UpdateBottomMenuHighlightTarget(int activeIndex)
+        {
+            if (activeIndex < 0 || activeIndex >= bottomTabVisuals.Length)
+            {
+                bottomMenuHighlightIndex = -1;
+                bottomMenuHighlightAnimating = false;
+                bottomMenuHighlightRect = null;
+                ApplyBottomMenuHighlightVisibility(-1);
+                return;
+            }
+
+            BottomTabVisual target = bottomTabVisuals[activeIndex];
+            if (target == null || target.iconBackground == null || target.iconBackgroundRect == null)
+            {
+                bottomMenuHighlightIndex = activeIndex;
+                ApplyBottomMenuHighlightVisibility(activeIndex);
+                return;
+            }
+
+            if (activeIndex == bottomMenuHighlightIndex)
+            {
+                ApplyBottomMenuHighlightVisibility(activeIndex);
+                return;
+            }
+
+            int previousIndex = bottomMenuHighlightIndex;
+            Vector3 startWorld = GetBottomTabBackgroundHomeWorld(target);
+            if (previousIndex >= 0 && previousIndex < bottomTabVisuals.Length)
+            {
+                BottomTabVisual previous = bottomTabVisuals[previousIndex];
+                if (previous?.iconBackgroundRect != null)
+                {
+                    startWorld = GetBottomTabBackgroundHomeWorld(previous);
+                }
+            }
+
+            bottomMenuHighlightIndex = activeIndex;
+            ApplyBottomMenuHighlightVisibility(activeIndex);
+
+            if (previousIndex < 0 || bottomMenuHighlightSlideSeconds <= 0f)
+            {
+                RestoreBottomTabBackgroundHome(target);
+                return;
+            }
+
+            bottomMenuHighlightRect = target.iconBackgroundRect;
+            bottomMenuHighlightStartWorld = startWorld;
+            bottomMenuHighlightEndWorld = GetBottomTabBackgroundHomeWorld(target);
+            bottomMenuHighlightTimer = 0f;
+            bottomMenuHighlightAnimating = true;
+            bottomMenuHighlightRect.position = bottomMenuHighlightStartWorld;
+        }
+
+        private void TickBottomMenuHighlight()
+        {
+            if (!bottomMenuHighlightAnimating || bottomMenuHighlightRect == null)
+            {
+                return;
+            }
+
+            bottomMenuHighlightTimer += Time.unscaledDeltaTime;
+            float duration = Mathf.Max(0.01f, bottomMenuHighlightSlideSeconds);
+            float t = Mathf.Clamp01(bottomMenuHighlightTimer / duration);
+            float eased = t * t * (3f - 2f * t);
+            bottomMenuHighlightRect.position = Vector3.LerpUnclamped(bottomMenuHighlightStartWorld, bottomMenuHighlightEndWorld, eased);
+
+            if (t < 1f)
+            {
+                return;
+            }
+
+            bottomMenuHighlightAnimating = false;
+            if (bottomMenuHighlightIndex >= 0 && bottomMenuHighlightIndex < bottomTabVisuals.Length)
+            {
+                RestoreBottomTabBackgroundHome(bottomTabVisuals[bottomMenuHighlightIndex]);
+                SetBottomTabBackgroundAlpha(bottomTabVisuals[bottomMenuHighlightIndex], 1f);
+            }
+        }
+
+        private void ApplyBottomMenuHighlightVisibility(int activeIndex)
+        {
+            for (int i = 0; i < bottomTabVisuals.Length; i++)
+            {
+                BottomTabVisual visual = bottomTabVisuals[i];
+                if (visual == null)
+                {
+                    continue;
+                }
+
+                bool active = i == activeIndex;
+                SetBottomTabBackgroundAlpha(visual, active ? 1f : 0f);
+                if (!active || !bottomMenuHighlightAnimating || visual.iconBackgroundRect != bottomMenuHighlightRect)
+                {
+                    RestoreBottomTabBackgroundHome(visual);
+                }
+            }
+        }
+
+        private static void SetBottomTabBackgroundAlpha(BottomTabVisual visual, float alpha)
+        {
+            if (visual?.iconBackground == null)
+            {
+                return;
+            }
+
+            Color color = HexColor("#00BFFF", alpha);
+            visual.iconBackground.color = color;
+        }
+
+        private static void RestoreBottomTabBackgroundHome(BottomTabVisual visual)
+        {
+            if (visual?.iconBackgroundRect != null)
+            {
+                visual.iconBackgroundRect.anchoredPosition = visual.iconBackgroundHomePosition;
+            }
+        }
+
+        private static Vector3 GetBottomTabBackgroundHomeWorld(BottomTabVisual visual)
+        {
+            if (visual?.iconBackgroundRect == null)
+            {
+                return Vector3.zero;
+            }
+
+            Vector2 current = visual.iconBackgroundRect.anchoredPosition;
+            visual.iconBackgroundRect.anchoredPosition = visual.iconBackgroundHomePosition;
+            Vector3 world = visual.iconBackgroundRect.position;
+            visual.iconBackgroundRect.anchoredPosition = current;
+            return world;
         }
 
         private void HideTemplate()
@@ -2308,7 +2581,11 @@ namespace StackMerge
             }
 
             SetText(scoreText, FormatNumber(gameState.Score));
-            SetText(droppedText, $"{FormatNumber(gameState.BlocksDropped)} moves");
+            SetText(
+                droppedText,
+                gameState.BlocksDropped <= 0
+                    ? "The run hasn't started yet."
+                    : $"{FormatNumber(gameState.BlocksDropped)} moves");
 
             bool trainingView = progression != null
                 && progression.IsMachineLearningTrainingActive
