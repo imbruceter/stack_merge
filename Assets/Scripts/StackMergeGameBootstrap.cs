@@ -127,6 +127,8 @@ namespace StackMerge
         [Tooltip("Selected Research popup root — hidden by default, shown when a tree node is clicked.")]
         [SerializeField] private GameObject researchDetailModal;
         [SerializeField] private Button researchDetailCloseButton;
+        [Tooltip("Optional. A Button covering the dimmed area behind the popup card (NOT the card itself) — clicking it closes the popup, same as the close button.")]
+        [SerializeField] private Button researchDetailBackdropButton;
         [SerializeField] private TMP_Text researchDetailNameText;
         [SerializeField] private TMP_Text researchDetailInfoText;
         [SerializeField] private TMP_Text researchDetailStatusText;
@@ -252,12 +254,6 @@ namespace StackMerge
             (ResearchId.PassiveInsight, ResearchId.OfflineEfficiency),
             (ResearchId.OfflineEfficiency, ResearchId.OfflineTime)
         };
-
-        private static readonly Vector2 ResearchNodeSize = new(198f, 68f);
-        private const float ResearchNodeLeft = 22f;
-        private const float ResearchNodeTop = 18f;
-        private const float ResearchNodeColumnSpacing = 278f;
-        private const float ResearchNodeTierSpacing = 88f;
 
         private void Awake()
         {
@@ -706,17 +702,44 @@ namespace StackMerge
                 researchDetailCloseButton.onClick.AddListener(CloseResearchDetail);
             }
 
+            if (researchDetailBackdropButton != null)
+            {
+                researchDetailBackdropButton.onClick.RemoveAllListeners();
+                researchDetailBackdropButton.onClick.AddListener(CloseResearchDetail);
+            }
+
+            if (researchCards == null || researchCards.Length == 0)
+            {
+                Debug.LogWarning("StackMerge: Research Cards array is empty on the Bootstrap — no research node click will open the popup. Drag every StackMergeResearchCard tree node into it.");
+            }
+
+            int wiredResearchCards = 0;
             foreach (StackMergeResearchCard card in researchCards)
             {
-                if (card == null || card.button == null)
+                if (card == null)
                 {
+                    Debug.LogWarning("StackMerge: Research Cards array has an empty (None) slot.");
+                    continue;
+                }
+
+                if (card.button == null)
+                {
+                    Debug.LogWarning($"StackMerge: Research card '{card.name}' (researchId={card.researchId}) has no Button assigned — its click won't open the popup.");
                     continue;
                 }
 
                 ResearchId cardResearchId = card.researchId;
                 card.button.onClick.RemoveAllListeners();
                 card.button.onClick.AddListener(() => OpenResearchDetail(cardResearchId));
+                wiredResearchCards++;
             }
+
+            if (researchDetailModal == null)
+            {
+                Debug.LogWarning("StackMerge: Research Detail Modal is not assigned on the Bootstrap — OpenResearchDetail has nothing to show.");
+            }
+
+            Debug.Log($"StackMerge: wired {wiredResearchCards}/{(researchCards?.Length ?? 0)} research cards. researchDetailModal={(researchDetailModal != null ? researchDetailModal.name : "None")}");
 
             // Start hidden, mirroring the Gameplay Info Overlay / Solver Info Modal.
             SetActive(solverInfoOverlay, false);
@@ -1680,103 +1703,18 @@ namespace StackMerge
             ppoModeModal.gameObject.SetActive(false);
         }
 
+        // The Research tree, category layout, and Selected Research popup are now entirely
+        // hand-built in the Hierarchy (StackMergeResearchCard grid + researchDetailModal). This
+        // used to also rebuild the whole panel at runtime whenever a guard condition on legacy
+        // fields (prestigeButton, researchButtons, researchDetailActionButton, etc.) wasn't
+        // exactly met — which was fragile: any one unassigned legacy field silently reassigned
+        // researchPanel/researchDetailNameText/StatusText/InfoText/ActionButton to freshly-created
+        // orphan objects, breaking the hand-wired popup. That runtime rebuild is removed for good;
+        // only the housekeeping calls that are still meaningful remain.
         private void EnsureResearchUi()
         {
             HideLegacyPrestigeResearchSection();
             EnsureResearchTabButton();
-
-            if (researchPanel != null && prestigeButton != null && researchDetailActionButton != null && researchButtons.Length > 0)
-            {
-                return;
-            }
-
-            RectTransform tabRoot = researchPanel != null
-                ? researchPanel.transform.parent as RectTransform
-                : upgradesPanel != null ? upgradesPanel.transform.parent as RectTransform : null;
-            if (tabRoot == null)
-            {
-                return;
-            }
-
-            RectTransform panel = researchPanel != null
-                ? researchPanel.GetComponent<RectTransform>()
-                : CreateRuntimePanel("Research Panel", tabRoot, HexColor("#000000", 0f));
-            researchPanel = panel.gameObject;
-            Stretch(panel);
-            researchPanel.SetActive(false);
-
-            TMP_Text title = CreateRuntimeText("Research Title", panel, "Research", 38, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
-            SetTopStretchRuntime(title.rectTransform, 0f, 0f, 280f, 58f);
-            title.enableAutoSizing = true;
-            title.fontSizeMin = 20;
-            title.fontSizeMax = 38;
-
-            RectTransform wallet = CreateRuntimePanel("Research Wallet", panel, HexColor("#141C2B"));
-            SetTopRightRuntime(wallet, 0f, 0f, 360f, 58f);
-            TMP_Text walletText = CreateRuntimeText("Research Wallet Text", wallet, "Insight: 0", 20, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#FDE68A"));
-            Stretch(walletText.rectTransform, 12f, 0f, 12f, 0f);
-            walletText.enableAutoSizing = true;
-            walletText.fontSizeMin = 12;
-            walletText.fontSizeMax = 20;
-            chipsTexts = AppendTextTarget(chipsTexts, walletText);
-
-            TMP_Text subtitle = CreateRuntimeText(
-                "Research Subtitle",
-                panel,
-                "Late-game permanent upgrades. Prestige converts trained PPO performance into Insight, then this tree speeds up every future cycle.",
-                20,
-                FontStyles.Bold,
-                TextAlignmentOptions.Center,
-                HexColor("#CBD5E1"));
-            SetTopStretchRuntime(subtitle.rectTransform, 0f, 78f, 0f, 46f);
-            subtitle.enableAutoSizing = true;
-            subtitle.fontSizeMin = 12;
-            subtitle.fontSizeMax = 20;
-
-            RectTransform console = CreateRuntimeCategoryPanel(panel, "Prestige Console", 136f, 146f);
-            prestigeSummaryText = CreateRuntimeText("Prestige Summary", console, "Research locked.", 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#CBD5E1"));
-            Stretch(prestigeSummaryText.rectTransform, 0f, 0f, 250f, 0f);
-            prestigeSummaryText.enableAutoSizing = true;
-            prestigeSummaryText.fontSizeMin = 10;
-            prestigeSummaryText.fontSizeMax = 18;
-
-            prestigeButton = CreateRuntimeButton("Prestige Button", console, "Prestige", HexColor("#7C3AED"), Vector2.zero, new Vector2(230f, 74f));
-            SetTopRightRuntime(prestigeButton.GetComponent<RectTransform>(), 0f, 0f, 230f, 74f);
-
-            RectTransform tree = CreateRuntimeCategoryPanel(panel, "Research Tree", 304f, 640f, 420f);
-            RectTransform connectorLayer = CreateRuntimePanel("Research Connectors", tree, HexColor("#000000", 0f));
-            Stretch(connectorLayer);
-            researchConnectorImages = CreateRuntimeResearchConnectors(connectorLayer);
-            researchButtons = new Button[StackMergeProgression.Research.Length];
-            for (int i = 0; i < researchButtons.Length; i++)
-            {
-                ResearchDefinition definition = StackMergeProgression.Research[i];
-                Button button = CreateRuntimeButton($"Research {i}", tree, definition.DisplayName, HexColor("#334155"), Vector2.zero, ResearchNodeSize);
-                SetTopLeftRuntime(button.GetComponent<RectTransform>(), GetResearchNodePosition(definition), ResearchNodeSize);
-                researchButtons[i] = button;
-            }
-
-            RectTransform detail = CreateRuntimeCategoryPanelRight(panel, "Selected Research", 304f, 400f, 640f);
-            researchDetailNameText = CreateRuntimeText("Research Detail Name", detail, "Insight Amplifier", 30, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#F8FAFC"));
-            SetTopStretchRuntime(researchDetailNameText.rectTransform, 0f, 0f, 0f, 42f);
-            researchDetailNameText.enableAutoSizing = true;
-            researchDetailNameText.fontSizeMin = 16;
-            researchDetailNameText.fontSizeMax = 30;
-
-            researchDetailStatusText = CreateRuntimeText("Research Detail Status", detail, "Locked", 18, FontStyles.Bold, TextAlignmentOptions.MidlineLeft, HexColor("#FDE68A"));
-            SetTopStretchRuntime(researchDetailStatusText.rectTransform, 0f, 52f, 0f, 34f);
-            researchDetailStatusText.enableAutoSizing = true;
-            researchDetailStatusText.fontSizeMin = 11;
-            researchDetailStatusText.fontSizeMax = 18;
-
-            researchDetailInfoText = CreateRuntimeText("Research Detail Info", detail, "Select a node.", 19, FontStyles.Normal, TextAlignmentOptions.TopLeft, HexColor("#CBD5E1"));
-            Stretch(researchDetailInfoText.rectTransform, 0f, 98f, 0f, 86f);
-            researchDetailInfoText.enableAutoSizing = true;
-            researchDetailInfoText.fontSizeMin = 12;
-            researchDetailInfoText.fontSizeMax = 19;
-
-            researchDetailActionButton = CreateRuntimeButton("Research Buy Button", detail, "Buy", HexColor("#7C3AED"), Vector2.zero, new Vector2(240f, 64f));
-            SetBottomCenterRuntime(researchDetailActionButton.GetComponent<RectTransform>(), 240f, 64f, 0f);
         }
 
         private void HideLegacyPrestigeResearchSection()
@@ -1875,92 +1813,6 @@ namespace StackMerge
             RectTransform content = CreateRuntimePanel($"{titleText} Content", panel, HexColor("#000000", 0f));
             Stretch(content, 18f, 44f, 18f, 14f);
             return content;
-        }
-
-        private static TMP_Text[] AppendTextTarget(TMP_Text[] targets, TMP_Text target)
-        {
-            if (target == null)
-            {
-                return targets ?? Array.Empty<TMP_Text>();
-            }
-
-            targets ??= Array.Empty<TMP_Text>();
-            if (targets.Contains(target))
-            {
-                return targets;
-            }
-
-            var resized = new TMP_Text[targets.Length + 1];
-            Array.Copy(targets, resized, targets.Length);
-            resized[^1] = target;
-            return resized;
-        }
-
-        private static Image[] CreateRuntimeResearchConnectors(RectTransform parent)
-        {
-            var images = new List<Image>();
-            foreach ((ResearchId from, ResearchId to) in ResearchConnections)
-            {
-                ResearchDefinition fromDefinition = GetStaticResearchDefinition(from);
-                ResearchDefinition toDefinition = GetStaticResearchDefinition(to);
-                Vector2 fromPosition = GetResearchNodePosition(fromDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, ResearchNodeSize.y);
-                Vector2 toPosition = GetResearchNodePosition(toDefinition) + new Vector2(ResearchNodeSize.x * 0.5f, 0f);
-                AddRuntimeResearchArrow(parent, fromPosition, toPosition, images);
-            }
-
-            return images.ToArray();
-        }
-
-        private static void AddRuntimeResearchArrow(RectTransform parent, Vector2 from, Vector2 to, List<Image> images)
-        {
-            Image main = AddRuntimeLine(parent, "Research Arrow", from, to, 4f);
-            images.Add(main);
-
-            Vector2 delta = to - from;
-            if (delta.sqrMagnitude < 0.01f)
-            {
-                return;
-            }
-
-            Vector2 direction = delta.normalized;
-            Vector2 normal = new(-direction.y, direction.x);
-            Vector2 left = to - direction * 18f + normal * 8f;
-            Vector2 right = to - direction * 18f - normal * 8f;
-            images.Add(AddRuntimeLine(parent, "Research Arrow Head", to, left, 3.2f));
-            images.Add(AddRuntimeLine(parent, "Research Arrow Head", to, right, 3.2f));
-        }
-
-        private static Image AddRuntimeLine(RectTransform parent, string name, Vector2 from, Vector2 to, float thickness)
-        {
-            RectTransform line = CreateRuntimePanel(name, parent, HexColor("#334155", 0.9f));
-            Image image = line.GetComponent<Image>();
-            if (image != null)
-            {
-                image.raycastTarget = false;
-            }
-
-            Vector2 delta = to - from;
-            Vector2 middle = (from + to) * 0.5f;
-            line.anchorMin = new Vector2(0f, 1f);
-            line.anchorMax = new Vector2(0f, 1f);
-            line.pivot = new Vector2(0.5f, 0.5f);
-            line.anchoredPosition = new Vector2(middle.x, -middle.y);
-            line.sizeDelta = new Vector2(Mathf.Max(1f, delta.magnitude), thickness);
-            line.localEulerAngles = new Vector3(0f, 0f, Mathf.Atan2(-delta.y, delta.x) * Mathf.Rad2Deg);
-            return image;
-        }
-
-        private static ResearchDefinition GetStaticResearchDefinition(ResearchId researchId)
-        {
-            int index = (int)researchId;
-            return index >= 0 && index < StackMergeProgression.Research.Length ? StackMergeProgression.Research[index] : StackMergeProgression.Research[0];
-        }
-
-        private static Vector2 GetResearchNodePosition(ResearchDefinition definition)
-        {
-            return new Vector2(
-                ResearchNodeLeft + definition.BranchColumn * ResearchNodeColumnSpacing,
-                ResearchNodeTop + definition.Tier * ResearchNodeTierSpacing);
         }
 
         private TMP_Text CreateCardChildText(string name, Transform parent, string label, int fontSize, Vector2 anchoredPosition, Vector2 size, Color color)
@@ -2183,8 +2035,28 @@ namespace StackMerge
         // the actual purchase happens via researchDetailActionButton inside the popup.
         private void OpenResearchDetail(ResearchId researchId)
         {
+            Debug.Log($"StackMerge: OpenResearchDetail({researchId}) called.");
+
             SelectResearchUpgrade(researchId);
             SetActive(researchDetailModal, true);
+
+            // The modal uses a Vertical Layout Group + Content Size Fitter, which can render at
+            // zero size on the very first frame a GameObject is activated (same class of issue as
+            // the currency pills). Force an immediate rebuild so it's correctly sized right away.
+            if (researchDetailModal != null)
+            {
+                RectTransform modalRect = researchDetailModal.transform as RectTransform;
+                if (modalRect != null)
+                {
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(modalRect);
+                }
+
+                Debug.Log($"StackMerge: researchDetailModal.activeSelf={researchDetailModal.activeSelf} activeInHierarchy={researchDetailModal.activeInHierarchy}");
+            }
+            else
+            {
+                Debug.LogWarning("StackMerge: researchDetailModal is null in OpenResearchDetail — nothing to show.");
+            }
         }
 
         private void CloseResearchDetail()
@@ -3903,10 +3775,9 @@ namespace StackMerge
                     }
                 }
 
-                if (card.button != null)
-                {
-                    card.button.interactable = IsResearchMenuUnlocked();
-                }
+                // Tree nodes are always clickable — even a "Locked" node should open the popup so
+                // the player can see what's blocking it. Only the popup's own Buy button gates on
+                // affordability/prerequisites.
             }
         }
 
