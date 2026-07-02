@@ -162,7 +162,7 @@ namespace StackMerge
         [Tooltip("Static equipped-agent slot displays already placed in the Agents menu (one per slot, not instantiated at runtime).")]
         [SerializeField] private StackMergeAgentSlot[] agentSlotCards = Array.Empty<StackMergeAgentSlot>();
 
-        [Header("Row Prefabs (assign in Inspector)")]
+        [Header("Row Prefabs")]
         [Tooltip("One row of the Goals list. Needs a StackMergeGoalRow component on its root.")]
         [SerializeField] private StackMergeGoalRow goalRowPrefab;
         [Tooltip("One row of History > Solvers. Needs a StackMergeSolverStatRow component on its root.")]
@@ -170,7 +170,7 @@ namespace StackMerge
         [Tooltip("One row of History > Recent Runs. Needs a StackMergeRecentRunRow component on its root.")]
         [SerializeField] private StackMergeRecentRunRow recentRunRowPrefab;
 
-        [Header("Solver Info Modal (assign in Inspector)")]
+        [Header("Solver Info Modal")]
         [Tooltip("Root overlay GameObject of the solver info modal — shown/hidden like the Gameplay Info Overlay.")]
         [SerializeField] private GameObject solverInfoOverlay;
         [SerializeField] private TMP_Text solverInfoTitle;
@@ -2513,7 +2513,7 @@ namespace StackMerge
 
             if (feedbackText != null)
             {
-                feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#5EEAD4");
+                feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#000000");
             }
         }
 
