@@ -57,7 +57,7 @@ namespace StackMerge
             int columnCount = 0;
             int rowCount = 0;
 
-            for (int i = 0; i < transform.childCount; i++)
+            for (int i = 0; i < rectChildren.Count; i++)
             {
                 rowCount = i / columns;
                 columnCount = i % columns;
