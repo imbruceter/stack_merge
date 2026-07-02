@@ -249,6 +249,7 @@ namespace StackMerge
         private int bottomMenuHighlightIndex = -1;
         private bool bottomMenuHighlightAnimating;
         private RectTransform bottomMenuHighlightRect;
+        private int bottomMenuHighlightPendingIconIndex = -1;
         private Vector3 bottomMenuHighlightStartWorld;
         private Vector3 bottomMenuHighlightEndWorld;
         private float bottomMenuHighlightTimer;
@@ -1239,12 +1240,11 @@ namespace StackMerge
                 SetActive(button.gameObject, true);
 
                 bool locked = IsBottomTabLocked(i);
-                BottomTabVisual visual = i < bottomTabVisuals.Length ? bottomTabVisuals[i] : null;
-                ApplyBottomTabVisual(visual, locked, i == activeIndex);
                 button.interactable = !locked;
             }
 
             UpdateBottomMenuHighlightTarget(activeIndex);
+            RefreshBottomMenuIconStates();
         }
 
         private void EnsureBottomTabVisualCache()
@@ -1262,6 +1262,8 @@ namespace StackMerge
                 {
                     continue;
                 }
+
+                button.transition = Selectable.Transition.None;
 
                 Transform iconBackgroundTransform = FindNamedDescendant(button.transform, "IconBackground");
                 Image iconBackground = iconBackgroundTransform != null ? iconBackgroundTransform.GetComponent<Image>() : null;
@@ -1340,6 +1342,25 @@ namespace StackMerge
             return IsBottomTabLocked(selectedTabIndex) ? -1 : selectedTabIndex;
         }
 
+        private bool CanSlideBottomMenuHighlight(int fromIndex, int toIndex)
+        {
+            if (fromIndex < 0
+                || toIndex < 0
+                || fromIndex == toIndex
+                || bottomMenuHighlightSlideSeconds <= 0f
+                || fromIndex >= bottomTabVisuals.Length
+                || toIndex >= bottomTabVisuals.Length)
+            {
+                return false;
+            }
+
+            BottomTabVisual from = bottomTabVisuals[fromIndex];
+            BottomTabVisual to = bottomTabVisuals[toIndex];
+            return from?.iconBackgroundRect != null
+                && to?.iconBackground != null
+                && to.iconBackgroundRect != null;
+        }
+
         private bool IsBottomTabLocked(int tabIndex)
         {
             return (tabIndex == 3 && progression != null && !progression.ModifiersMenuUnlocked)
@@ -1384,6 +1405,7 @@ namespace StackMerge
                 bottomMenuHighlightIndex = -1;
                 bottomMenuHighlightAnimating = false;
                 bottomMenuHighlightRect = null;
+                bottomMenuHighlightPendingIconIndex = -1;
                 ApplyBottomMenuHighlightVisibility(-1);
                 return;
             }
@@ -1392,6 +1414,7 @@ namespace StackMerge
             if (target == null || target.iconBackground == null || target.iconBackgroundRect == null)
             {
                 bottomMenuHighlightIndex = activeIndex;
+                bottomMenuHighlightPendingIconIndex = -1;
                 ApplyBottomMenuHighlightVisibility(activeIndex);
                 return;
             }
@@ -1403,20 +1426,19 @@ namespace StackMerge
             }
 
             int previousIndex = bottomMenuHighlightIndex;
+            bool shouldAnimate = CanSlideBottomMenuHighlight(previousIndex, activeIndex);
             Vector3 startWorld = GetBottomTabBackgroundHomeWorld(target);
-            if (previousIndex >= 0 && previousIndex < bottomTabVisuals.Length)
+            if (shouldAnimate)
             {
                 BottomTabVisual previous = bottomTabVisuals[previousIndex];
-                if (previous?.iconBackgroundRect != null)
-                {
-                    startWorld = GetBottomTabBackgroundHomeWorld(previous);
-                }
+                startWorld = GetBottomTabBackgroundHomeWorld(previous);
             }
 
             bottomMenuHighlightIndex = activeIndex;
+            bottomMenuHighlightPendingIconIndex = shouldAnimate ? activeIndex : -1;
             ApplyBottomMenuHighlightVisibility(activeIndex);
 
-            if (previousIndex < 0 || bottomMenuHighlightSlideSeconds <= 0f)
+            if (!shouldAnimate)
             {
                 RestoreBottomTabBackgroundHome(target);
                 return;
@@ -1443,6 +1465,12 @@ namespace StackMerge
             float eased = t * t * (3f - 2f * t);
             bottomMenuHighlightRect.position = Vector3.LerpUnclamped(bottomMenuHighlightStartWorld, bottomMenuHighlightEndWorld, eased);
 
+            if (bottomMenuHighlightPendingIconIndex >= 0 && IsMovingHighlightTouchingPendingIcon())
+            {
+                bottomMenuHighlightPendingIconIndex = -1;
+                RefreshBottomMenuIconStates();
+            }
+
             if (t < 1f)
             {
                 return;
@@ -1454,6 +1482,9 @@ namespace StackMerge
                 RestoreBottomTabBackgroundHome(bottomTabVisuals[bottomMenuHighlightIndex]);
                 SetBottomTabBackgroundAlpha(bottomTabVisuals[bottomMenuHighlightIndex], 1f);
             }
+
+            bottomMenuHighlightPendingIconIndex = -1;
+            RefreshBottomMenuIconStates();
         }
 
         private void ApplyBottomMenuHighlightVisibility(int activeIndex)
@@ -1473,6 +1504,30 @@ namespace StackMerge
                     RestoreBottomTabBackgroundHome(visual);
                 }
             }
+        }
+
+        private void RefreshBottomMenuIconStates()
+        {
+            int activeIndex = GetBottomMenuActiveTabIndex();
+            for (int i = 0; i < tabButtons.Length && i < 6; i++)
+            {
+                BottomTabVisual visual = i < bottomTabVisuals.Length ? bottomTabVisuals[i] : null;
+                ApplyBottomTabVisual(visual, IsBottomTabLocked(i), i == activeIndex && i != bottomMenuHighlightPendingIconIndex);
+            }
+        }
+
+        private bool IsMovingHighlightTouchingPendingIcon()
+        {
+            if (bottomMenuHighlightPendingIconIndex < 0
+                || bottomMenuHighlightPendingIconIndex >= bottomTabVisuals.Length
+                || bottomMenuHighlightRect == null)
+            {
+                return false;
+            }
+
+            BottomTabVisual pending = bottomTabVisuals[bottomMenuHighlightPendingIconIndex];
+            RectTransform iconRect = pending?.icon != null ? pending.icon.rectTransform : null;
+            return iconRect == null || WorldRectsOverlap(bottomMenuHighlightRect, iconRect);
         }
 
         private static void SetBottomTabBackgroundAlpha(BottomTabVisual visual, float alpha)
@@ -1506,6 +1561,44 @@ namespace StackMerge
             Vector3 world = visual.iconBackgroundRect.position;
             visual.iconBackgroundRect.anchoredPosition = current;
             return world;
+        }
+
+        private static bool WorldRectsOverlap(RectTransform a, RectTransform b)
+        {
+            if (a == null || b == null)
+            {
+                return false;
+            }
+
+            Vector3[] aCorners = new Vector3[4];
+            Vector3[] bCorners = new Vector3[4];
+            a.GetWorldCorners(aCorners);
+            b.GetWorldCorners(bCorners);
+
+            GetWorldBounds(aCorners, out float aMinX, out float aMaxX, out float aMinY, out float aMaxY);
+            GetWorldBounds(bCorners, out float bMinX, out float bMaxX, out float bMinY, out float bMaxY);
+
+            return aMinX <= bMaxX
+                && aMaxX >= bMinX
+                && aMinY <= bMaxY
+                && aMaxY >= bMinY;
+        }
+
+        private static void GetWorldBounds(Vector3[] corners, out float minX, out float maxX, out float minY, out float maxY)
+        {
+            minX = corners[0].x;
+            maxX = corners[0].x;
+            minY = corners[0].y;
+            maxY = corners[0].y;
+
+            for (int i = 1; i < corners.Length; i++)
+            {
+                Vector3 corner = corners[i];
+                minX = Mathf.Min(minX, corner.x);
+                maxX = Mathf.Max(maxX, corner.x);
+                minY = Mathf.Min(minY, corner.y);
+                maxY = Mathf.Max(maxY, corner.y);
+            }
         }
 
         private void HideTemplate()
