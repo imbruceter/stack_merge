@@ -118,8 +118,15 @@ namespace StackMerge
         [SerializeField] private Button agentsMenuUnlockButton;
         [SerializeField] private TMP_Text prestigeSummaryText;
         [SerializeField] private Button prestigeButton;
+        // Legacy pre-redesign tree (dynamic node buttons + drawn connector arrows) — no longer
+        // used now that the tree is a static grid of StackMergeResearchCard nodes.
         [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
         [SerializeField] private Image[] researchConnectorImages = Array.Empty<Image>();
+        [Tooltip("Static per-research nodes already placed in the Research tree grid (one per research, not instantiated at runtime). Clicking a node opens the Selected Research popup below.")]
+        [SerializeField] private StackMergeResearchCard[] researchCards = Array.Empty<StackMergeResearchCard>();
+        [Tooltip("Selected Research popup root — hidden by default, shown when a tree node is clicked.")]
+        [SerializeField] private GameObject researchDetailModal;
+        [SerializeField] private Button researchDetailCloseButton;
         [SerializeField] private TMP_Text researchDetailNameText;
         [SerializeField] private TMP_Text researchDetailInfoText;
         [SerializeField] private TMP_Text researchDetailStatusText;
@@ -693,8 +700,27 @@ namespace StackMerge
                 solverInfoCloseButton.onClick.AddListener(HideSolverInfoModal);
             }
 
-            // Start hidden, mirroring the Gameplay Info Overlay.
+            if (researchDetailCloseButton != null)
+            {
+                researchDetailCloseButton.onClick.RemoveAllListeners();
+                researchDetailCloseButton.onClick.AddListener(CloseResearchDetail);
+            }
+
+            foreach (StackMergeResearchCard card in researchCards)
+            {
+                if (card == null || card.button == null)
+                {
+                    continue;
+                }
+
+                ResearchId cardResearchId = card.researchId;
+                card.button.onClick.RemoveAllListeners();
+                card.button.onClick.AddListener(() => OpenResearchDetail(cardResearchId));
+            }
+
+            // Start hidden, mirroring the Gameplay Info Overlay / Solver Info Modal.
             SetActive(solverInfoOverlay, false);
+            SetActive(researchDetailModal, false);
 
             if (achievementBackButton != null)
             {
@@ -996,6 +1022,7 @@ namespace StackMerge
             SetActive(settingsPanel, selectedTabIndex == 6);
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
+            SetActive(researchDetailModal, false);
             RefreshTabButtons();
 
             // Update the board / training-overlay visibility immediately on tab change so the
@@ -1020,6 +1047,7 @@ namespace StackMerge
             SetActive(historyPanel, true);
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
+            SetActive(researchDetailModal, false);
             RefreshHistory();
             RefreshTabButtons();
             RefreshGameView();
@@ -1047,6 +1075,7 @@ namespace StackMerge
             SetActive(achievementsPanel, true);
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
+            SetActive(researchDetailModal, false);
             RefreshAchievements();
             RefreshTabButtons();
             RefreshGameView();
@@ -1082,10 +1111,12 @@ namespace StackMerge
             SetActive(gameplayInfoOverlay, false);
         }
 
+        // The Research tab unlocks as soon as PPO is bought — actually being able to prestige is a
+        // separate, later gate (Training Mode's frame requirement, via PrestigeAvailable) that the
+        // prestige button/summary text enforces on its own.
         private bool IsResearchMenuUnlocked()
         {
-            return progression != null
-                && (progression.PrestigeAvailable || progression.PrestigeCount > 0 || progression.ResearchInsight > 0);
+            return progression != null && progression.IsSolverUnlocked(SolverId.MachineLearning);
         }
 
         private void OpenSolverTunePanel()
@@ -2146,6 +2177,19 @@ namespace StackMerge
         {
             selectedResearchId = researchId;
             RefreshResearchMenu();
+        }
+
+        // Clicking a tree node opens the Selected Research popup instead of buying directly —
+        // the actual purchase happens via researchDetailActionButton inside the popup.
+        private void OpenResearchDetail(ResearchId researchId)
+        {
+            SelectResearchUpgrade(researchId);
+            SetActive(researchDetailModal, true);
+        }
+
+        private void CloseResearchDetail()
+        {
+            SetActive(researchDetailModal, false);
         }
 
         private void BuySelectedResearchUpgrade()
@@ -3808,7 +3852,62 @@ namespace StackMerge
             }
 
             RefreshResearchConnectors();
+            RefreshResearchCards();
             RefreshSelectedResearchDetails();
+        }
+
+        // Drives every static Research tree node (Name/Level/Cost-InfoText) straight from
+        // progression state. Cards are never instantiated — one already exists per research in the
+        // Hierarchy grid. Clicking a card opens the Selected Research popup (OpenResearchDetail);
+        // it does not buy directly, so there's no interactable/afford gating here beyond the tab
+        // being unlocked at all.
+        private void RefreshResearchCards()
+        {
+            if (progression == null || researchCards == null)
+            {
+                return;
+            }
+
+            foreach (StackMergeResearchCard card in researchCards)
+            {
+                if (card == null)
+                {
+                    continue;
+                }
+
+                ResearchDefinition definition = progression.GetResearchDefinition(card.researchId);
+                int level = progression.GetResearchLevel(card.researchId);
+                bool maxed = progression.IsResearchMaxed(card.researchId);
+
+                SetText(card.nameText, definition.DisplayName);
+                SetText(card.levelText, $"{level}/{definition.MaxLevel}");
+
+                if (maxed)
+                {
+                    SetText(card.costText, "Maxed");
+                }
+                else
+                {
+                    string reason = progression.GetResearchUnavailableReason(card.researchId);
+                    // "Not enough Insight." still shows the price (you could afford it later);
+                    // any other non-empty reason (prerequisite unmet, not prestiged yet) is a hard
+                    // structural lock.
+                    if (!string.IsNullOrEmpty(reason) && reason != "Not enough Insight.")
+                    {
+                        SetText(card.costText, "Locked");
+                    }
+                    else
+                    {
+                        long cost = progression.GetResearchCost(card.researchId);
+                        SetText(card.costText, $"<sprite name=\"insight\"> {FormatNumber(cost)}");
+                    }
+                }
+
+                if (card.button != null)
+                {
+                    card.button.interactable = IsResearchMenuUnlocked();
+                }
+            }
         }
 
         private void RefreshResearchConnectors()

@@ -768,21 +768,21 @@ namespace StackMerge
 
         public string GetPrestigeSummary()
         {
-            if (!PrestigeAvailable)
+            // The Research tab itself only requires PPO to be bought (see Bootstrap's
+            // IsResearchMenuUnlocked), so this text is normally only read after that's already
+            // true. Kept as a defensive fallback in case it's ever surfaced earlier.
+            if (!IsSolverUnlocked(SolverId.MachineLearning))
             {
-                string gate = !IsSolverUnlocked(SolverId.MachineLearning)
-                    ? "Unlock PPO to begin the prestige layer."
-                    : $"Finish PPO Training first: {MachineLearningFrames}/{MachineLearningPlayingModeFrameRequirement} frames.";
-                return $"{gate}\nInsight: {ResearchInsight} | Prestiges: {PrestigeCount}";
+                return "Unlock PPO to begin the prestige layer.";
+            }
+
+            if (!MachineLearningPlayingModeUnlocked)
+            {
+                return $"Finish PPO Training first. {MachineLearningFrames}/{MachineLearningPlayingModeFrameRequirement} frames.";
             }
 
             long gain = PreviewPrestigeInsightGain();
-            if (gain <= 0)
-            {
-                return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount}\nPPO Training complete. Run PPO in Normal mode to generate prestige Insight.";
-            }
-
-            return $"Insight: {ResearchInsight} | Prestiges: {PrestigeCount} | Next prestige: +{gain}\nNormal PPO runs {MachineLearningNormalRuns} | Cycle Insight {ResearchInsightEarnedThisPrestige} | Best score {MachineLearningNormalBestScore} | Best high {MachineLearningNormalBestHigh} | Insight x{GetNormalModeInsightMultiplier():0.00}";
+            return $"Prestige for {gain} insights. You can keep playing PPO in Playing Mode to increase insight.";
         }
 
         public long ExecutePrestige()
@@ -1942,9 +1942,12 @@ namespace StackMerge
 
                     return true;
                 case ResearchId.InsightExtractor:
-                    if (GetResearchLevel(ResearchId.PpoStability) < 1 || GetResearchLevel(ResearchId.PassiveInsight) < 1)
+                    // Same-column only: this sits directly below Stability Model in the middle
+                    // column. It must NOT also require Passive Insight (right column) — the tree
+                    // only allows moving straight down within a column, never sideways.
+                    if (GetResearchLevel(ResearchId.PpoStability) < 1)
                     {
-                        reason = "Requires Stability Model L1 and Passive Insight L1.";
+                        reason = "Requires Stability Model L1.";
                         return false;
                     }
 
