@@ -989,16 +989,23 @@ namespace StackMerge
                 prestigeButton.onClick.AddListener(ExecutePrestige);
             }
 
-            for (int i = 0; i < researchButtons.Length; i++)
+            // The hand-built Research grid uses StackMergeResearchCard.button references wired in
+            // WireButtons(). The legacy researchButtons array often points at those same Button
+            // components, so rewiring it here would remove OpenResearchDetail and leave clicks only
+            // refreshing hidden detail text.
+            if (!HasAssignedResearchCardButtons())
             {
-                int researchIndex = i;
-                if (researchButtons[i] == null)
+                for (int i = 0; i < researchButtons.Length; i++)
                 {
-                    continue;
-                }
+                    int researchIndex = i;
+                    if (researchButtons[i] == null)
+                    {
+                        continue;
+                    }
 
-                researchButtons[i].onClick.RemoveAllListeners();
-                researchButtons[i].onClick.AddListener(() => SelectResearchUpgrade((ResearchId)researchIndex));
+                    researchButtons[i].onClick.RemoveAllListeners();
+                    researchButtons[i].onClick.AddListener(() => SelectResearchUpgrade((ResearchId)researchIndex));
+                }
             }
 
             if (researchDetailActionButton != null)
@@ -1006,6 +1013,24 @@ namespace StackMerge
                 researchDetailActionButton.onClick.RemoveAllListeners();
                 researchDetailActionButton.onClick.AddListener(BuySelectedResearchUpgrade);
             }
+        }
+
+        private bool HasAssignedResearchCardButtons()
+        {
+            if (researchCards == null)
+            {
+                return false;
+            }
+
+            foreach (StackMergeResearchCard card in researchCards)
+            {
+                if (card != null && card.button != null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void SelectTab(int tabIndex)
@@ -3056,9 +3081,9 @@ namespace StackMerge
             SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
 
             var builder = new StringBuilder();
-            builder.AppendLine($"Stack cap: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
-            builder.AppendLine($"Risk: L{progression.DifficultyLevel}");
-            builder.AppendLine($"Speed: L{progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
+            builder.AppendLine($"Stack capacity: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
+            builder.AppendLine($"Difficulty: Level {progression.DifficultyLevel}");
+            builder.AppendLine($"Speed: Level {progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
             builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
             builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
             builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
@@ -3075,10 +3100,10 @@ namespace StackMerge
             if (gameState != null)
             {
                 builder.AppendLine($"Run modifiers: Unstable {gameState.UnstableSavesRemaining}, Pickaxe {gameState.PickaxeUsesRemaining}, Queue skip {gameState.QueueSkipsRemaining}");
-                builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")} | Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
+                builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")}, Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
             }
             builder.AppendLine();
-            builder.AppendLine("Solver tuning");
+            builder.AppendLine("<b>Solver tuning</b>");
 
             if (!progression.SolverTuningUnlocked)
             {
@@ -4105,7 +4130,7 @@ namespace StackMerge
             ClearChildren(root);
             if (values == null || values.Count == 0)
             {
-                TMP_Text empty = CreateRuntimeText("Empty Chart", root, emptyText, 18, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
+                TMP_Text empty = CreateRuntimeText("Empty Chart", root, emptyText, 26, FontStyles.Bold, TextAlignmentOptions.Center, HexColor("#64748B"));
                 Stretch(empty.rectTransform, 0f, 0f, 0f, 0f);
                 return;
             }
@@ -4152,7 +4177,7 @@ namespace StackMerge
 
             for (int i = 1; i < count; i++)
             {
-                CreateLineSegment(root, PointAt(i - 1), PointAt(i), lineColor, 3f);
+                CreateLineSegment(root, PointAt(i - 1), PointAt(i), lineColor, 5f);
             }
 
             if (count <= 30)
@@ -4205,13 +4230,13 @@ namespace StackMerge
 
         private void CreateChartLabel(RectTransform root, string text, Vector2 anchoredPosition, float width, TextAlignmentOptions alignment)
         {
-            TMP_Text label = CreateRuntimeText("Chart Label", root, text, 13, FontStyles.Bold, alignment, HexColor("#94A3B8"));
+            TMP_Text label = CreateRuntimeText("Chart Label", root, text, 22, FontStyles.Bold, alignment, HexColor("#94A3B8"));
             RectTransform rect = label.rectTransform;
             rect.anchorMin = new Vector2(0f, 0f);
             rect.anchorMax = new Vector2(0f, 0f);
             rect.pivot = new Vector2(0f, 0f);
             rect.anchoredPosition = anchoredPosition;
-            rect.sizeDelta = new Vector2(width, 22f);
+            rect.sizeDelta = new Vector2(width, 30f);
         }
 
         private static HistorySolverStats[] BuildHistorySolverStats(RunHistoryEntry[] history)
