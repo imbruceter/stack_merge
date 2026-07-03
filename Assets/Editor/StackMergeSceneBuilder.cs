@@ -178,6 +178,8 @@ namespace StackMerge.Editor
             Button[] queuePreviewUpgradeButtons;
             Button[] incomeUpgradeButtons;
             Button[] difficultyUpgradeButtons;
+            Button scalingFrequencyUpgradeButton;
+            Button profitableEndingUpgradeButton;
             TMP_Text progressionStageText;
             Button modifiersMenuUnlockButton;
             Button agentsMenuUnlockButton;
@@ -194,6 +196,8 @@ namespace StackMerge.Editor
                 out queuePreviewUpgradeButtons,
                 out incomeUpgradeButtons,
                 out difficultyUpgradeButtons,
+                out scalingFrequencyUpgradeButton,
+                out profitableEndingUpgradeButton,
                 out progressionStageText,
                 out modifiersMenuUnlockButton,
                 out agentsMenuUnlockButton);
@@ -347,6 +351,8 @@ namespace StackMerge.Editor
                 queuePreviewUpgradeButtons,
                 incomeUpgradeButtons,
                 difficultyUpgradeButtons,
+                scalingFrequencyUpgradeButton,
+                profitableEndingUpgradeButton,
                 progressionStageText,
                 modifiersMenuUnlockButton,
                 agentsMenuUnlockButton,
@@ -929,6 +935,8 @@ namespace StackMerge.Editor
             out Button[] queuePreviewUpgradeButtons,
             out Button[] incomeUpgradeButtons,
             out Button[] difficultyUpgradeButtons,
+            out Button scalingFrequencyUpgradeButton,
+            out Button profitableEndingUpgradeButton,
             out TMP_Text progressionStageText,
             out Button modifiersMenuUnlockButton,
             out Button agentsMenuUnlockButton)
@@ -974,12 +982,18 @@ namespace StackMerge.Editor
             stackCapacityUpgradeButtons = CreateUpgradeRow(stack, "Cap", HexColor("#4F46E5"));
 
             RectTransform difficulty = CreateCategoryPanel(panel, "Difficulty Scaling", 894f, 126f);
-            difficultyUpgradeButtons = CreateUpgradeRow(difficulty, "Risk", HexColor("#DB2777"), 3);
+            difficultyUpgradeButtons = CreateUpgradeRow(difficulty, "Risk", HexColor("#DB2777"));
 
-            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 1036f, 126f);
+            RectTransform scalingFrequency = CreateCategoryPanel(panel, "Scaling Frequency", 1036f, 126f);
+            scalingFrequencyUpgradeButton = CreateUpgradeRow(scalingFrequency, "Scaling Frequency", HexColor("#0E7490"), 1)[0];
+
+            RectTransform profitableEnding = CreateCategoryPanel(panel, "Profitable Ending", 1178f, 126f);
+            profitableEndingUpgradeButton = CreateUpgradeRow(profitableEnding, "Profitable Ending", HexColor("#059669"), 1)[0];
+
+            RectTransform queue = CreateCategoryPanel(panel, "Next Preview", 1320f, 126f);
             queuePreviewUpgradeButtons = CreateUpgradeRow(queue, "Next", HexColor("#7C3AED"), 2);
 
-            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 1178f, 126f);
+            RectTransform income = CreateCategoryPanel(panel, "Chip Yield", 1462f, 126f);
             incomeUpgradeButtons = CreateUpgradeRow(income, "Yield", HexColor("#CA8A04"));
         }
 

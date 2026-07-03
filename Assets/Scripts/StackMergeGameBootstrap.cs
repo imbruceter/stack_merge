@@ -116,6 +116,10 @@ namespace StackMerge
         [SerializeField] private Button incomeUpgradeButton;
         [Tooltip("Single Difficulty Scaling upgrade button. Needs a StackMergeButtonLabelPair component.")]
         [SerializeField] private Button difficultyUpgradeButton;
+        [Tooltip("Single Scaling Frequency upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Scaling Frequency\".")]
+        [SerializeField] private Button scalingFrequencyUpgradeButton;
+        [Tooltip("Single Profitable Ending upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Profitable Ending\".")]
+        [SerializeField] private Button profitableEndingUpgradeButton;
         [SerializeField] private TMP_Text progressionStageText;
         [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
@@ -282,6 +286,7 @@ namespace StackMerge
         {
             ConfigureCamera();
             EnsureEventSystem();
+            EnsureOptionalUpgradeButtonReferences();
             WireButtons();
             HideTemplate();
             SelectTab(0);
@@ -492,6 +497,8 @@ namespace StackMerge
             Button[] queueButtons,
             Button[] incomeButtons,
             Button[] difficultyButtons,
+            Button scalingFrequencyButton,
+            Button profitableEndingButton,
             TMP_Text stageText,
             Button unlockModifiersButton,
             Button unlockAgentsButton,
@@ -592,6 +599,8 @@ namespace StackMerge
             queuePreviewUpgradeButton = queueButtons is { Length: > 0 } ? queueButtons[0] : null;
             incomeUpgradeButton = incomeButtons is { Length: > 0 } ? incomeButtons[0] : null;
             difficultyUpgradeButton = difficultyButtons is { Length: > 0 } ? difficultyButtons[0] : null;
+            scalingFrequencyUpgradeButton = scalingFrequencyButton;
+            profitableEndingUpgradeButton = profitableEndingButton;
             progressionStageText = stageText;
             modifiersMenuUnlockButton = unlockModifiersButton;
             agentsMenuUnlockButton = unlockAgentsButton;
@@ -642,6 +651,58 @@ namespace StackMerge
             targetCamera.orthographicSize = 5f;
             targetCamera.backgroundColor = HexColor("#111827");
             targetCamera.clearFlags = CameraClearFlags.SolidColor;
+        }
+
+        private void EnsureOptionalUpgradeButtonReferences()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            if (scalingFrequencyUpgradeButton == null)
+            {
+                scalingFrequencyUpgradeButton = FindButtonByLooseName("Scaling Frequency");
+            }
+
+            if (profitableEndingUpgradeButton == null)
+            {
+                profitableEndingUpgradeButton = FindButtonByLooseName("Profitable Ending");
+            }
+        }
+
+        private Button FindButtonByLooseName(string expectedName)
+        {
+            string normalizedExpected = NormalizeLookupName(expectedName);
+            foreach (Button button in canvas.GetComponentsInChildren<Button>(true))
+            {
+                if (button == null)
+                {
+                    continue;
+                }
+
+                string normalizedButtonName = NormalizeLookupName(button.name);
+                if (normalizedButtonName == normalizedExpected || normalizedButtonName.Contains(normalizedExpected))
+                {
+                    return button;
+                }
+
+                StackMergeButtonLabelPair labels = button.GetComponent<StackMergeButtonLabelPair>();
+                string normalizedLabel = labels?.nameText != null ? NormalizeLookupName(labels.nameText.text) : string.Empty;
+                if (normalizedLabel == normalizedExpected || normalizedLabel.Contains(normalizedExpected))
+                {
+                    return button;
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormalizeLookupName(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
         }
 
         private static void EnsureEventSystem()
@@ -931,6 +992,18 @@ namespace StackMerge
             {
                 difficultyUpgradeButton.onClick.RemoveAllListeners();
                 difficultyUpgradeButton.onClick.AddListener(BuyDifficultyUpgrade);
+            }
+
+            if (scalingFrequencyUpgradeButton != null)
+            {
+                scalingFrequencyUpgradeButton.onClick.RemoveAllListeners();
+                scalingFrequencyUpgradeButton.onClick.AddListener(BuyScalingFrequencyUpgrade);
+            }
+
+            if (profitableEndingUpgradeButton != null)
+            {
+                profitableEndingUpgradeButton.onClick.RemoveAllListeners();
+                profitableEndingUpgradeButton.onClick.AddListener(BuyProfitableEndingUpgrade);
             }
 
             if (modifiersMenuUnlockButton != null)
@@ -1918,8 +1991,9 @@ namespace StackMerge
             int capacity = progression != null ? progression.StackCapacity : StackMergeGameState.DefaultStackCapacity;
             int queueLength = progression != null ? progression.QueueLength : StackMergeGameState.DefaultQueueLength;
             int difficulty = progression != null ? progression.DifficultyLevel : 0;
+            int scalingFrequency = progression != null ? progression.ScalingFrequencyLevel : 0;
             StackMergeRunModifiers modifiers = progression != null ? progression.BuildRunModifiers() : default;
-            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, modifiers: modifiers, seed: Environment.TickCount);
+            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, scalingFrequencyLevel: scalingFrequency, modifiers: modifiers, seed: Environment.TickCount);
             autoSolveTimer = 0f;
             autoRestartTimer = 0f;
             currentRunUsedAutoSolve = false;
@@ -2543,6 +2617,37 @@ namespace StackMerge
             RefreshEverything();
         }
 
+        private void BuyScalingFrequencyUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyScalingFrequencyUpgrade();
+            SetText(feedbackText, bought ? $"Scaling frequency level {progression.ScalingFrequencyLevel}" : "Scaling frequency upgrade unavailable");
+            if (bought)
+            {
+                ApplyCurrentBoardSettingsToGameState();
+            }
+
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyProfitableEndingUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyProfitableEndingUpgrade();
+            SetText(feedbackText, bought ? $"Profitable ending level {progression.ProfitableEndingLevel}" : "Profitable ending upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
         private void BuyModifierUpgrade(ModifierId modifierId)
         {
             if (progression == null)
@@ -2637,7 +2742,8 @@ namespace StackMerge
             if (gameState == null
                 || (gameState.StackCapacity == progression.StackCapacity
                     && gameState.QueueLength == progression.QueueLength
-                    && gameState.DifficultyLevel == progression.DifficultyLevel))
+                    && gameState.DifficultyLevel == progression.DifficultyLevel
+                    && gameState.ScalingFrequencyLevel == progression.ScalingFrequencyLevel))
             {
                 return;
             }
@@ -2647,6 +2753,7 @@ namespace StackMerge
                 stackCapacity: progression.StackCapacity,
                 queueLength: progression.QueueLength,
                 difficultyLevel: progression.DifficultyLevel,
+                scalingFrequencyLevel: progression.ScalingFrequencyLevel,
                 modifiers: snapshot.Modifiers,
                 seed: Environment.TickCount);
             resizedGame.RestoreSnapshotResized(snapshot);
@@ -3013,10 +3120,10 @@ namespace StackMerge
                 : $"Unlock this algorithm to reveal details.";
             // PPO runtime statistics are intentionally not shown here — they live in the History menu.
             SetText(solverDetailInfoText, unlocked ? definition.Description : lockedInfo);
-            SetButtonText(solverDetailTuneButton,
-                !unlocked ? "Tune\nLocked" : !progression.SolverTuningUnlocked ? "Tune\nUpgrade" : canTune ? "Tune" : "No tuning");
             if (solverDetailTuneButton != null)
             {
+                SetActive(solverDetailTuneButton.gameObject, canTune);
+                SetButtonText(solverDetailTuneButton, "Tune");
                 solverDetailTuneButton.interactable = canTune;
             }
 
@@ -3097,9 +3204,10 @@ namespace StackMerge
                 if (card.tuneButton != null)
                 {
                     SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(card.solverId);
-                    // RAND (and any other parameterless solver) has nothing to tune — hide the button entirely.
-                    card.tuneButton.gameObject.SetActive(tuningDefinition.HasParameters);
-                    card.tuneButton.interactable = unlocked && progression.SolverTuningUnlocked;
+                    // Hide tuning until this solver is owned, tuning is unlocked, and it has tunable parameters.
+                    bool showTuneButton = unlocked && progression.SolverTuningUnlocked && tuningDefinition.HasParameters;
+                    card.tuneButton.gameObject.SetActive(showTuneButton);
+                    card.tuneButton.interactable = showTuneButton;
                 }
             }
         }
@@ -4026,15 +4134,46 @@ namespace StackMerge
             {
                 int level = progression.DifficultyLevel;
                 int maxLevel = progression.MaxDifficultyLevel;
-                string name = $"+odds ({level}/{maxLevel})";
                 if (progression.IsMaxDifficulty)
                 {
+                    string name = $"+{StackMergeProgression.GetDifficultyMaxTierBonus(level):0.0} max tier ({level}/{maxLevel})";
                     SetUpgradeButtonLabels(difficultyUpgradeButton, name, "Maxed", false);
                 }
                 else
                 {
+                    string name = $"+{StackMergeProgression.GetDifficultyMaxTierBonus(level + 1):0.0} max tier ({level}/{maxLevel})";
                     long cost = progression.GetDifficultyUpgradeCost();
                     SetUpgradeButtonLabels(difficultyUpgradeButton, name, $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            if (scalingFrequencyUpgradeButton != null)
+            {
+                int level = progression.ScalingFrequencyLevel;
+                int maxLevel = progression.MaxScalingFrequencyLevel;
+                if (progression.IsMaxScalingFrequency)
+                {
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level):0}% high odds ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetScalingFrequencyUpgradeCost();
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            if (profitableEndingUpgradeButton != null)
+            {
+                int level = progression.ProfitableEndingLevel;
+                int maxLevel = progression.MaxProfitableEndingLevel;
+                if (progression.IsMaxProfitableEnding)
+                {
+                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level):0}% ending ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetProfitableEndingUpgradeCost();
+                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level + 1):0}% ending ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 

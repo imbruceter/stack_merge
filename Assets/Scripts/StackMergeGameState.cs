@@ -61,6 +61,7 @@ namespace StackMerge
             int stackCapacity = DefaultStackCapacity,
             int queueLength = DefaultQueueLength,
             int difficultyLevel = 0,
+            int scalingFrequencyLevel = 0,
             StackMergeRunModifiers modifiers = default,
             int? seed = null)
         {
@@ -82,6 +83,7 @@ namespace StackMerge
             StackCapacity = stackCapacity;
             QueueLength = queueLength;
             DifficultyLevel = Math.Max(0, difficultyLevel);
+            ScalingFrequencyLevel = Math.Max(0, scalingFrequencyLevel);
             startingModifiers = modifiers;
             stacks = Enumerable.Range(0, stackCount).Select(_ => new List<int>(stackCapacity)).ToArray();
             random = seed.HasValue ? new Random(seed.Value) : new Random();
@@ -95,6 +97,8 @@ namespace StackMerge
         public int QueueLength { get; }
 
         public int DifficultyLevel { get; }
+
+        public int ScalingFrequencyLevel { get; }
 
         public long Score { get; private set; }
 
@@ -399,7 +403,7 @@ namespace StackMerge
 
         public StackMergeGameState CreateSimulationCopy(int? seed = null)
         {
-            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, ActiveModifiers, seed);
+            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, ScalingFrequencyLevel, ActiveModifiers, seed);
             copy.RestoreSnapshot(CreateSnapshot());
             return copy;
         }
@@ -597,32 +601,41 @@ namespace StackMerge
         {
             if (jokerBlocksEnabled)
             {
-                double jokerChance = 0.025 + Math.Min(0.012, DifficultyLevel * 0.004);
+                double jokerChance = 0.025 + Math.Min(0.012, (DifficultyLevel + ScalingFrequencyLevel) * 0.002);
                 if (random.NextDouble() < jokerChance)
                 {
                     return JokerBlockValue;
                 }
             }
 
-            int maxSpawnExponent = Math.Max(1, FloorLog2(HighestBlock) - 2 + DifficultyLevel);
-            if (DifficultyLevel >= 2)
+            double maxTierPressure = DifficultyLevel * 3.0 / 5.0;
+            int tierBonus = (int)Math.Floor(maxTierPressure);
+            double fractionalTier = maxTierPressure - tierBonus;
+            if (fractionalTier > 0.0 && random.NextDouble() < fractionalTier)
+            {
+                tierBonus++;
+            }
+
+            int maxSpawnExponent = Math.Max(1, FloorLog2(HighestBlock) - 2 + tierBonus);
+            if (maxTierPressure >= 1.2)
             {
                 maxSpawnExponent = Math.Max(maxSpawnExponent, 2);
             }
 
-            if (DifficultyLevel >= 3)
+            if (maxTierPressure >= 2.4)
             {
                 maxSpawnExponent = Math.Max(maxSpawnExponent, 3);
             }
 
-            maxSpawnExponent = Math.Min(maxSpawnExponent, 7 + Math.Min(2, DifficultyLevel));
+            int capBonus = Math.Min(2, (int)Math.Floor(maxTierPressure * 2.0 / 3.0));
+            maxSpawnExponent = Math.Min(maxSpawnExponent, 7 + capBonus);
 
             double totalWeight = 0;
             double[] weights = new double[maxSpawnExponent + 1];
 
             for (int exponent = 0; exponent <= maxSpawnExponent; exponent++)
             {
-                double pressure = 1.0 + DifficultyLevel * 0.18 * exponent;
+                double pressure = 1.0 + ScalingFrequencyLevel * 0.09 * exponent;
                 double weight = Math.Pow(0.56, exponent) * pressure;
                 weights[exponent] = weight;
                 totalWeight += weight;

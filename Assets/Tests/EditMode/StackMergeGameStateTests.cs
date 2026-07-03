@@ -238,6 +238,7 @@ namespace StackMerge.Tests
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 100000 });
 
+            Assert.That(progression.MaxDifficultyLevel, Is.EqualTo(5));
             Assert.That(progression.DifficultyLevel, Is.EqualTo(0));
             Assert.That(progression.BuyDifficultyUpgrade(), Is.True);
             Assert.That(progression.DifficultyLevel, Is.EqualTo(1));
@@ -252,6 +253,31 @@ namespace StackMerge.Tests
             Assert.That(progression.RunHistory[0].merges, Is.EqualTo(7));
             Assert.That(progression.RunHistory[0].highestMergedBlock, Is.EqualTo(64));
             Assert.That(progression.RunHistory[0].difficultyLevel, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Progression_UnlocksScalingFrequencyAndProfitableEnding()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000000 });
+
+            Assert.That(progression.MaxScalingFrequencyLevel, Is.EqualTo(5));
+            Assert.That(progression.MaxProfitableEndingLevel, Is.EqualTo(5));
+            Assert.That(progression.BuyScalingFrequencyUpgrade(), Is.True);
+            Assert.That(progression.ScalingFrequencyLevel, Is.EqualTo(1));
+            Assert.That(progression.BuyProfitableEndingUpgrade(), Is.True);
+            Assert.That(progression.ProfitableEndingLevel, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ProfitableEnding_IncreasesRunCompletionBonus()
+        {
+            var baseline = new StackMergeProgression(new StackMergeProgressionData());
+            var boosted = new StackMergeProgression(new StackMergeProgressionData { profitableEndingLevel = 5 });
+
+            long baselineBonus = baseline.AwardRunCompleted(4000, SolverId.Heur, 40, 12, 256);
+            long boostedBonus = boosted.AwardRunCompleted(4000, SolverId.Heur, 40, 12, 256);
+
+            Assert.That(boostedBonus, Is.GreaterThan(baselineBonus));
         }
 
         [Test]

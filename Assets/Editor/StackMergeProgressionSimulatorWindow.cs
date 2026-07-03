@@ -151,6 +151,7 @@ namespace StackMerge
                 stackCapacity: progression.StackCapacity,
                 queueLength: progression.QueueLength,
                 difficultyLevel: progression.DifficultyLevel,
+                scalingFrequencyLevel: progression.ScalingFrequencyLevel,
                 modifiers: modifiers,
                 seed: rng.Next());
 
@@ -456,6 +457,16 @@ namespace StackMerge
             if (!p.IsMaxDifficulty)
             {
                 list.Add(new Candidate($"Difficulty L{p.DifficultyLevel + 1}", p.GetDifficultyUpgradeCost(), p.BuyDifficultyUpgrade));
+            }
+
+            if (!p.IsMaxScalingFrequency)
+            {
+                list.Add(new Candidate($"Scaling Frequency L{p.ScalingFrequencyLevel + 1}", p.GetScalingFrequencyUpgradeCost(), p.BuyScalingFrequencyUpgrade));
+            }
+
+            if (!p.IsMaxProfitableEnding)
+            {
+                list.Add(new Candidate($"Profitable Ending L{p.ProfitableEndingLevel + 1}", p.GetProfitableEndingUpgradeCost(), p.BuyProfitableEndingUpgrade));
             }
 
             if (p.AgentsMenuUnlocked)

@@ -27,6 +27,8 @@ namespace StackMerge
         public int queuePreviewLevel;
         public int incomeLevel;
         public int difficultyLevel;
+        public int scalingFrequencyLevel;
+        public int profitableEndingLevel;
         public bool modifiersMenuUnlocked;
         public int[] modifierLevels;
         public int runsCompleted;
@@ -257,7 +259,11 @@ namespace StackMerge
         private static readonly int[] StackCapacityCosts = { 12000, 70000, 400000, 2200000, 11000000 };
         private static readonly int[] QueuePreviewUpgradeCosts = { 40000, 400000 };
         private static readonly int[] IncomeUpgradeCosts = { 4000, 40000, 350000, 2500000, 15000000 };
-        private static readonly int[] DifficultyUpgradeCosts = { 60000, 600000, 6000000 };
+        private static readonly int[] DifficultyUpgradeCosts = { 60000, 180000, 600000, 1800000, 6000000 };
+        private static readonly int[] ScalingFrequencyUpgradeCosts = { 90000, 300000, 900000, 2700000, 8000000 };
+        private static readonly int[] ProfitableEndingUpgradeCosts = { 80000, 240000, 750000, 2200000, 7000000 };
+        private const double ScalingFrequencyPressurePerLevel = 0.09;
+        private const double ProfitableEndingBonusPerLevel = 0.08;
         private const int AgentsMenuUnlockCost = 120000;
         private const int MaxHistoryEntries = 250;
 
@@ -383,6 +389,14 @@ namespace StackMerge
         public int DifficultyLevel => data.difficultyLevel;
 
         public int MaxDifficultyLevel => DifficultyUpgradeCosts.Length;
+
+        public int ScalingFrequencyLevel => data.scalingFrequencyLevel;
+
+        public int MaxScalingFrequencyLevel => ScalingFrequencyUpgradeCosts.Length;
+
+        public int ProfitableEndingLevel => data.profitableEndingLevel;
+
+        public int MaxProfitableEndingLevel => ProfitableEndingUpgradeCosts.Length;
 
         public int RunsCompleted => data.runsCompleted;
 
@@ -519,6 +533,24 @@ namespace StackMerge
             return (1f - MoveIntervals[clamped] / MoveIntervals[0]) * 100f;
         }
 
+        public static float GetDifficultyMaxTierBonus(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, DifficultyUpgradeCosts.Length);
+            return clamped * 3f / DifficultyUpgradeCosts.Length;
+        }
+
+        public static float GetScalingFrequencyEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, ScalingFrequencyUpgradeCosts.Length);
+            return (float)(clamped * ScalingFrequencyPressurePerLevel * 100.0);
+        }
+
+        public static float GetProfitableEndingEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, ProfitableEndingUpgradeCosts.Length);
+            return (float)(clamped * ProfitableEndingBonusPerLevel * 100.0);
+        }
+
         public bool IsMaxSpeed => data.speedLevel >= MoveIntervals.Length - 1;
 
         public int MaxSpeedLevel => SpeedUpgradeCosts.Length;
@@ -530,6 +562,10 @@ namespace StackMerge
         public bool IsMaxIncome => data.incomeLevel >= IncomeUpgradeCosts.Length;
 
         public bool IsMaxDifficulty => data.difficultyLevel >= DifficultyUpgradeCosts.Length;
+
+        public bool IsMaxScalingFrequency => data.scalingFrequencyLevel >= ScalingFrequencyUpgradeCosts.Length;
+
+        public bool IsMaxProfitableEnding => data.profitableEndingLevel >= ProfitableEndingUpgradeCosts.Length;
 
         public int ActiveAgentSlots => BaseAgentSlots + (data.extraAgentSlotUnlocked ? 1 : 0);
 
@@ -1184,6 +1220,58 @@ namespace StackMerge
             return upgradeIndex == data.difficultyLevel && BuyDifficultyUpgrade();
         }
 
+        public long GetScalingFrequencyUpgradeCost()
+        {
+            return IsMaxScalingFrequency ? 0 : ScalingFrequencyUpgradeCosts[data.scalingFrequencyLevel];
+        }
+
+        public long GetScalingFrequencyUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < ScalingFrequencyUpgradeCosts.Length ? ScalingFrequencyUpgradeCosts[upgradeIndex] : 0;
+        }
+
+        public bool BuyScalingFrequencyUpgrade()
+        {
+            if (IsMaxScalingFrequency || !Spend(GetScalingFrequencyUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.scalingFrequencyLevel++;
+            return true;
+        }
+
+        public bool BuyScalingFrequencyUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.scalingFrequencyLevel && BuyScalingFrequencyUpgrade();
+        }
+
+        public long GetProfitableEndingUpgradeCost()
+        {
+            return IsMaxProfitableEnding ? 0 : ProfitableEndingUpgradeCosts[data.profitableEndingLevel];
+        }
+
+        public long GetProfitableEndingUpgradeCost(int upgradeIndex)
+        {
+            return upgradeIndex >= 0 && upgradeIndex < ProfitableEndingUpgradeCosts.Length ? ProfitableEndingUpgradeCosts[upgradeIndex] : 0;
+        }
+
+        public bool BuyProfitableEndingUpgrade()
+        {
+            if (IsMaxProfitableEnding || !Spend(GetProfitableEndingUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.profitableEndingLevel++;
+            return true;
+        }
+
+        public bool BuyProfitableEndingUpgrade(int upgradeIndex)
+        {
+            return upgradeIndex == data.profitableEndingLevel && BuyProfitableEndingUpgrade();
+        }
+
         public long GetAgentsMenuUnlockCost()
         {
             return data.agentsMenuUnlocked ? 0 : AgentsMenuUnlockCost;
@@ -1508,7 +1596,8 @@ namespace StackMerge
             double speedBonus = IsAgentActive(AgentId.VelocityTrader) && elapsedSeconds > 0.01f
                 ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18)
                 : 0;
-            long bonus = Math.Max(1, (long)Math.Ceiling((scoreBonus + moveBonus + speedBonus) * IncomeScale));
+            double profitableEndingMultiplier = 1.0 + data.profitableEndingLevel * ProfitableEndingBonusPerLevel;
+            long bonus = Math.Max(1, (long)Math.Ceiling((scoreBonus + moveBonus + speedBonus) * profitableEndingMultiplier * IncomeScale));
             if (!suppressChips)
             {
                 bonus = ApplyStageMultiplier(bonus);
@@ -2072,6 +2161,8 @@ namespace StackMerge
             data.queuePreviewLevel = 0;
             data.incomeLevel = 0;
             data.difficultyLevel = 0;
+            data.scalingFrequencyLevel = 0;
+            data.profitableEndingLevel = 0;
             data.modifiersMenuUnlocked = false;
             data.modifierLevels = new int[Modifiers.Length];
             data.runsCompleted = 0;
@@ -2419,6 +2510,8 @@ namespace StackMerge
             data.queuePreviewLevel = Mathf.Clamp(data.queuePreviewLevel, 0, QueuePreviewUpgradeCosts.Length);
             data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
             data.difficultyLevel = Mathf.Clamp(data.difficultyLevel, 0, DifficultyUpgradeCosts.Length);
+            data.scalingFrequencyLevel = Mathf.Clamp(data.scalingFrequencyLevel, 0, ScalingFrequencyUpgradeCosts.Length);
+            data.profitableEndingLevel = Mathf.Clamp(data.profitableEndingLevel, 0, ProfitableEndingUpgradeCosts.Length);
             data.modifierLevels = NormalizeModifierLevels(data.modifierLevels);
             data.researchInsight = Math.Max(0, data.researchInsight);
             data.lifetimeResearchInsight = Math.Max(data.lifetimeResearchInsight, data.researchInsight);

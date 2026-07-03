@@ -19,6 +19,7 @@ namespace StackMerge.Editor
         private int stackCapacity = StackMergeGameState.DefaultStackCapacity;
         private int queueLength = StackMergeGameState.DefaultQueueLength;
         private int difficultyLevel;
+        private int scalingFrequencyLevel;
         private int monteCarloSimulations = 2;
         private int rolloutDepth = 2;
         private int planningDepthLimit = 2;
@@ -70,7 +71,8 @@ namespace StackMerge.Editor
                 runCount = EditorGUILayout.IntSlider("Runs", runCount, 1, selectedPpo ? 100000 : 2000);
                 stackCapacity = EditorGUILayout.IntSlider("Stack capacity", stackCapacity, 2, StackMergeGameState.MaxStackCapacity);
                 queueLength = EditorGUILayout.IntSlider("Queue length", queueLength, 1, StackMergeGameState.DefaultQueueLength + 2);
-                difficultyLevel = EditorGUILayout.IntSlider("Difficulty", difficultyLevel, 0, 3);
+                difficultyLevel = EditorGUILayout.IntSlider("Difficulty max", difficultyLevel, 0, 5);
+                scalingFrequencyLevel = EditorGUILayout.IntSlider("Scaling frequency", scalingFrequencyLevel, 0, 5);
                 monteCarloSimulations = EditorGUILayout.IntSlider("MC simulations", monteCarloSimulations, 1, fastBenchmarkMode ? 12 : 40);
                 rolloutDepth = EditorGUILayout.IntSlider("Rollout depth", rolloutDepth, 1, fastBenchmarkMode ? 8 : 30);
                 using (new EditorGUI.DisabledScope(!fastBenchmarkMode))
@@ -321,6 +323,7 @@ namespace StackMerge.Editor
                 stackCapacity: stackCapacity,
                 queueLength: queueLength,
                 difficultyLevel: difficultyLevel,
+                scalingFrequencyLevel: scalingFrequencyLevel,
                 modifiers: BuildBenchmarkModifiers(),
                 seed: runSeed);
 
@@ -502,7 +505,7 @@ namespace StackMerge.Editor
             int binCount = (totalRuns + bin - 1) / bin;
             int capacity = Mathf.Clamp(stackCapacity, 2, StackMergeGameState.MaxStackCapacity);
             int queue = Mathf.Clamp(queueLength, 1, StackMergeGameState.DefaultQueueLength + 2);
-            int diff = Mathf.Clamp(difficultyLevel, 0, 3);
+            int diff = Mathf.Clamp(difficultyLevel, 0, 5);
             int hidden = Mathf.Clamp(ppoHiddenSize, 16, 512);
             int moveCap = Mathf.Max(50, maxMovesPerRun);
             int baseSeed = seed;
@@ -539,7 +542,7 @@ namespace StackMerge.Editor
                     System.Random rng = rngs[a];
                     for (int g = 0; g < cycleGames; g++)
                     {
-                        var state = new StackMergeGameState(stackCapacity: capacity, queueLength: queue, difficultyLevel: diff, modifiers: modifiers, seed: rng.Next());
+                        var state = new StackMergeGameState(stackCapacity: capacity, queueLength: queue, difficultyLevel: diff, scalingFrequencyLevel: scalingFrequencyLevel, modifiers: modifiers, seed: rng.Next());
                         int moves = 0;
                         while (!state.IsGameOver && moves < moveCap)
                         {
