@@ -24,6 +24,9 @@ namespace StackMerge
         private const float NextPanelChromeHeight = 64f;
         private const float SmallestEmergencyBlockHeight = 58f;
         private const float GameOverOverlayDelay = 0.24f;
+        private const int StartupGameplayLayoutWarmupFrames = 90;
+        private const int TabGameplayLayoutWarmupFrames = 18;
+        private const int NoArmedGameplayModifier = -1;
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
@@ -55,6 +58,13 @@ namespace StackMerge
         [SerializeField] private RectTransform footerRoot;
         [Tooltip("Run Info panel, now a sibling of Board/Footer instead of a child of Footer. Positioned automatically, vertically centered between the Board's bottom edge and the Footer's top edge.")]
         [SerializeField] private RectTransform runInfoPanel;
+
+        [Header("Gameplay Modifiers")]
+        [SerializeField] private GameObject gameplayModifiersSection;
+        [SerializeField] private Button gameplayMinersPickaxeButton;
+        [SerializeField] private TMP_Text gameplayMinersPickaxeAmountText;
+        [SerializeField] private Button gameplayQueueScrubberButton;
+        [SerializeField] private TMP_Text gameplayQueueScrubberAmountText;
 
         [Header("Global Status Bar")]
         [Tooltip("Root of the single shared status bar (\"New Status Bar\"), living outside Tab Content. Shown on Gameplay/Algorithms/Upgrades/Modifiers/Agents/Research; hidden on History/Goals/Settings.")]
@@ -272,6 +282,7 @@ namespace StackMerge
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
         private bool solverDeselected = false;
+        private int armedGameplayModifier = NoArmedGameplayModifier;
         private BottomTabVisual[] bottomTabVisuals = Array.Empty<BottomTabVisual>();
         private readonly Dictionary<Button, Color> buttonNormalColors = new();
         private int bottomMenuHighlightIndex = -1;
@@ -331,6 +342,7 @@ namespace StackMerge
             ConfigureCamera();
             EnsureEventSystem();
             EnsureOptionalUpgradeButtonReferences();
+            EnsureGameplayModifierReferences();
             WireButtons();
             HideTemplate();
             EnsureAchievementNotificationReferences();
@@ -354,9 +366,10 @@ namespace StackMerge
             WireAchievementNotificationButton();
             SyncCompletedAchievements();
             CreateFreshGame();
+            PrimeGameplayPanelForInitialLayout();
             RefreshEverything();
             ForceGameplayLayoutPass();
-            ScheduleGameplayLayoutWarmup();
+            ScheduleGameplayLayoutWarmup(StartupGameplayLayoutWarmupFrames);
             if (progression.LastOfflineChips > 0 || progression.LastOfflineInsight > 0)
             {
                 SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} chips, +{FormatNumber(progression.LastOfflineInsight)} Insight");
@@ -514,11 +527,25 @@ namespace StackMerge
 
         private IEnumerator GameplayLayoutWarmup(int frames)
         {
-            int safeFrames = Mathf.Clamp(frames, 1, 12);
+            int safeFrames = Mathf.Clamp(frames, 1, 120);
+            int stableFrames = 0;
             for (int i = 0; i < safeFrames; i++)
             {
                 yield return null;
+                yield return new WaitForEndOfFrame();
                 ForceGameplayLayoutPass();
+                if (IsGameplayLayoutReady())
+                {
+                    stableFrames++;
+                    if (stableFrames >= 3 && i >= 5)
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    stableFrames = 0;
+                }
             }
 
             gameplayLayoutWarmupCoroutine = null;
@@ -526,24 +553,105 @@ namespace StackMerge
 
         private void ForceGameplayLayoutPass()
         {
-            if (gameState == null)
+            if (gameState == null || selectedTabIndex != 0 || historyOpen || achievementsOpen)
             {
                 return;
             }
 
+            SetActive(gameplayPanel, true);
             Canvas.ForceUpdateCanvases();
+            RebuildLayout(gameplayPanel != null ? gameplayPanel.transform as RectTransform : null);
+            RebuildLayout(GetGameplaySectionsRoot());
             RebuildLayout(canvas != null ? canvas.transform as RectTransform : null);
             RebuildLayout(boardRoot != null ? boardRoot.parent as RectTransform : null);
             RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
             RebuildLayout(nextBlocksRoot);
 
             boardLayoutDirty = true;
+            RefreshGameplayModifiers();
             RefreshColumns();
             Canvas.ForceUpdateCanvases();
             RefreshNextBlocks();
             RebuildLayout(nextBlocksRoot);
             RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
+            RebuildLayout(GetGameplaySectionsRoot());
             Canvas.ForceUpdateCanvases();
+        }
+
+        private void PrimeGameplayPanelForInitialLayout()
+        {
+            if (selectedTabIndex != 0 || gameplayPanel == null)
+            {
+                return;
+            }
+
+            if (gameplayPanel.activeSelf)
+            {
+                gameplayPanel.SetActive(false);
+            }
+
+            gameplayPanel.SetActive(true);
+        }
+
+        private bool IsGameplayLayoutReady()
+        {
+            if (selectedTabIndex != 0 || gameplayPanel == null || !gameplayPanel.activeInHierarchy || boardRoot == null || nextBlocksRoot == null)
+            {
+                return false;
+            }
+
+            RectTransform sectionsRoot = GetGameplaySectionsRoot();
+            if (sectionsRoot != null && (sectionsRoot.rect.width < 100f || sectionsRoot.rect.height < 240f))
+            {
+                return false;
+            }
+
+            if (nextBlocksRoot.rect.width < 100f || nextBlocksRoot.rect.height < 24f)
+            {
+                return false;
+            }
+
+            if (stackBlockLayers == null || stackBlockLayers.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (RectTransform layer in stackBlockLayers)
+            {
+                if (layer == null || !layer.gameObject.activeInHierarchy || layer.rect.width < 60f || layer.rect.height < 180f)
+                {
+                    return false;
+                }
+            }
+
+            int expectedNextBlocks = gameState != null ? gameState.NextBlocks.Count : 0;
+            if (expectedNextBlocks > 0 && nextBlocksRoot.childCount < expectedNextBlocks)
+            {
+                return false;
+            }
+
+            if (expectedNextBlocks > 0 && nextBlocksRoot.GetChild(0) is RectTransform firstNextBlock)
+            {
+                LayoutElement layout = firstNextBlock.GetComponent<LayoutElement>();
+                float width = layout != null ? layout.preferredWidth : firstNextBlock.rect.width;
+                float height = layout != null ? layout.preferredHeight : firstNextBlock.rect.height;
+                if (width < 60f || height < SmallestEmergencyBlockHeight)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private RectTransform GetGameplaySectionsRoot()
+        {
+            if (boardRoot == null)
+            {
+                return null;
+            }
+
+            return boardRoot.parent as RectTransform;
         }
 
         private static void RebuildLayout(RectTransform rectTransform)
@@ -1122,6 +1230,7 @@ namespace StackMerge
 
         private void WireButtons()
         {
+            EnsureGameplayModifierReferences();
             for (int i = 0; i < stackButtons.Length; i++)
             {
                 int stackIndex = i;
@@ -1131,8 +1240,11 @@ namespace StackMerge
                 }
 
                 stackButtons[i].onClick.RemoveAllListeners();
-                stackButtons[i].onClick.AddListener(() => PlaceOnStack(stackIndex, "Manual", false));
+                stackButtons[i].onClick.AddListener(() => HandleStackButtonClick(stackIndex));
             }
+
+            WireGameplayModifierButton(gameplayMinersPickaxeButton, ModifierId.MinersPickaxe);
+            WireGameplayModifierButton(gameplayQueueScrubberButton, ModifierId.QueueScrubber);
 
             foreach (Button newGameButton in newGameButtons)
             {
@@ -1512,6 +1624,93 @@ namespace StackMerge
             }
         }
 
+        private void EnsureGameplayModifierReferences()
+        {
+            if (gameplayPanel == null)
+            {
+                return;
+            }
+
+            Transform modifiersRoot = gameplayModifiersSection != null
+                ? gameplayModifiersSection.transform
+                : FindGameplaySection("Modifiers");
+            if (modifiersRoot == null)
+            {
+                return;
+            }
+
+            gameplayModifiersSection = modifiersRoot.gameObject;
+            EnsureGameplayModifierButtonReferences(
+                modifiersRoot,
+                "MinersPickaxe",
+                ref gameplayMinersPickaxeButton,
+                ref gameplayMinersPickaxeAmountText);
+            EnsureGameplayModifierButtonReferences(
+                modifiersRoot,
+                "QueueScrubber",
+                ref gameplayQueueScrubberButton,
+                ref gameplayQueueScrubberAmountText);
+        }
+
+        private Transform FindGameplaySection(string sectionName)
+        {
+            if (gameplayPanel == null)
+            {
+                return null;
+            }
+
+            Transform sections = FindNamedDescendant(gameplayPanel.transform, "Sections");
+            if (sections != null)
+            {
+                foreach (Transform child in sections)
+                {
+                    if (child.name == sectionName)
+                    {
+                        return child;
+                    }
+                }
+            }
+
+            return FindNamedDescendant(gameplayPanel.transform, sectionName);
+        }
+
+        private static void EnsureGameplayModifierButtonReferences(
+            Transform root,
+            string buttonName,
+            ref Button button,
+            ref TMP_Text amountText)
+        {
+            Transform buttonTransform = button != null ? button.transform : FindNamedDescendant(root, buttonName);
+            if (buttonTransform == null)
+            {
+                return;
+            }
+
+            if (button == null)
+            {
+                button = buttonTransform.GetComponent<Button>();
+            }
+
+            if (amountText == null)
+            {
+                Transform amountTransform = FindNamedDescendant(buttonTransform, "AmountText");
+                amountText = amountTransform != null
+                    ? amountTransform.GetComponent<TMP_Text>()
+                    : buttonTransform.GetComponentInChildren<TMP_Text>(true);
+            }
+        }
+
+        private void WireGameplayModifierButton(Button button, ModifierId modifierId)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() => ToggleGameplayModifier(modifierId));
+        }
+
         private bool HasAssignedResearchCardButtons()
         {
             if (researchCards == null)
@@ -1556,6 +1755,16 @@ namespace StackMerge
             }
 
             selectedTabIndex = requestedTab;
+            if (selectedTabIndex != 0)
+            {
+                ClearArmedGameplayModifier();
+                if (gameplayLayoutWarmupCoroutine != null)
+                {
+                    StopCoroutine(gameplayLayoutWarmupCoroutine);
+                    gameplayLayoutWarmupCoroutine = null;
+                }
+            }
+
             SetActive(gameplayPanel, selectedTabIndex == 0);
             SetActive(algorithmsPanel, selectedTabIndex == 1);
             SetActive(upgradesPanel, selectedTabIndex == 2);
@@ -1576,7 +1785,7 @@ namespace StackMerge
             if (selectedTabIndex == 0)
             {
                 ForceGameplayLayoutPass();
-                ScheduleGameplayLayoutWarmup(3);
+                ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
             }
         }
 
@@ -2202,6 +2411,25 @@ namespace StackMerge
             return solvers[solverIndex];
         }
 
+        private void HandleStackButtonClick(int stackIndex)
+        {
+            if (IsGameplayModifierArmed(ModifierId.MinersPickaxe))
+            {
+                SetText(feedbackText, "Tap a block to remove it with Miner's Pickaxe");
+                RefreshGameView();
+                return;
+            }
+
+            if (IsGameplayModifierArmed(ModifierId.QueueScrubber))
+            {
+                SetText(feedbackText, "Tap the first next block to scrub it");
+                RefreshGameView();
+                return;
+            }
+
+            PlaceOnStack(stackIndex, "Manual", false);
+        }
+
         private void PlaceOnStack(int stackIndex, string reason, bool autoSolverMove)
         {
             if (gameState == null || progression == null)
@@ -2219,6 +2447,184 @@ namespace StackMerge
             }
 
             HandleAcceptedMove(result, reason, autoSolverMove, wasGameOver);
+        }
+
+        private void ToggleGameplayModifier(ModifierId modifierId)
+        {
+            if (gameState == null || progression == null)
+            {
+                return;
+            }
+
+            if (IsGameplayModifierArmed(modifierId))
+            {
+                ClearArmedGameplayModifier();
+                SetText(feedbackText, $"{GetGameplayModifierDisplayName(modifierId)} unequipped");
+                RefreshGameView();
+                return;
+            }
+
+            if (!CanArmGameplayModifier(modifierId))
+            {
+                ClearArmedGameplayModifier();
+                SetText(feedbackText, GetGameplayModifierUnavailableMessage(modifierId));
+                RefreshGameView();
+                return;
+            }
+
+            armedGameplayModifier = (int)modifierId;
+            SetText(feedbackText, $"{GetGameplayModifierDisplayName(modifierId)} equipped");
+            RefreshGameView();
+        }
+
+        private void UsePickaxeOnBlock(int stackIndex, int blockIndex)
+        {
+            if (gameState == null || progression == null || !IsGameplayModifierArmed(ModifierId.MinersPickaxe))
+            {
+                return;
+            }
+
+            bool wasGameOver = gameState.IsGameOver;
+            MoveResult result = gameState.UsePickaxe(stackIndex, blockIndex);
+            if (!result.Accepted)
+            {
+                SetText(feedbackText, result.Reason);
+                ClearArmedGameplayModifier();
+                RefreshEverything();
+                return;
+            }
+
+            ClearArmedGameplayModifier();
+            HandleAcceptedMove(result, "Manual pickaxe", false, wasGameOver);
+        }
+
+        private void UseQueueScrubber()
+        {
+            if (gameState == null || progression == null || !IsGameplayModifierArmed(ModifierId.QueueScrubber))
+            {
+                return;
+            }
+
+            bool wasGameOver = gameState.IsGameOver;
+            MoveResult result = gameState.SkipNextBlock();
+            if (!result.Accepted)
+            {
+                SetText(feedbackText, result.Reason);
+                ClearArmedGameplayModifier();
+                RefreshEverything();
+                return;
+            }
+
+            ClearArmedGameplayModifier();
+            HandleAcceptedMove(result, "Manual queue scrubber", false, wasGameOver);
+        }
+
+        private bool IsGameplayModifierArmed(ModifierId modifierId)
+        {
+            return armedGameplayModifier == (int)modifierId;
+        }
+
+        private bool IsManualModeActive()
+        {
+            return progression == null
+                || (!progression.IsMachineLearningTrainingActive && (solverDeselected || !progression.AutoSolveEnabled));
+        }
+
+        private void ClearArmedGameplayModifier()
+        {
+            armedGameplayModifier = NoArmedGameplayModifier;
+        }
+
+        private bool IsGameplayModifierUnlocked(ModifierId modifierId)
+        {
+            return progression != null
+                && progression.ModifiersMenuUnlocked
+                && progression.GetModifierLevel(modifierId) > 0;
+        }
+
+        private int GetGameplayModifierRemaining(ModifierId modifierId)
+        {
+            if (gameState == null)
+            {
+                return 0;
+            }
+
+            return modifierId switch
+            {
+                ModifierId.MinersPickaxe => gameState.PickaxeUsesRemaining,
+                ModifierId.QueueScrubber => gameState.QueueSkipsRemaining,
+                _ => 0
+            };
+        }
+
+        private bool CanArmGameplayModifier(ModifierId modifierId)
+        {
+            if (gameState == null || gameState.IsGameOver || !IsGameplayModifierUnlocked(modifierId) || GetGameplayModifierRemaining(modifierId) <= 0)
+            {
+                return false;
+            }
+
+            return modifierId switch
+            {
+                ModifierId.MinersPickaxe => HasPickaxeTarget(),
+                ModifierId.QueueScrubber => gameState.NextBlocks.Count > 0,
+                _ => false
+            };
+        }
+
+        private bool HasManualGameplayModifierAction()
+        {
+            return gameState != null
+                && ((IsGameplayModifierUnlocked(ModifierId.MinersPickaxe) && gameState.PickaxeUsesRemaining > 0 && HasPickaxeTarget())
+                    || (IsGameplayModifierUnlocked(ModifierId.QueueScrubber) && gameState.QueueSkipsRemaining > 0 && gameState.NextBlocks.Count > 0));
+        }
+
+        private bool HasPickaxeTarget()
+        {
+            if (gameState == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < gameState.Stacks.Count; i++)
+            {
+                if (gameState.Stacks[i].Count > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string GetGameplayModifierDisplayName(ModifierId modifierId)
+        {
+            return modifierId switch
+            {
+                ModifierId.MinersPickaxe => "Miner's Pickaxe",
+                ModifierId.QueueScrubber => "Queue Scrubber",
+                _ => "Modifier"
+            };
+        }
+
+        private string GetGameplayModifierUnavailableMessage(ModifierId modifierId)
+        {
+            if (!IsGameplayModifierUnlocked(modifierId))
+            {
+                return $"{GetGameplayModifierDisplayName(modifierId)} is locked";
+            }
+
+            if (GetGameplayModifierRemaining(modifierId) <= 0)
+            {
+                return $"{GetGameplayModifierDisplayName(modifierId)} has no uses left";
+            }
+
+            return modifierId switch
+            {
+                ModifierId.MinersPickaxe => "No block available for Miner's Pickaxe",
+                ModifierId.QueueScrubber => "No next block available for Queue Scrubber",
+                _ => "Modifier unavailable"
+            };
         }
 
         private void ApplySolverDecision(SolverDecision decision)
@@ -2349,9 +2755,8 @@ namespace StackMerge
             return runBonus;
         }
 
-        // Manual play has no pickaxe / queue-skip UI, so HasAvailableAction() can stay true (those
-        // tools are "available") while the player has no legal placement — a softlock. Detect that
-        // and end the run. The auto-solver handles its own stuck case in TickAutomation.
+        // Manual play can use pickaxe / queue-skip directly, so only end the run when there is
+        // no legal placement and no manually usable modifier action left.
         private void MaybeEndStuckRun()
         {
             if (gameState == null || progression == null || gameState.IsGameOver)
@@ -2372,7 +2777,7 @@ namespace StackMerge
                 return;
             }
 
-            if (gameState.HasLegalMove())
+            if (gameState.HasLegalMove() || HasManualGameplayModifierAction())
             {
                 return;
             }
@@ -2398,7 +2803,7 @@ namespace StackMerge
             SetText(feedbackText, string.Empty);
             RefreshEverything();
             ForceGameplayLayoutPass();
-            ScheduleGameplayLayoutWarmup();
+            ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
         }
 
         private void CreateFreshGame()
@@ -2418,6 +2823,7 @@ namespace StackMerge
             gameOverOverlayTimer = 0f;
             boardLayoutDirty = true;
             lastRenderedCapacity = -1;
+            ClearArmedGameplayModifier();
         }
 
         private void UpdateHighScore()
@@ -3234,6 +3640,7 @@ namespace StackMerge
                 && !achievementsOpen;
 
             SetTrainingView(trainingView);
+            RefreshGameplayModifiers();
             if (trainingView)
             {
                 UpdateTrainingOverlay(gameState.IsGameOver ? null : "Auto solving");
@@ -3375,6 +3782,93 @@ namespace StackMerge
             return value == StackMergeGameState.JokerBlockValue ? "J" : value.ToString();
         }
 
+        private void RefreshGameplayModifiers()
+        {
+            EnsureGameplayModifierReferences();
+            bool pickaxeUnlocked = IsGameplayModifierUnlocked(ModifierId.MinersPickaxe);
+            bool queueScrubberUnlocked = IsGameplayModifierUnlocked(ModifierId.QueueScrubber);
+            bool showSection = selectedTabIndex == 0
+                && (pickaxeUnlocked || queueScrubberUnlocked)
+                && (progression == null || !progression.IsMachineLearningTrainingActive);
+
+            if (!showSection && armedGameplayModifier != NoArmedGameplayModifier)
+            {
+                ClearArmedGameplayModifier();
+            }
+
+            if (gameplayModifiersSection != null)
+            {
+                bool wasActive = gameplayModifiersSection.activeSelf;
+                SetActive(gameplayModifiersSection, showSection);
+                if (wasActive != showSection)
+                {
+                    boardLayoutDirty = true;
+                }
+            }
+
+            RefreshGameplayModifierButton(
+                gameplayMinersPickaxeButton,
+                gameplayMinersPickaxeAmountText,
+                ModifierId.MinersPickaxe,
+                pickaxeUnlocked && showSection);
+            RefreshGameplayModifierButton(
+                gameplayQueueScrubberButton,
+                gameplayQueueScrubberAmountText,
+                ModifierId.QueueScrubber,
+                queueScrubberUnlocked && showSection);
+        }
+
+        private void RefreshGameplayModifierButton(Button button, TMP_Text amountText, ModifierId modifierId, bool visible)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            SetActive(button.gameObject, visible);
+            if (!visible)
+            {
+                return;
+            }
+
+            if (IsGameplayModifierArmed(modifierId) && !CanArmGameplayModifier(modifierId))
+            {
+                ClearArmedGameplayModifier();
+            }
+
+            bool armed = IsGameplayModifierArmed(modifierId);
+            bool canArm = CanArmGameplayModifier(modifierId);
+            button.interactable = armed || canArm;
+            SetText(amountText, FormatNumber(GetGameplayModifierRemaining(modifierId)));
+            ApplyButtonVisualState(button);
+            if (armed)
+            {
+                ApplyGameplayModifierArmedVisual(button);
+            }
+        }
+
+        private void ApplyGameplayModifierArmedVisual(Button button)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            Image image = GetButtonVisualImage(button);
+            if (image == null)
+            {
+                return;
+            }
+
+            if (!buttonNormalColors.TryGetValue(button, out Color normalColor))
+            {
+                normalColor = image.color;
+                buttonNormalColors[button] = normalColor;
+            }
+
+            image.color = DarkenButtonColor(normalColor);
+        }
+
         private void RefreshHud()
         {
             // Global Status Bar lives outside Tab Content (a sibling, not a per-panel child), so its
@@ -3424,7 +3918,7 @@ namespace StackMerge
             {
                 SetText(runStatusText, machineLearningTraining
                     ? "ML TRAINING - chips paused"
-                    : (solverDeselected || !progression.AutoSolveEnabled) ? "Manual mode" : "Auto solving");
+                    : IsManualModeActive() ? "Manual mode" : "Auto solving");
                 if (runStatusText != null)
                 {
                     runStatusText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#D1D5DB");
@@ -3509,7 +4003,9 @@ namespace StackMerge
             RefreshAchievements();
             RefreshTabButtons();
             RefreshGameplayInfo();
+            RefreshGameplayModifiers();
             RefreshButtonVisualStates();
+            RefreshGameplayModifiers();
         }
 
         private void RefreshSolverButtons()
@@ -4001,17 +4497,46 @@ namespace StackMerge
                 return;
             }
 
-            SolverId solverId = progression.SelectedSolver;
-            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(solverId);
-            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
-            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
-
             var builder = new StringBuilder();
             builder.AppendLine($"Stack capacity: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
             builder.AppendLine($"Difficulty: Level {progression.DifficultyLevel}");
             builder.AppendLine($"Speed: Level {progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
             builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
             builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
+
+            if (IsManualModeActive())
+            {
+                builder.AppendLine("Mode: Manual");
+                if (gameState != null)
+                {
+                    builder.AppendLine($"Run score: {FormatNumber(gameState.Score)}");
+                    builder.AppendLine($"Moves: {FormatNumber(gameState.BlocksDropped)}");
+                    builder.AppendLine($"Merges: {FormatNumber(gameState.TotalMerges)}");
+                    builder.AppendLine($"Current next: {(gameState.NextBlocks.Count > 0 ? FormatNumber(gameState.NextBlocks[0]) : "-")}");
+                    builder.AppendLine($"Available actions: Pickaxe {gameState.PickaxeUsesRemaining}, Queue Scrubber {gameState.QueueSkipsRemaining}");
+                }
+
+                builder.AppendLine();
+                builder.AppendLine("<b>Manual controls</b>");
+                builder.AppendLine("Tap a stack to place the current next block.");
+                if (IsGameplayModifierUnlocked(ModifierId.MinersPickaxe))
+                {
+                    builder.AppendLine("Equip Miner's Pickaxe, then tap a stack block to remove it.");
+                }
+
+                if (IsGameplayModifierUnlocked(ModifierId.QueueScrubber))
+                {
+                    builder.AppendLine("Equip Queue Scrubber, then tap the first next block to remove it.");
+                }
+
+                SetText(gameplayInfoText, builder.ToString());
+                return;
+            }
+
+            SolverId solverId = progression.SelectedSolver;
+            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(solverId);
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
+            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
             builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
             if (solverId == SolverId.MachineLearning)
             {
@@ -5395,6 +5920,7 @@ namespace StackMerge
                     : CreateBlockInstance(nextBlocksRoot);
                 ConfigureBlock(block, gameState.NextBlocks[i], blockWidth, blockHeight, fontSize);
                 SetCurrentNextOutline(block, i == 0);
+                ConfigureNextBlockInteraction(block, i);
                 LayoutElement layout = EnsureComponent<LayoutElement>(block.gameObject);
                 layout.preferredWidth = blockWidth;
                 layout.preferredHeight = blockHeight;
@@ -5578,6 +6104,7 @@ namespace StackMerge
                         : CreateBlockInstance(layer);
                     ConfigureBlock(block, stack[i], blockWidth, blockHeight, fontSize);
                     SetCurrentNextOutline(block, false);
+                    ConfigureStackBlockInteraction(block, stackIndex, i);
                     block.anchorMin = new Vector2(0.5f, 0f);
                     block.anchorMax = new Vector2(0.5f, 0f);
                     block.pivot = new Vector2(0.5f, 0f);
@@ -5736,6 +6263,7 @@ namespace StackMerge
                 return false;
             }
 
+            EnsureGameplayModifierReferences();
             RectTransform parent = boardRoot.parent as RectTransform;
             if (parent == null || runInfoPanel.parent != parent || footerRoot.parent != parent)
             {
@@ -5757,13 +6285,22 @@ namespace StackMerge
             float gap = GetGameplaySectionGap(parent);
             float footerHeight = GetSectionHeight(footerRoot, 80f);
             float runInfoHeight = Mathf.Clamp(GetSectionHeight(runInfoPanel, 96f), 56f, 128f);
+            RectTransform modifierSection = gameplayModifiersSection != null ? gameplayModifiersSection.transform as RectTransform : null;
+            bool modifierSectionVisible = modifierSection != null
+                && modifierSection.parent == parent
+                && gameplayModifiersSection.activeSelf;
+            float modifierHeight = modifierSectionVisible
+                ? Mathf.Clamp(GetSectionHeight(modifierSection, 58f), 44f, 76f)
+                : 0f;
+            float gapCount = modifierSectionVisible ? 4f : 3f;
 
             int capacity = Mathf.Max(1, gameState.StackCapacity);
             float boardChromeHeight = CalculateBoardHeightForBlockHeight(capacity, 0f);
             float availableForBlocks = parentHeight
                 - footerHeight
                 - runInfoHeight
-                - gap * 3f
+                - modifierHeight
+                - gap * gapCount
                 - NextPanelChromeHeight
                 - boardChromeHeight;
 
@@ -5786,15 +6323,23 @@ namespace StackMerge
             SetGameplaySectionBottom(footerRoot, 0f, footerHeight);
 
             float boardBottomFromTop = nextHeight + gap + boardHeight;
+            float contentBottomFromTop = boardBottomFromTop;
+            if (modifierSectionVisible)
+            {
+                float modifierTop = boardBottomFromTop + gap;
+                SetGameplaySectionTop(modifierSection, modifierTop, modifierHeight);
+                contentBottomFromTop = modifierTop + modifierHeight;
+            }
+
             float footerTopFromTop = parentHeight - footerHeight;
-            float freeGap = Mathf.Max(0f, footerTopFromTop - boardBottomFromTop);
+            float freeGap = Mathf.Max(0f, footerTopFromTop - contentBottomFromTop);
             float fittedRunInfoHeight = Mathf.Min(runInfoHeight, Mathf.Max(0f, freeGap - gap * 2f));
             if (fittedRunInfoHeight < 40f && freeGap > 40f)
             {
                 fittedRunInfoHeight = Mathf.Min(runInfoHeight, freeGap);
             }
 
-            float runInfoTop = boardBottomFromTop + Mathf.Max(0f, (freeGap - fittedRunInfoHeight) * 0.5f);
+            float runInfoTop = contentBottomFromTop + Mathf.Max(0f, (freeGap - fittedRunInfoHeight) * 0.5f);
             SetGameplaySectionTop(runInfoPanel, runInfoTop, fittedRunInfoHeight);
             return true;
         }
@@ -5982,6 +6527,62 @@ namespace StackMerge
                 text.enableAutoSizing = true;
                 text.fontSizeMin = 12;
                 text.fontSizeMax = Mathf.Max(14, fontSize);
+            }
+        }
+
+        private void ConfigureStackBlockInteraction(RectTransform block, int stackIndex, int blockIndex)
+        {
+            bool canUse = IsGameplayModifierArmed(ModifierId.MinersPickaxe)
+                && gameState != null
+                && gameState.CanUsePickaxe(stackIndex, blockIndex);
+            ConfigureBlockButton(block, canUse, () => UsePickaxeOnBlock(stackIndex, blockIndex));
+        }
+
+        private void ConfigureNextBlockInteraction(RectTransform block, int nextIndex)
+        {
+            bool canUse = nextIndex == 0
+                && IsGameplayModifierArmed(ModifierId.QueueScrubber)
+                && gameState != null
+                && gameState.CanSkipNextBlock();
+            ConfigureBlockButton(block, canUse, UseQueueScrubber);
+        }
+
+        private static void ConfigureBlockButton(RectTransform block, bool enabled, UnityEngine.Events.UnityAction action)
+        {
+            if (block == null)
+            {
+                return;
+            }
+
+            Button button = block.GetComponent<Button>();
+            if (!enabled)
+            {
+                if (button != null)
+                {
+                    button.onClick.RemoveAllListeners();
+                    button.interactable = true;
+                    button.enabled = false;
+                }
+
+                return;
+            }
+
+            if (button == null)
+            {
+                button = block.gameObject.AddComponent<Button>();
+            }
+
+            button.enabled = true;
+            button.interactable = true;
+            button.transition = Selectable.Transition.None;
+            button.targetGraphic = block.GetComponent<Image>();
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(action);
+
+            Image image = block.GetComponent<Image>();
+            if (image != null)
+            {
+                image.raycastTarget = true;
             }
         }
 
@@ -6175,6 +6776,11 @@ namespace StackMerge
                 return;
             }
 
+            if (IsRuntimeBlockButton(button))
+            {
+                return;
+            }
+
             button.transition = Selectable.Transition.None;
             Image image = GetButtonVisualImage(button);
             if (image == null)
@@ -6192,6 +6798,35 @@ namespace StackMerge
             image.color = !subdued
                 ? normalColor
                 : DarkenButtonColor(normalColor);
+        }
+
+        private bool IsRuntimeBlockButton(Button button)
+        {
+            if (button == null)
+            {
+                return false;
+            }
+
+            if (button.transform.parent == nextBlocksRoot)
+            {
+                return true;
+            }
+
+            if (stackBlockLayers == null)
+            {
+                return false;
+            }
+
+            Transform parent = button.transform.parent;
+            foreach (RectTransform layer in stackBlockLayers)
+            {
+                if (layer != null && parent == layer)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static Image GetButtonVisualImage(Button button)

@@ -315,12 +315,12 @@ namespace StackMerge
 
         public static readonly AchievementDefinition[] Achievements =
         {
-            new(0, "Chip Bank", "Earn 10000 chips in total", AchievementMetric.LifetimeChipsEarned, 10_000),
-            new(1, "Chip Million", "Earn 1 M chips in total", AchievementMetric.LifetimeChipsEarned, 1_000_000),
-            new(2, "Chip Billion", "Earn 1 B chips in total", AchievementMetric.LifetimeChipsEarned, 1_000_000_000),
-            new(3, "First Budget", "Spend 10000 chips in total", AchievementMetric.LifetimeChipsSpent, 10_000),
-            new(4, "Serious Budget", "Spend 100 K chips in total", AchievementMetric.LifetimeChipsSpent, 100_000),
-            new(5, "Mega Budget", "Spend 100 M chips in total", AchievementMetric.LifetimeChipsSpent, 100_000_000),
+            new(0, "Chip Bank", "Earn 10000 <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 10_000),
+            new(1, "Chip Million", "Earn 1 M <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000),
+            new(2, "Chip Billion", "Earn 1 B <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000_000),
+            new(3, "First Budget", "Spend 10000 <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 10_000),
+            new(4, "Serious Budget", "Spend 100 K <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 100_000),
+            new(5, "Mega Budget", "Spend 100 M <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 100_000_000),
             new(6, "Manual Finish", "Complete 10 runs while Auto Solver is turned off", AchievementMetric.LifetimeManualRunsCompleted, 10),
             new(7, "Solver Loyalty", "Complete 1000 runs with a solver", AchievementMetric.MaxSolverLifetimeRuns, 1000),
             new(8, "Move Habit", "Move a total of 10000 times", AchievementMetric.LifetimeMoves, 10_000),
