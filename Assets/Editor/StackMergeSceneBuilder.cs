@@ -14,6 +14,7 @@ namespace StackMerge.Editor
     public static class StackMergeSceneBuilder
     {
         private const string SampleScenePath = "Assets/Scenes/SampleScene.unity";
+        private const string BlockPrefabPath = "Assets/Prefabs/Block.prefab";
         private static readonly Vector2 ResearchNodeSize = new(198f, 68f);
         private const float ResearchNodeLeft = 22f;
         private const float ResearchNodeTop = 18f;
@@ -1362,7 +1363,7 @@ namespace StackMerge.Editor
             RectTransform tabs = CreatePanel("Bottom Menu Bar", parent, HexColor("#0B1322"));
             SetBottomStretch(tabs, 40f, 24f, 40f, 86f);
 
-            string[] labels = { "Jatek", "Algoritmus", "Upgrade", "Modifiers", "Agent", "Research", "Settings" };
+            string[] labels = { "Gameplay", "Algorithms", "Upgrades", "Agents", "Modifiers", "Research", "Settings" };
             Button[] buttons = new Button[labels.Length];
             for (int i = 0; i < labels.Length; i++)
             {
@@ -1401,6 +1402,13 @@ namespace StackMerge.Editor
 
         private static RectTransform BuildTemplates(RectTransform parent)
         {
+            GameObject blockPrefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(BlockPrefabPath);
+            RectTransform blockPrefab = blockPrefabRoot != null ? blockPrefabRoot.GetComponent<RectTransform>() : null;
+            if (blockPrefab != null)
+            {
+                return blockPrefab;
+            }
+
             RectTransform templates = CreateRect("Templates", parent);
             templates.anchorMin = new Vector2(1f, 0f);
             templates.anchorMax = new Vector2(1f, 0f);
@@ -1661,8 +1669,8 @@ namespace StackMerge.Editor
         private static float BoardHeightForCapacity(int stackCapacity)
         {
             const float blockHeight = 74f;
-            const float spacing = 7f;
-            const float internalPadding = 44f;
+            const float spacing = 10f;
+            const float internalPadding = 40f;
             int capacity = Mathf.Max(1, stackCapacity);
             return internalPadding + capacity * blockHeight + Mathf.Max(0, capacity - 1) * spacing;
         }

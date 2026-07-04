@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,6 +7,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace StackMerge
@@ -14,6 +16,14 @@ namespace StackMerge
     {
         private const string HighScoreKey = "StackMerge.HighScore";
         private const float AutoRestartDelay = 1.2f;
+        private const float StackBlockMinHeight = 74f;
+        private const float StackBlockMaxHeight = 90f;
+        private const float StackBlockPadding = 10f;
+        private const float StackBlockSpacing = 10f;
+        private const float StackInternalPadding = StackBlockPadding * 4f;
+        private const float NextPanelChromeHeight = 64f;
+        private const float SmallestEmergencyBlockHeight = 58f;
+        private const float GameOverOverlayDelay = 0.24f;
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
@@ -64,6 +74,10 @@ namespace StackMerge
         [Tooltip("Optional lock icon used by locked bottom-menu tabs. Drag your lock sprite here in the Inspector.")]
         [SerializeField] private Sprite lockedTabIcon;
         [SerializeField] private float bottomMenuHighlightSlideSeconds = 0.18f;
+
+        [Header("Button Visuals")]
+        [Tooltip("How much to reduce an Image button's HSV Value when Button.interactable is false. 0.40 means V 100 becomes V 60.")]
+        [SerializeField, Range(0f, 1f)] private float disabledButtonValueDrop = 0.4f;
 
         [Header("AI UI")]
         [SerializeField] private TMP_Text[] chipsTexts = Array.Empty<TMP_Text>();
@@ -188,13 +202,22 @@ namespace StackMerge
         [SerializeField] private Button solverInfoCloseButton;
 
         [Header("Templates")]
+        [Tooltip("Prefab used for every visible block in both stacks and the next queue. Expected hierarchy: Block (Image) > Text (TMP).")]
         [SerializeField] private RectTransform blockTemplate;
-        [SerializeField] private bool useGeneratedBlockSprites = true;
+        [Tooltip("Fallback only: when the block prefab/Image has no sprite, generate a rounded sprite in code.")]
+        [SerializeField] private bool useGeneratedBlockSprites = false;
 
         [Header("Game Over")]
         [SerializeField] private GameObject gameOverOverlay;
         [SerializeField] private TMP_Text gameOverScoreText;
         [SerializeField] private TMP_Text gameOverBestText;
+
+        [Header("Achievement Notification")]
+        [SerializeField] private GameObject achievementNotificationPanel;
+        [SerializeField] private TMP_Text achievementNotificationGoalText;
+        [SerializeField] private Button achievementNotificationCloseButton;
+        [SerializeField] private float achievementNotificationVisibleSeconds = 10f;
+        [SerializeField] private float achievementNotificationSlideSeconds = 0.28f;
 
         private sealed class BottomTabVisual
         {
@@ -250,6 +273,7 @@ namespace StackMerge
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
         private bool solverDeselected = false;
         private BottomTabVisual[] bottomTabVisuals = Array.Empty<BottomTabVisual>();
+        private readonly Dictionary<Button, Color> buttonNormalColors = new();
         private int bottomMenuHighlightIndex = -1;
         private bool bottomMenuHighlightAnimating;
         private RectTransform bottomMenuHighlightRect;
@@ -264,6 +288,26 @@ namespace StackMerge
         private const float MergePulseDuration = 0.22f;
         private int mergePulseStack = -1;
         private RectTransform[] stackSlotLayers;
+        private Coroutine gameplayLayoutWarmupCoroutine;
+        private float gameOverOverlayTimer;
+        private readonly HashSet<int> completedAchievementIds = new();
+        private readonly Queue<string> achievementNotificationQueue = new();
+        private bool achievementCompletionStateInitialized;
+        private RectTransform achievementNotificationRect;
+        private Vector2 achievementNotificationHomePosition;
+        private Vector2 achievementNotificationEnterPosition;
+        private Vector2 achievementNotificationExitPosition;
+        private Vector2 achievementNotificationSlideOutStartPosition;
+        private float achievementNotificationTimer;
+        private AchievementNotificationState achievementNotificationState = AchievementNotificationState.Hidden;
+
+        private enum AchievementNotificationState
+        {
+            Hidden,
+            SlidingIn,
+            Showing,
+            SlidingOut
+        }
 
         private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
         {
@@ -289,6 +333,9 @@ namespace StackMerge
             EnsureOptionalUpgradeButtonReferences();
             WireButtons();
             HideTemplate();
+            EnsureAchievementNotificationReferences();
+            WireAchievementNotificationButton();
+            PrepareGlobalUiLayering();
             SelectTab(0);
         }
 
@@ -299,11 +346,17 @@ namespace StackMerge
             highScore = PlayerPrefs.GetInt(HighScoreKey, 0);
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
+            solverDeselected = progression.SolverDeselected;
             ApplyModernTheme();
             EnsureResearchUi();
             WirePrestigeResearchButtons();
+            EnsureAchievementNotificationReferences();
+            WireAchievementNotificationButton();
+            SyncCompletedAchievements();
             CreateFreshGame();
             RefreshEverything();
+            ForceGameplayLayoutPass();
+            ScheduleGameplayLayoutWarmup();
             if (progression.LastOfflineChips > 0 || progression.LastOfflineInsight > 0)
             {
                 SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} chips, +{FormatNumber(progression.LastOfflineInsight)} Insight");
@@ -377,12 +430,15 @@ namespace StackMerge
                 lastScreenHeight = Screen.height;
                 boardLayoutDirty = true;
                 RefreshColumns();
+                RefreshNextBlocks();
             }
 
             TickAutomation();
             TickBottomMenuHighlight();
             MaybeEndStuckRun();
             TickBlockAnimations();
+            TickGameOverOverlayDelay();
+            TickAchievementNotification();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -416,6 +472,12 @@ namespace StackMerge
 
         private void OnDisable()
         {
+            if (gameplayLayoutWarmupCoroutine != null)
+            {
+                StopCoroutine(gameplayLayoutWarmupCoroutine);
+                gameplayLayoutWarmupCoroutine = null;
+            }
+
             progression?.FlushIfDirty();
         }
 
@@ -433,6 +495,324 @@ namespace StackMerge
             {
                 RefreshColumns();
             }
+        }
+
+        private void ScheduleGameplayLayoutWarmup(int frames = 5)
+        {
+            if (!isActiveAndEnabled || gameState == null)
+            {
+                return;
+            }
+
+            if (gameplayLayoutWarmupCoroutine != null)
+            {
+                StopCoroutine(gameplayLayoutWarmupCoroutine);
+            }
+
+            gameplayLayoutWarmupCoroutine = StartCoroutine(GameplayLayoutWarmup(frames));
+        }
+
+        private IEnumerator GameplayLayoutWarmup(int frames)
+        {
+            int safeFrames = Mathf.Clamp(frames, 1, 12);
+            for (int i = 0; i < safeFrames; i++)
+            {
+                yield return null;
+                ForceGameplayLayoutPass();
+            }
+
+            gameplayLayoutWarmupCoroutine = null;
+        }
+
+        private void ForceGameplayLayoutPass()
+        {
+            if (gameState == null)
+            {
+                return;
+            }
+
+            Canvas.ForceUpdateCanvases();
+            RebuildLayout(canvas != null ? canvas.transform as RectTransform : null);
+            RebuildLayout(boardRoot != null ? boardRoot.parent as RectTransform : null);
+            RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
+            RebuildLayout(nextBlocksRoot);
+
+            boardLayoutDirty = true;
+            RefreshColumns();
+            Canvas.ForceUpdateCanvases();
+            RefreshNextBlocks();
+            RebuildLayout(nextBlocksRoot);
+            RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
+            Canvas.ForceUpdateCanvases();
+        }
+
+        private static void RebuildLayout(RectTransform rectTransform)
+        {
+            if (rectTransform != null && rectTransform.gameObject.activeInHierarchy)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(rectTransform);
+            }
+        }
+
+        private void StartGameOverOverlayDelay()
+        {
+            gameOverOverlayTimer = Mathf.Max(GameOverOverlayDelay, blockDropTimer, mergePulseTimer);
+            RefreshGameOver();
+        }
+
+        private void TickGameOverOverlayDelay()
+        {
+            if (gameOverOverlayTimer <= 0f)
+            {
+                return;
+            }
+
+            gameOverOverlayTimer = Mathf.Max(0f, gameOverOverlayTimer - Time.deltaTime);
+            if (gameOverOverlayTimer <= 0f)
+            {
+                RefreshGameOver();
+            }
+        }
+
+        private void EnsureAchievementNotificationReferences()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            if (achievementNotificationPanel == null)
+            {
+                Transform panel = FindNamedDescendant(canvas.transform, "Achievement Notification Panel");
+                if (panel != null)
+                {
+                    achievementNotificationPanel = panel.gameObject;
+                }
+            }
+
+            if (achievementNotificationPanel == null)
+            {
+                return;
+            }
+
+            if (achievementNotificationGoalText == null)
+            {
+                Transform goalText = FindNamedDescendant(achievementNotificationPanel.transform, "GoalText");
+                achievementNotificationGoalText = goalText != null
+                    ? goalText.GetComponent<TMP_Text>()
+                    : achievementNotificationPanel.GetComponentInChildren<TMP_Text>(true);
+            }
+
+            if (achievementNotificationCloseButton == null)
+            {
+                achievementNotificationCloseButton = achievementNotificationPanel.GetComponentInChildren<Button>(true);
+            }
+
+            RectTransform rect = achievementNotificationPanel.transform as RectTransform;
+            if (rect != null && rect != achievementNotificationRect)
+            {
+                achievementNotificationRect = rect;
+                achievementNotificationHomePosition = rect.anchoredPosition;
+                RecalculateAchievementNotificationPositions();
+            }
+
+            if (achievementNotificationState == AchievementNotificationState.Hidden)
+            {
+                SetActive(achievementNotificationPanel, false);
+            }
+        }
+
+        private void RecalculateAchievementNotificationPositions()
+        {
+            if (achievementNotificationRect == null)
+            {
+                return;
+            }
+
+            float travel = 520f;
+            if (achievementNotificationRect.parent is RectTransform parent)
+            {
+                float parentWidth = parent.rect.width > 1f ? parent.rect.width : 0f;
+                float panelWidth = achievementNotificationRect.rect.width > 1f
+                    ? achievementNotificationRect.rect.width
+                    : Mathf.Abs(achievementNotificationRect.sizeDelta.x);
+                travel = Mathf.Max(420f, parentWidth + panelWidth + 80f);
+            }
+
+            achievementNotificationEnterPosition = achievementNotificationHomePosition + new Vector2(travel, 0f);
+            achievementNotificationExitPosition = achievementNotificationHomePosition - new Vector2(travel, 0f);
+        }
+
+        private void WireAchievementNotificationButton()
+        {
+            if (achievementNotificationCloseButton == null)
+            {
+                return;
+            }
+
+            achievementNotificationCloseButton.onClick.RemoveAllListeners();
+            achievementNotificationCloseButton.onClick.AddListener(DismissAchievementNotification);
+        }
+
+        private void SyncCompletedAchievements()
+        {
+            completedAchievementIds.Clear();
+            if (progression == null)
+            {
+                achievementCompletionStateInitialized = false;
+                return;
+            }
+
+            foreach (AchievementDefinition achievement in StackMergeProgression.Achievements)
+            {
+                if (progression.IsAchievementComplete(achievement))
+                {
+                    completedAchievementIds.Add(achievement.Id);
+                }
+            }
+
+            achievementCompletionStateInitialized = true;
+        }
+
+        private void QueueAchievementNotificationsForNewCompletions()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            if (!achievementCompletionStateInitialized)
+            {
+                SyncCompletedAchievements();
+                return;
+            }
+
+            foreach (AchievementDefinition achievement in StackMergeProgression.Achievements)
+            {
+                if (!completedAchievementIds.Contains(achievement.Id) && progression.IsAchievementComplete(achievement))
+                {
+                    completedAchievementIds.Add(achievement.Id);
+                    achievementNotificationQueue.Enqueue(achievement.Description);
+                }
+            }
+
+            TryShowNextAchievementNotification();
+        }
+
+        private void TryShowNextAchievementNotification()
+        {
+            if (achievementNotificationState != AchievementNotificationState.Hidden || achievementNotificationQueue.Count == 0)
+            {
+                return;
+            }
+
+            EnsureAchievementNotificationReferences();
+            WireAchievementNotificationButton();
+            if (achievementNotificationPanel == null)
+            {
+                return;
+            }
+
+            SetText(achievementNotificationGoalText, achievementNotificationQueue.Dequeue());
+            SetActive(achievementNotificationPanel, true);
+            achievementNotificationPanel.transform.SetAsLastSibling();
+
+            if (achievementNotificationRect == null)
+            {
+                achievementNotificationTimer = achievementNotificationVisibleSeconds;
+                achievementNotificationState = AchievementNotificationState.Showing;
+                return;
+            }
+
+            RecalculateAchievementNotificationPositions();
+            achievementNotificationRect.anchoredPosition = achievementNotificationEnterPosition;
+            achievementNotificationTimer = 0f;
+            achievementNotificationState = AchievementNotificationState.SlidingIn;
+        }
+
+        private void TickAchievementNotification()
+        {
+            if (achievementNotificationState == AchievementNotificationState.Hidden)
+            {
+                TryShowNextAchievementNotification();
+                return;
+            }
+
+            if (achievementNotificationPanel == null)
+            {
+                achievementNotificationState = AchievementNotificationState.Hidden;
+                return;
+            }
+
+            float slideSeconds = Mathf.Max(0.01f, achievementNotificationSlideSeconds);
+            switch (achievementNotificationState)
+            {
+                case AchievementNotificationState.SlidingIn:
+                    achievementNotificationTimer += Time.deltaTime;
+                    SetAchievementNotificationPosition(achievementNotificationEnterPosition, achievementNotificationHomePosition, achievementNotificationTimer / slideSeconds);
+                    if (achievementNotificationTimer >= slideSeconds)
+                    {
+                        achievementNotificationTimer = achievementNotificationVisibleSeconds;
+                        achievementNotificationState = AchievementNotificationState.Showing;
+                    }
+
+                    break;
+                case AchievementNotificationState.Showing:
+                    achievementNotificationTimer -= Time.deltaTime;
+                    if (achievementNotificationTimer <= 0f)
+                    {
+                        BeginAchievementNotificationSlideOut();
+                    }
+
+                    break;
+                case AchievementNotificationState.SlidingOut:
+                    achievementNotificationTimer += Time.deltaTime;
+                    SetAchievementNotificationPosition(achievementNotificationSlideOutStartPosition, achievementNotificationExitPosition, achievementNotificationTimer / slideSeconds);
+                    if (achievementNotificationTimer >= slideSeconds)
+                    {
+                        SetActive(achievementNotificationPanel, false);
+                        achievementNotificationState = AchievementNotificationState.Hidden;
+                        TryShowNextAchievementNotification();
+                    }
+
+                    break;
+            }
+        }
+
+        private void SetAchievementNotificationPosition(Vector2 from, Vector2 to, float normalized)
+        {
+            if (achievementNotificationRect == null)
+            {
+                return;
+            }
+
+            float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(normalized));
+            achievementNotificationRect.anchoredPosition = Vector2.Lerp(from, to, t);
+        }
+
+        private void DismissAchievementNotification()
+        {
+            if (achievementNotificationState == AchievementNotificationState.Hidden)
+            {
+                return;
+            }
+
+            BeginAchievementNotificationSlideOut();
+        }
+
+        private void BeginAchievementNotificationSlideOut()
+        {
+            if (achievementNotificationPanel == null)
+            {
+                achievementNotificationState = AchievementNotificationState.Hidden;
+                return;
+            }
+
+            achievementNotificationSlideOutStartPosition = achievementNotificationRect != null
+                ? achievementNotificationRect.anchoredPosition
+                : achievementNotificationHomePosition;
+            achievementNotificationTimer = 0f;
+            achievementNotificationState = AchievementNotificationState.SlidingOut;
         }
 
         public void ConfigureSceneReferences(
@@ -651,6 +1031,26 @@ namespace StackMerge
             targetCamera.orthographicSize = 5f;
             targetCamera.backgroundColor = HexColor("#111827");
             targetCamera.clearFlags = CameraClearFlags.SolidColor;
+        }
+
+        private void PrepareGlobalUiLayering()
+        {
+            ReparentOverlayToCanvas(gameplayInfoOverlay);
+        }
+
+        private void ReparentOverlayToCanvas(GameObject overlay)
+        {
+            if (overlay == null || canvas == null || overlay.transform.parent == canvas.transform)
+            {
+                return;
+            }
+
+            RectTransform rect = overlay.transform as RectTransform;
+            overlay.transform.SetParent(canvas.transform, false);
+            if (rect != null)
+            {
+                Stretch(rect);
+            }
         }
 
         private void EnsureOptionalUpgradeButtonReferences()
@@ -1137,15 +1537,15 @@ namespace StackMerge
             solverTuneOpen = false;
             gameplayInfoOpen = false;
             int requestedTab = Mathf.Clamp(tabIndex, 0, 6);
-            if (requestedTab == 3 && progression != null && !progression.ModifiersMenuUnlocked)
+            if (requestedTab == 3 && progression != null && !progression.AgentsMenuUnlocked)
             {
-                SetText(feedbackText, "Unlock Modifier Lab in Upgrades first");
+                SetText(feedbackText, "Unlock Agents in Upgrades first");
                 requestedTab = selectedTabIndex;
             }
 
-            if (requestedTab == 4 && progression != null && !progression.AgentsMenuUnlocked)
+            if (requestedTab == 4 && progression != null && !progression.ModifiersMenuUnlocked)
             {
-                SetText(feedbackText, "Unlock Agents in Upgrades first");
+                SetText(feedbackText, "Unlock Modifier Lab in Upgrades first");
                 requestedTab = selectedTabIndex;
             }
 
@@ -1159,10 +1559,10 @@ namespace StackMerge
             SetActive(gameplayPanel, selectedTabIndex == 0);
             SetActive(algorithmsPanel, selectedTabIndex == 1);
             SetActive(upgradesPanel, selectedTabIndex == 2);
-            SetActive(modifiersPanel, selectedTabIndex == 3);
+            SetActive(agentsPanel, selectedTabIndex == 3);
+            SetActive(modifiersPanel, selectedTabIndex == 4);
             SetActive(historyPanel, false);
             SetActive(achievementsPanel, false);
-            SetActive(agentsPanel, selectedTabIndex == 4);
             SetActive(researchPanel, selectedTabIndex == 5);
             SetActive(settingsPanel, selectedTabIndex == 6);
             SetActive(solverTunePanel, false);
@@ -1173,6 +1573,11 @@ namespace StackMerge
             // Update the board / training-overlay visibility immediately on tab change so the
             // PPO matrix view appears/disappears at once instead of lagging until the next move.
             RefreshGameView();
+            if (selectedTabIndex == 0)
+            {
+                ForceGameplayLayoutPass();
+                ScheduleGameplayLayoutWarmup(3);
+            }
         }
 
         private void OpenHistoryPanel()
@@ -1248,6 +1653,7 @@ namespace StackMerge
             gameplayInfoOpen = true;
             RefreshGameplayInfo();
             SetActive(gameplayInfoOverlay, true);
+            gameplayInfoOverlay?.transform.SetAsLastSibling();
         }
 
         private void CloseGameplayInfo()
@@ -1436,14 +1842,14 @@ namespace StackMerge
 
         private bool IsBottomTabLocked(int tabIndex)
         {
-            return (tabIndex == 3 && progression != null && !progression.ModifiersMenuUnlocked)
-                || (tabIndex == 4 && progression != null && !progression.AgentsMenuUnlocked)
+            return (tabIndex == 3 && progression != null && !progression.AgentsMenuUnlocked)
+                || (tabIndex == 4 && progression != null && !progression.ModifiersMenuUnlocked)
                 || (tabIndex == 5 && progression != null && !IsResearchMenuUnlocked());
         }
 
         private static string GetDefaultBottomTabLabel(int tabIndex)
         {
-            string[] labels = { "Game", "Algos", "Upgrades", "Modifiers", "Agents", "Research" };
+            string[] labels = { "Game", "Algos", "Upgrades", "Agents", "Modifiers", "Research" };
             return tabIndex >= 0 && tabIndex < labels.Length ? labels[tabIndex] : string.Empty;
         }
 
@@ -1678,7 +2084,11 @@ namespace StackMerge
         {
             if (blockTemplate != null)
             {
-                blockTemplate.gameObject.SetActive(false);
+                Scene templateScene = blockTemplate.gameObject.scene;
+                if (templateScene.IsValid() && templateScene.isLoaded)
+                {
+                    blockTemplate.gameObject.SetActive(false);
+                }
             }
         }
 
@@ -1869,10 +2279,12 @@ namespace StackMerge
             if (!wasGameOver && result.IsGameOver)
             {
                 runBonus = CompleteRun(machineLearningTraining);
+                StartGameOverOverlayDelay();
             }
 
             progression.Save();
             UpdateHighScore();
+            QueueAchievementNotificationsForNewCompletions();
 
             string chipText = machineLearningTraining
                 ? "training: +0 chips"
@@ -1973,6 +2385,7 @@ namespace StackMerge
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             gameState.ForceGameOver();
             CompleteRun(machineLearningTraining);
+            StartGameOverOverlayDelay();
             progression.Save();
             UpdateHighScore();
             SetText(feedbackText, "No moves left — run over");
@@ -1984,6 +2397,8 @@ namespace StackMerge
             CreateFreshGame();
             SetText(feedbackText, string.Empty);
             RefreshEverything();
+            ForceGameplayLayoutPass();
+            ScheduleGameplayLayoutWarmup();
         }
 
         private void CreateFreshGame()
@@ -2000,6 +2415,9 @@ namespace StackMerge
             currentRunManualMoves = 0;
             currentRunElapsed = 0f;
             currentRunChipsEarned = 0L;
+            gameOverOverlayTimer = 0f;
+            boardLayoutDirty = true;
+            lastRenderedCapacity = -1;
         }
 
         private void UpdateHighScore()
@@ -2022,6 +2440,18 @@ namespace StackMerge
             SetActive(solverTunePanel, false);
             RefreshSolverButtons();
             RefreshSolverDetails();
+        }
+
+        private void SetSolverDeselected(bool deselected)
+        {
+            if (progression == null)
+            {
+                solverDeselected = deselected;
+                return;
+            }
+
+            progression.SetSolverDeselected(deselected);
+            solverDeselected = progression.SolverDeselected;
         }
 
         private void HandleSelectedSolverAction()
@@ -2052,6 +2482,7 @@ namespace StackMerge
                         return;
                     }
 
+                    solverDeselected = progression.SolverDeselected;
                     progression.Save();
                 }
 
@@ -2059,18 +2490,22 @@ namespace StackMerge
                 return;
             }
 
-            // If the solver is already active, toggle manual deselect mode.
+            // If the solver is already selected, toggle it off into manual play.
             if (progression.SelectedSolver == id && progression.IsSolverUnlocked(id))
             {
-                solverDeselected = !solverDeselected;
-                SetText(feedbackText, solverDeselected ? "Manual mode: solver paused" : $"Solver: {definition.DisplayName}");
+                SetSolverDeselected(!solverDeselected);
+                SetText(feedbackText, solverDeselected ? $"{definition.DisplayName} deselected" : $"{definition.DisplayName} selected");
+                progression.Save();
                 RefreshEverything();
                 return;
             }
 
             bool changed = progression.SelectOrUnlockSolver(id);
-            if (changed) solverDeselected = false;
-            SetText(feedbackText, changed ? $"Solver: {definition.DisplayName}" : "Not enough chips");
+            if (changed)
+            {
+                solverDeselected = progression.SolverDeselected;
+            }
+            SetText(feedbackText, changed ? $"{definition.DisplayName} selected" : "Not enough chips");
             progression.Save();
             RefreshEverything();
         }
@@ -2090,6 +2525,7 @@ namespace StackMerge
 
             progression.SetMachineLearningTrainingMode(training);
             progression.SelectOrUnlockSolver(SolverId.MachineLearning);
+            solverDeselected = progression.SolverDeselected;
             progression.Save();
             HidePpoModeModal();
             SetText(feedbackText, training ? "PPO: Training mode" : "PPO: Normal mode");
@@ -2125,6 +2561,8 @@ namespace StackMerge
             }
 
             SetActive(ppoModeModal.gameObject, true);
+            ApplyButtonVisualState(ppoNormalButton);
+            ApplyButtonVisualState(ppoTrainingButton);
         }
 
         private void EnsurePpoModeModal()
@@ -2439,7 +2877,7 @@ namespace StackMerge
             }
 
             bool bought = progression.BuyExtraAgentSlotUpgrade();
-            SetText(feedbackText, bought ? "+1 agent slot unlocked" : "Not enough chips");
+            SetText(feedbackText, bought ? "+1 agent slot unlocked" : !progression.AgentsMenuUnlocked ? "Unlock Agents first" : "Not enough chips");
             progression.Save();
             RefreshEverything();
         }
@@ -2476,6 +2914,7 @@ namespace StackMerge
             PlayerPrefs.SetInt(HighScoreKey, 0);
             PlayerPrefs.Save();
             selectedSolverId = progression.SelectedSolver;
+            solverDeselected = progression.SolverDeselected;
             selectedAgentId = AgentId.MergeBroker;
             selectedModifierId = ModifierId.UnstableStack;
             solverTuneOpen = false;
@@ -2764,6 +3203,7 @@ namespace StackMerge
         {
             RefreshGameView();
             RefreshProgressionUi();
+            QueueAchievementNotificationsForNewCompletions();
         }
 
         /// <summary>
@@ -2800,8 +3240,8 @@ namespace StackMerge
             }
             else
             {
-                RefreshNextBlocks();
                 RefreshColumns();
+                RefreshNextBlocks();
             }
 
             RefreshGameOver();
@@ -2943,6 +3383,10 @@ namespace StackMerge
             // every one of those, so this one spot covers all navigation paths.
             bool showGlobalStatusBar = !historyOpen && !achievementsOpen && selectedTabIndex != 6;
             SetActive(globalStatusBarRoot, showGlobalStatusBar);
+            if (showGlobalStatusBar && globalStatusBarRoot != null && !gameplayInfoOpen)
+            {
+                globalStatusBarRoot.transform.SetAsLastSibling();
+            }
 
             if (progression == null)
             {
@@ -2962,8 +3406,7 @@ namespace StackMerge
             RebuildTextLayout(tokensText);
             if (solverDeselected)
             {
-                SetText(solverText, $"Manual  ({GetSelectedSolver().DisplayName} paused)");
-                SetText(solverText, $"Manual  ({GetSelectedSolver().DisplayName} paused)");
+                SetText(solverText, "Manual");
             }
             else if (progression.SelectedSolver == SolverId.MachineLearning)
             {
@@ -3066,6 +3509,7 @@ namespace StackMerge
             RefreshAchievements();
             RefreshTabButtons();
             RefreshGameplayInfo();
+            RefreshButtonVisualStates();
         }
 
         private void RefreshSolverButtons()
@@ -3087,7 +3531,9 @@ namespace StackMerge
                 string label = selectedInPanel ? $"> {definition.DisplayName}" : definition.DisplayName;
                 if (unlocked)
                 {
-                    label += active ? "\nActive" : "\nUnlocked";
+                    label += active
+                        ? solverDeselected ? "\nDeselected" : "\nSelected"
+                        : "\nUnlocked";
                 }
                 else if (definition.Id == SolverId.MachineLearning && !machineLearningGateReady)
                 {
@@ -3139,9 +3585,11 @@ namespace StackMerge
             }
 
             string statusLabel = active
-                ? (!isMachineLearning && solverDeselected ? "Paused — manual mode" : "Active")
+                ? (!isMachineLearning && solverDeselected ? "Deselected" : "Selected")
                 : "Unlocked";
-            SetText(solverDetailStatusText, statusLabel);
+            SetText(
+                solverDetailStatusText,
+                statusLabel);
             if (!isMachineLearning && active)
             {
                 SetButtonText(solverDetailActionButton, solverDeselected ? "Select" : "Deselect");
@@ -3192,7 +3640,7 @@ namespace StackMerge
                 }
                 else if (!isMachineLearning && active)
                 {
-                    SetButtonText(card.actionButton, solverDeselected ? "Resume solver" : "Deselect");
+                    SetButtonText(card.actionButton, solverDeselected ? "Select" : "Deselect");
                     if (card.actionButton != null) card.actionButton.interactable = true;
                 }
                 else
@@ -4067,7 +4515,11 @@ namespace StackMerge
 
             if (extraAgentSlotUpgradeButton != null)
             {
-                if (progression.ExtraAgentSlotUnlocked)
+                if (!progression.AgentsMenuUnlocked)
+                {
+                    SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", "Needs Agents", false);
+                }
+                else if (progression.ExtraAgentSlotUnlocked)
                 {
                     SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", "Unlocked", false);
                 }
@@ -4581,11 +5033,12 @@ namespace StackMerge
             SetText(
                 achievementStatsText,
                 $"Completed goals: {completed}/{StackMergeProgression.Achievements.Length}\n" +
-                $"Runs: {FormatNumber(progression.RunsCompleted)} ({FormatNumber(progression.ManualRunsCompleted)} manual)\n" +
-                $"Merges: {FormatNumber(progression.TotalMerges)}\n" +
-                $"Highest: {FormatNumber(progression.HighestBlockEver)}\n" +
-                $"Earned: {FormatNumber(progression.TotalChipsEarned)}\n" +
-                $"Spent: {FormatNumber(progression.TotalChipsSpent)}\n" +
+                $"Runs: {FormatNumber(progression.LifetimeRunsCompleted)} ({FormatNumber(progression.LifetimeManualRunsCompleted)} manual)\n" +
+                $"Moves: {FormatNumber(progression.LifetimeMoves)}\n" +
+                $"Merges: {FormatNumber(progression.LifetimeMerges)}\n" +
+                $"Highest: {FormatNumber(progression.LifetimeHighestBlockEver)}\n" +
+                $"Earned: {FormatNumber(progression.LifetimeChipsEarned)}\n" +
+                $"Spent: {FormatNumber(progression.LifetimeChipsSpent)}\n" +
                 $"Best run: {FormatNumber(progression.BestRunScore)}");
 
             BuildGoalRows();
@@ -4924,16 +5377,15 @@ namespace StackMerge
 
         private void RefreshNextBlocks()
         {
-            if (nextBlocksRoot == null)
+            if (nextBlocksRoot == null || gameState == null)
             {
                 return;
             }
 
             int blockCount = gameState.NextBlocks.Count;
-            float spacing = 16f;
-            float availableWidth = Mathf.Max(360f, nextBlocksRoot.rect.width);
-            float blockWidth = Mathf.Clamp((availableWidth - spacing * Mathf.Max(0, blockCount - 1)) / Mathf.Max(1, blockCount), 96f, 144f);
-            float blockHeight = blockWidth >= 132f ? 78f : 70f;
+            Vector2 blockSize = CalculateNextBlockSize(blockCount);
+            float blockWidth = blockSize.x;
+            float blockHeight = blockSize.y;
             int fontSize = Mathf.RoundToInt(blockHeight * 0.44f);
 
             for (int i = 0; i < blockCount; i++)
@@ -4942,6 +5394,7 @@ namespace StackMerge
                     ? (RectTransform)nextBlocksRoot.GetChild(i)
                     : CreateBlockInstance(nextBlocksRoot);
                 ConfigureBlock(block, gameState.NextBlocks[i], blockWidth, blockHeight, fontSize);
+                SetCurrentNextOutline(block, i == 0);
                 LayoutElement layout = EnsureComponent<LayoutElement>(block.gameObject);
                 layout.preferredWidth = blockWidth;
                 layout.preferredHeight = blockHeight;
@@ -4955,6 +5408,117 @@ namespace StackMerge
                     extra.SetActive(false);
                 }
             }
+        }
+
+        private Vector2 CalculateNextBlockSize(int blockCount)
+        {
+            if (!TryGetStackBlockSize(out float stackBlockWidth, out float stackBlockHeight))
+            {
+                stackBlockWidth = 144f;
+                stackBlockHeight = StackBlockMinHeight;
+            }
+
+            if (blockCount <= 1)
+            {
+                return new Vector2(stackBlockWidth, stackBlockHeight);
+            }
+
+            float spacing = GetNextBlocksSpacing(out float horizontalPadding);
+            float availableWidth = Mathf.Max(0f, GetNextBlocksAvailableWidth() - horizontalPadding);
+            if (availableWidth <= 0f)
+            {
+                return new Vector2(stackBlockWidth, stackBlockHeight);
+            }
+
+            float preferredWidth = stackBlockWidth * blockCount + spacing * (blockCount - 1);
+            if (preferredWidth <= availableWidth)
+            {
+                return new Vector2(stackBlockWidth, stackBlockHeight);
+            }
+
+            float fittedWidth = (availableWidth - spacing * (blockCount - 1)) / blockCount;
+            fittedWidth = Mathf.Clamp(fittedWidth, 1f, stackBlockWidth);
+            return new Vector2(fittedWidth, stackBlockHeight);
+        }
+
+        private float GetNextBlocksAvailableWidth()
+        {
+            if (nextBlocksRoot == null)
+            {
+                return 0f;
+            }
+
+            float width = nextBlocksRoot.rect.width;
+            if (width > 1f)
+            {
+                return width;
+            }
+
+            if (nextBlocksRoot.parent is RectTransform parent)
+            {
+                float parentWidth = parent.rect.width;
+                if (parentWidth > 1f)
+                {
+                    float left = Mathf.Max(0f, nextBlocksRoot.offsetMin.x);
+                    float right = Mathf.Max(0f, -nextBlocksRoot.offsetMax.x);
+                    return Mathf.Max(0f, parentWidth - left - right);
+                }
+            }
+
+            return 0f;
+        }
+
+        private float GetNextBlocksSpacing(out float horizontalPadding)
+        {
+            HorizontalLayoutGroup layout = nextBlocksRoot != null ? nextBlocksRoot.GetComponent<HorizontalLayoutGroup>() : null;
+            if (layout == null)
+            {
+                horizontalPadding = 0f;
+                return 16f;
+            }
+
+            horizontalPadding = Mathf.Max(0f, layout.padding.left + layout.padding.right);
+            return Mathf.Max(0f, layout.spacing);
+        }
+
+        private bool TryGetStackBlockSize(out float blockWidth, out float blockHeight)
+        {
+            blockWidth = 144f;
+            blockHeight = StackBlockMinHeight;
+
+            if (gameState == null || stackBlockLayers == null)
+            {
+                return false;
+            }
+
+            int capacity = Mathf.Max(1, gameState.StackCapacity);
+            foreach (RectTransform layer in stackBlockLayers)
+            {
+                if (layer == null)
+                {
+                    continue;
+                }
+
+                CalculateStackBlockSize(layer, capacity, out blockWidth, out blockHeight);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void CalculateStackBlockSize(RectTransform layer, int capacity, out float blockWidth, out float blockHeight)
+        {
+            float layerWidth = layer.rect.width > 1f ? layer.rect.width : 128f;
+            const float padding = StackBlockPadding;
+            int safeCapacity = Mathf.Max(1, capacity);
+            float fallbackLayerHeight = padding * 2f + StackBlockMinHeight * safeCapacity + StackBlockSpacing * Mathf.Max(0, safeCapacity - 1);
+            float layerHeight = layer.rect.height > 1f ? layer.rect.height : fallbackLayerHeight;
+
+            blockHeight = Mathf.Clamp(
+                (layerHeight - padding * 2f - StackBlockSpacing * (safeCapacity - 1)) / safeCapacity,
+                1f,
+                StackBlockMaxHeight);
+            blockWidth = Mathf.Max(110f, layerWidth - padding * 2f);
         }
 
         private void RefreshColumns()
@@ -4990,12 +5554,9 @@ namespace StackMerge
                     continue;
                 }
 
-                float layerWidth = Mathf.Max(128f, layer.rect.width);
-                float layerHeight = Mathf.Max(420f, layer.rect.height);
-                float padding = 12f;
-                float spacing = 7f;
-                float blockHeight = Mathf.Min(74f, (layerHeight - padding * 2f - spacing * (capacity - 1)) / capacity);
-                float blockWidth = Mathf.Max(110f, layerWidth - padding * 2f);
+                float padding = StackBlockPadding;
+                float spacing = StackBlockSpacing;
+                CalculateStackBlockSize(layer, capacity, out float blockWidth, out float blockHeight);
                 int fontSize = Mathf.RoundToInt(blockHeight * 0.44f);
 
                 IReadOnlyList<int> stack = stackIndex < gameState.StackCount ? gameState.Stacks[stackIndex] : Array.Empty<int>();
@@ -5016,6 +5577,7 @@ namespace StackMerge
                         ? (RectTransform)layer.GetChild(childIdx)
                         : CreateBlockInstance(layer);
                     ConfigureBlock(block, stack[i], blockWidth, blockHeight, fontSize);
+                    SetCurrentNextOutline(block, false);
                     block.anchorMin = new Vector2(0.5f, 0f);
                     block.anchorMax = new Vector2(0.5f, 0f);
                     block.pivot = new Vector2(0.5f, 0f);
@@ -5058,6 +5620,7 @@ namespace StackMerge
                 if (stackIndex < stackButtons.Length && stackButtons[stackIndex] != null)
                 {
                     stackButtons[stackIndex].interactable = gameState.CanPlace(stackIndex);
+                    ApplyButtonVisualState(stackButtons[stackIndex]);
                 }
             }
         }
@@ -5141,6 +5704,11 @@ namespace StackMerge
                 return;
             }
 
+            if (TryLayoutGameplaySections())
+            {
+                return;
+            }
+
             RectTransform board = boardRoot;
             if (board == null && stackBlockLayers.Length > 0 && stackBlockLayers[0] != null)
             {
@@ -5159,6 +5727,149 @@ namespace StackMerge
             board.pivot = new Vector2(0.5f, 1f);
             board.offsetMin = new Vector2(0f, -top - height);
             board.offsetMax = new Vector2(0f, -top);
+        }
+
+        private bool TryLayoutGameplaySections()
+        {
+            if (nextBlocksRoot == null || boardRoot == null || runInfoPanel == null || footerRoot == null || gameState == null)
+            {
+                return false;
+            }
+
+            RectTransform parent = boardRoot.parent as RectTransform;
+            if (parent == null || runInfoPanel.parent != parent || footerRoot.parent != parent)
+            {
+                return false;
+            }
+
+            RectTransform nextSection = GetDirectChildUnder(parent, nextBlocksRoot);
+            if (nextSection == null || nextSection.parent != parent)
+            {
+                return false;
+            }
+
+            float parentHeight = parent.rect.height;
+            if (parentHeight <= 1f)
+            {
+                return false;
+            }
+
+            float gap = GetGameplaySectionGap(parent);
+            float footerHeight = GetSectionHeight(footerRoot, 80f);
+            float runInfoHeight = Mathf.Clamp(GetSectionHeight(runInfoPanel, 96f), 56f, 128f);
+
+            int capacity = Mathf.Max(1, gameState.StackCapacity);
+            float boardChromeHeight = CalculateBoardHeightForBlockHeight(capacity, 0f);
+            float availableForBlocks = parentHeight
+                - footerHeight
+                - runInfoHeight
+                - gap * 3f
+                - NextPanelChromeHeight
+                - boardChromeHeight;
+
+            float rawBlockHeight = availableForBlocks / (capacity + 1f);
+            float blockHeight = rawBlockHeight >= StackBlockMinHeight
+                ? Mathf.Clamp(rawBlockHeight, StackBlockMinHeight, StackBlockMaxHeight)
+                : Mathf.Clamp(rawBlockHeight, SmallestEmergencyBlockHeight, StackBlockMinHeight);
+
+            float nextHeight = NextPanelChromeHeight + blockHeight;
+            float boardHeight = CalculateBoardHeightForBlockHeight(capacity, blockHeight);
+
+            LayoutGroup parentLayout = parent.GetComponent<LayoutGroup>();
+            if (parentLayout != null)
+            {
+                parentLayout.enabled = false;
+            }
+
+            SetGameplaySectionTop(nextSection, 0f, nextHeight);
+            SetGameplaySectionTop(boardRoot, nextHeight + gap, boardHeight);
+            SetGameplaySectionBottom(footerRoot, 0f, footerHeight);
+
+            float boardBottomFromTop = nextHeight + gap + boardHeight;
+            float footerTopFromTop = parentHeight - footerHeight;
+            float freeGap = Mathf.Max(0f, footerTopFromTop - boardBottomFromTop);
+            float fittedRunInfoHeight = Mathf.Min(runInfoHeight, Mathf.Max(0f, freeGap - gap * 2f));
+            if (fittedRunInfoHeight < 40f && freeGap > 40f)
+            {
+                fittedRunInfoHeight = Mathf.Min(runInfoHeight, freeGap);
+            }
+
+            float runInfoTop = boardBottomFromTop + Mathf.Max(0f, (freeGap - fittedRunInfoHeight) * 0.5f);
+            SetGameplaySectionTop(runInfoPanel, runInfoTop, fittedRunInfoHeight);
+            return true;
+        }
+
+        private static RectTransform GetDirectChildUnder(RectTransform ancestor, RectTransform descendant)
+        {
+            if (ancestor == null || descendant == null)
+            {
+                return null;
+            }
+
+            Transform current = descendant;
+            while (current != null && current.parent != ancestor)
+            {
+                current = current.parent;
+            }
+
+            return current != null && current.parent == ancestor ? current as RectTransform : null;
+        }
+
+        private static float GetGameplaySectionGap(RectTransform parent)
+        {
+            float preferred = 20f;
+            if (parent != null && parent.TryGetComponent(out VerticalLayoutGroup layout))
+            {
+                preferred = layout.spacing;
+            }
+
+            float responsiveMax = parent != null && parent.rect.height < 780f ? 14f : 28f;
+            return Mathf.Clamp(preferred, 10f, responsiveMax);
+        }
+
+        private static float GetSectionHeight(RectTransform rectTransform, float fallback)
+        {
+            if (rectTransform == null)
+            {
+                return fallback;
+            }
+
+            float height = Mathf.Max(rectTransform.rect.height, Mathf.Abs(rectTransform.sizeDelta.y));
+            float preferred = LayoutUtility.GetPreferredHeight(rectTransform);
+            if (preferred > 1f)
+            {
+                height = Mathf.Max(height, preferred);
+            }
+
+            return height > 1f ? height : fallback;
+        }
+
+        private static void SetGameplaySectionTop(RectTransform rectTransform, float top, float height)
+        {
+            if (rectTransform == null)
+            {
+                return;
+            }
+
+            rectTransform.anchorMin = new Vector2(0f, 1f);
+            rectTransform.anchorMax = new Vector2(1f, 1f);
+            rectTransform.pivot = new Vector2(0.5f, 1f);
+            rectTransform.offsetMin = new Vector2(0f, -top - height);
+            rectTransform.offsetMax = new Vector2(0f, -top);
+        }
+
+        private static void SetGameplaySectionBottom(RectTransform rectTransform, float bottom, float height)
+        {
+            if (rectTransform == null)
+            {
+                return;
+            }
+
+            rectTransform.anchorMin = new Vector2(0f, 0f);
+            rectTransform.anchorMax = new Vector2(1f, 0f);
+            rectTransform.pivot = new Vector2(0.5f, 0f);
+            rectTransform.offsetMin = new Vector2(0f, bottom);
+            rectTransform.offsetMax = new Vector2(0f, bottom + height);
         }
 
         // Centers runInfoPanel in the vertical gap between the Board's bottom edge and the
@@ -5209,17 +5920,25 @@ namespace StackMerge
             }
 
             bool trainingActive = progression != null && progression.IsMachineLearningTrainingActive;
-            gameOverOverlay.SetActive(gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen && !trainingActive);
-            if (!gameState.IsGameOver)
+            bool showOverlay = gameState != null
+                && gameState.IsGameOver
+                && gameOverOverlayTimer <= 0f
+                && selectedTabIndex == 0
+                && !historyOpen
+                && !achievementsOpen
+                && !trainingActive;
+            gameOverOverlay.SetActive(showOverlay);
+            if (gameState == null || !gameState.IsGameOver)
             {
                 return;
             }
 
-            SetText(gameOverScoreText, $"Score {FormatNumber(gameState.Score)}");
+            SetText(gameOverScoreText, $"Score: {FormatNumber(gameState.Score)}");
             SetText(gameOverBestText,
-                $"Moves {FormatNumber(gameState.BlocksDropped)}   Merges {FormatNumber(gameState.TotalMerges)}\n" +
-                $"Highest block {FormatNumber(gameState.HighestMergedBlock)}\n" +
-                $"+{FormatNumber(currentRunChipsEarned)} chips earned");
+                $"Moves: {FormatNumber(gameState.BlocksDropped)}\n" +
+                $"Merges: {FormatNumber(gameState.TotalMerges)}\n" +
+                $"Highest block: {FormatNumber(gameState.HighestMergedBlock)}\n" +
+                $"+{FormatNumber(currentRunChipsEarned)} <sprite name=\"chips\"> earned");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");
@@ -5247,7 +5966,7 @@ namespace StackMerge
             if (image != null)
             {
                 image.color = color;
-                if (useGeneratedBlockSprites)
+                if (useGeneratedBlockSprites && image.sprite == null)
                 {
                     image.sprite = GetRoundedSprite(color, HexColor("#000000", 0.18f), 18);
                     image.type = Image.Type.Sliced;
@@ -5257,13 +5976,35 @@ namespace StackMerge
             TMP_Text text = block.GetComponentInChildren<TMP_Text>(true);
             if (text != null)
             {
-                text.text = value == StackMergeGameState.JokerBlockValue ? "J" : FormatNumber(value);
+                text.text = value == StackMergeGameState.JokerBlockValue ? "Joker" : FormatNumber(value);
                 text.fontSize = fontSize;
                 text.color = GetReadableTextColor(color);
                 text.enableAutoSizing = true;
                 text.fontSizeMin = 12;
                 text.fontSizeMax = Mathf.Max(14, fontSize);
             }
+        }
+
+        private void SetCurrentNextOutline(RectTransform block, bool current)
+        {
+            if (block == null)
+            {
+                return;
+            }
+
+            Transform outlineTransform = FindNamedDescendant(block, "Outline");
+            if (outlineTransform == null)
+            {
+                return;
+            }
+
+            Image outlineImage = outlineTransform.GetComponent<Image>();
+            if (outlineImage != null)
+            {
+                outlineImage.raycastTarget = false;
+            }
+
+            SetActive(outlineTransform.gameObject, current);
         }
 
         private static RectTransform CreateFallbackBlock(Transform parent)
@@ -5414,6 +6155,75 @@ namespace StackMerge
             SetText(text, value);
         }
 
+        private void RefreshButtonVisualStates()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            foreach (Button button in canvas.GetComponentsInChildren<Button>(true))
+            {
+                ApplyButtonVisualState(button);
+            }
+        }
+
+        private void ApplyButtonVisualState(Button button)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.transition = Selectable.Transition.None;
+            Image image = GetButtonVisualImage(button);
+            if (image == null)
+            {
+                return;
+            }
+
+            if (!buttonNormalColors.TryGetValue(button, out Color normalColor))
+            {
+                normalColor = image.color;
+                buttonNormalColors[button] = normalColor;
+            }
+
+            bool subdued = !button.interactable || HasSubduedButtonLabel(button);
+            image.color = !subdued
+                ? normalColor
+                : DarkenButtonColor(normalColor);
+        }
+
+        private static Image GetButtonVisualImage(Button button)
+        {
+            if (button == null)
+            {
+                return null;
+            }
+
+            if (button.targetGraphic is Image targetImage)
+            {
+                return targetImage;
+            }
+
+            return button.image != null ? button.image : button.GetComponent<Image>();
+        }
+
+        private Color DarkenButtonColor(Color color)
+        {
+            Color.RGBToHSV(color, out float h, out float s, out float v);
+            Color darkened = Color.HSVToRGB(h, s, Mathf.Max(0f, v - disabledButtonValueDrop));
+            darkened.a = color.a;
+            return darkened;
+        }
+
+        private static bool HasSubduedButtonLabel(Button button)
+        {
+            TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
+            return text != null
+                && text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         // Redesigned Upgrades menu: every upgrade button carries its own NameText + Cost/InfoText
         // children via a StackMergeButtonLabelPair component. Looked up per-call (not cached) since
         // this only runs during UI refreshes, never per-frame. Falls back to the button's own combined
@@ -5511,11 +6321,13 @@ namespace StackMerge
 
         private static float CalculateBoardHeight(int stackCapacity)
         {
-            const float blockHeight = 74f;
-            const float spacing = 7f;
-            const float internalPadding = 44f;
+            return CalculateBoardHeightForBlockHeight(stackCapacity, StackBlockMinHeight);
+        }
+
+        private static float CalculateBoardHeightForBlockHeight(int stackCapacity, float blockHeight)
+        {
             int capacity = Mathf.Max(1, stackCapacity);
-            return internalPadding + capacity * blockHeight + Mathf.Max(0, capacity - 1) * spacing;
+            return StackInternalPadding + capacity * blockHeight + Mathf.Max(0, capacity - 1) * StackBlockSpacing;
         }
 
         private static Color HexColor(string hex, float alpha = 1f)

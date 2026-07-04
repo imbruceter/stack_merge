@@ -16,6 +16,7 @@ namespace StackMerge
         public int[] solverLookaheadTuning;
         public int[] solverTuningValues;
         public int[] solverLifetimeRuns;
+        public bool solverDeselected;
         public bool solverTuningUnlocked;
         public long tokens;
         public int speedLevel;
@@ -43,6 +44,18 @@ namespace StackMerge
         public int totalBlocksDropped;
         public int totalMerges;
         public int highestBlockEver;
+        public long lifetimeChipsEarned;
+        public long lifetimeChipsSpent;
+        public int lifetimeRunsCompleted;
+        public int lifetimeManualRunsCompleted;
+        public int lifetimeMoves;
+        public int lifetimeMerges;
+        public int lifetimeHighestBlockEver;
+        public bool lifetimeAgentsUnlocked;
+        public bool lifetimeModifiersUnlocked;
+        public int[] agentLifetimeRuns;
+        public int lifetimeUnstableSaves;
+        public int lifetimeJokerMerges;
         public long bestRunScore;
         public int mergeTokenProgress;
         public bool machineLearningTrainingMode;
@@ -119,12 +132,21 @@ namespace StackMerge
 
     public enum AchievementMetric
     {
-        TotalChipsEarned,
-        TotalChipsSpent,
-        RunsCompleted,
-        ManualRunsCompleted,
-        TotalMerges,
-        HighestBlockEver
+        LifetimeChipsEarned,
+        LifetimeChipsSpent,
+        LifetimeManualRunsCompleted,
+        MaxSolverLifetimeRuns,
+        LifetimeMoves,
+        LifetimeMerges,
+        LifetimeHighestBlockEver,
+        AgentsUnlockedEver,
+        ModifiersUnlockedEver,
+        SolversUsed,
+        AgentsUsed,
+        LifetimeUnstableSaves,
+        LifetimeJokerMerges,
+        PrestigeCount,
+        MaxedResearchCount
     }
 
     public enum ModifierId
@@ -293,24 +315,32 @@ namespace StackMerge
 
         public static readonly AchievementDefinition[] Achievements =
         {
-            new(0, "Chip Spark", "Earn 100 total chips.", AchievementMetric.TotalChipsEarned, 100),
-            new(1, "Chip Engine", "Earn 1,000 total chips.", AchievementMetric.TotalChipsEarned, 1000),
-            new(2, "Chip Grid", "Earn 10,000 total chips.", AchievementMetric.TotalChipsEarned, 10000),
-            new(3, "First Investment", "Spend 100 chips on upgrades, agents, or algorithms.", AchievementMetric.TotalChipsSpent, 100),
-            new(4, "Lab Budget", "Spend 1,000 chips.", AchievementMetric.TotalChipsSpent, 1000),
-            new(5, "Capital Flow", "Spend 10,000 chips.", AchievementMetric.TotalChipsSpent, 10000),
-            new(6, "Run Loop", "Complete 5 runs.", AchievementMetric.RunsCompleted, 5),
-            new(7, "Run Habit", "Complete 25 runs.", AchievementMetric.RunsCompleted, 25),
-            new(8, "Run Factory", "Complete 100 runs.", AchievementMetric.RunsCompleted, 100),
-            new(9, "Hands On", "Complete 1 run without any auto-solver moves.", AchievementMetric.ManualRunsCompleted, 1),
-            new(10, "Manual Tuning", "Complete 10 manual runs.", AchievementMetric.ManualRunsCompleted, 10),
-            new(11, "Human Benchmark", "Complete 25 manual runs.", AchievementMetric.ManualRunsCompleted, 25),
-            new(12, "Merge Warmup", "Create 50 total merges.", AchievementMetric.TotalMerges, 50),
-            new(13, "Merge Engine", "Create 250 total merges.", AchievementMetric.TotalMerges, 250),
-            new(14, "Merge Reactor", "Create 1,000 total merges.", AchievementMetric.TotalMerges, 1000),
-            new(15, "First Tower", "Reach block 64.", AchievementMetric.HighestBlockEver, 64),
-            new(16, "Signal Peak", "Reach block 256.", AchievementMetric.HighestBlockEver, 256),
-            new(17, "Stack Singularity", "Reach block 1,024.", AchievementMetric.HighestBlockEver, 1024)
+            new(0, "Chip Bank", "Earn 10000 chips in total", AchievementMetric.LifetimeChipsEarned, 10_000),
+            new(1, "Chip Million", "Earn 1 M chips in total", AchievementMetric.LifetimeChipsEarned, 1_000_000),
+            new(2, "Chip Billion", "Earn 1 B chips in total", AchievementMetric.LifetimeChipsEarned, 1_000_000_000),
+            new(3, "First Budget", "Spend 10000 chips in total", AchievementMetric.LifetimeChipsSpent, 10_000),
+            new(4, "Serious Budget", "Spend 100 K chips in total", AchievementMetric.LifetimeChipsSpent, 100_000),
+            new(5, "Mega Budget", "Spend 100 M chips in total", AchievementMetric.LifetimeChipsSpent, 100_000_000),
+            new(6, "Manual Finish", "Complete 10 runs while Auto Solver is turned off", AchievementMetric.LifetimeManualRunsCompleted, 10),
+            new(7, "Solver Loyalty", "Complete 1000 runs with a solver", AchievementMetric.MaxSolverLifetimeRuns, 1000),
+            new(8, "Move Habit", "Move a total of 10000 times", AchievementMetric.LifetimeMoves, 10_000),
+            new(9, "Move Engine", "Move a total of 100 K times", AchievementMetric.LifetimeMoves, 100_000),
+            new(10, "Move Singularity", "Move a total of 1 M times", AchievementMetric.LifetimeMoves, 1_000_000),
+            new(11, "Merge Habit", "Merge a total of 10000 times", AchievementMetric.LifetimeMerges, 10_000),
+            new(12, "Merge Engine", "Merge a total of 100 K times", AchievementMetric.LifetimeMerges, 100_000),
+            new(13, "Merge Singularity", "Merge a total of 1 M times", AchievementMetric.LifetimeMerges, 1_000_000),
+            new(14, "High 1024", "Reach high 1024", AchievementMetric.LifetimeHighestBlockEver, 1024),
+            new(15, "High 8192", "Reach high 8192", AchievementMetric.LifetimeHighestBlockEver, 8192),
+            new(16, "High 32768", "Reach high 32768", AchievementMetric.LifetimeHighestBlockEver, 32768),
+            new(17, "Agents Online", "Unlock Agents", AchievementMetric.AgentsUnlockedEver, 1),
+            new(18, "Modifiers Online", "Unlock Modifiers", AchievementMetric.ModifiersUnlockedEver, 1),
+            new(19, "Solver Tour", "Use all solvers at least once", AchievementMetric.SolversUsed, StackMergeSolverCatalog.Definitions.Length),
+            new(20, "Agent Tour", "Use all Agents at least once", AchievementMetric.AgentsUsed, Agents.Length),
+            new(21, "Unstable Lifeline", "Let Unstable Stack save your run a total of 100 times", AchievementMetric.LifetimeUnstableSaves, 100),
+            new(22, "Joker Merges", "Merge with a Joker for a total of 100 times", AchievementMetric.LifetimeJokerMerges, 100),
+            new(23, "First Prestige", "Prestige reset for the first time", AchievementMetric.PrestigeCount, 1),
+            new(24, "Prestige Loop", "Prestige reset for a total of 5 times", AchievementMetric.PrestigeCount, 5),
+            new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 13)
         };
 
         public static readonly ResearchDefinition[] Research =
@@ -347,6 +377,8 @@ namespace StackMerge
         public long Tokens => data.tokens;
 
         public SolverId SelectedSolver => (SolverId)data.selectedSolver;
+
+        public bool SolverDeselected => data.solverDeselected;
 
         public int SpeedLevel => data.speedLevel;
 
@@ -513,6 +545,24 @@ namespace StackMerge
         public int TotalMerges => data.totalMerges;
 
         public int HighestBlockEver => data.highestBlockEver;
+
+        public long LifetimeChipsEarned => data.lifetimeChipsEarned;
+
+        public long LifetimeChipsSpent => data.lifetimeChipsSpent;
+
+        public int LifetimeRunsCompleted => data.lifetimeRunsCompleted;
+
+        public int LifetimeManualRunsCompleted => data.lifetimeManualRunsCompleted;
+
+        public int LifetimeMoves => data.lifetimeMoves;
+
+        public int LifetimeMerges => data.lifetimeMerges;
+
+        public int LifetimeHighestBlockEver => data.lifetimeHighestBlockEver;
+
+        public int LifetimeUnstableSaves => data.lifetimeUnstableSaves;
+
+        public int LifetimeJokerMerges => data.lifetimeJokerMerges;
 
         public long BestRunScore => data.bestRunScore;
 
@@ -977,6 +1027,7 @@ namespace StackMerge
             if (IsSolverUnlocked(solverId))
             {
                 data.selectedSolver = index;
+                data.solverDeselected = false;
                 return true;
             }
 
@@ -994,7 +1045,13 @@ namespace StackMerge
             data.solverUnlocked[index] = true;
             data.highestUnlockedSolver = Math.Max(data.highestUnlockedSolver, index);
             data.selectedSolver = index;
+            data.solverDeselected = false;
             return true;
+        }
+
+        public void SetSolverDeselected(bool deselected)
+        {
+            data.solverDeselected = deselected && IsSolverUnlocked(SelectedSolver);
         }
 
         public long GetSpeedUpgradeCost()
@@ -1290,6 +1347,7 @@ namespace StackMerge
             }
 
             data.agentsMenuUnlocked = true;
+            data.lifetimeAgentsUnlocked = true;
             return true;
         }
 
@@ -1300,6 +1358,11 @@ namespace StackMerge
 
         public bool BuyExtraAgentSlotUpgrade()
         {
+            if (!data.agentsMenuUnlocked)
+            {
+                return false;
+            }
+
             if (data.extraAgentSlotUnlocked)
             {
                 return true;
@@ -1342,6 +1405,7 @@ namespace StackMerge
             }
 
             data.modifiersMenuUnlocked = true;
+            data.lifetimeModifiersUnlocked = true;
             return true;
         }
 
@@ -1542,6 +1606,7 @@ namespace StackMerge
                 gained = ApplyIncomeMultiplier(gained);
                 data.chips += gained;
                 data.totalChipsEarned += gained;
+                data.lifetimeChipsEarned += gained;
             }
             else if (suppressChips)
             {
@@ -1551,10 +1616,19 @@ namespace StackMerge
             if (result.ActionKind == SolverActionKind.Place)
             {
                 data.totalBlocksDropped++;
+                data.lifetimeMoves++;
             }
 
             data.totalMerges += Math.Max(0, result.MergeCount);
+            data.lifetimeMerges += Math.Max(0, result.MergeCount);
             data.highestBlockEver = Math.Max(data.highestBlockEver, result.HighestBlock);
+            data.lifetimeHighestBlockEver = Math.Max(data.lifetimeHighestBlockEver, result.HighestBlock);
+            if (result.UnstableSaveUsed)
+            {
+                data.lifetimeUnstableSaves++;
+            }
+
+            data.lifetimeJokerMerges += Math.Max(0, result.JokerMergeCount);
             if (!suppressChips)
             {
                 AwardMergeTokens(result.MergeCount);
@@ -1581,13 +1655,16 @@ namespace StackMerge
         public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun, float elapsedSeconds, bool suppressChips = false)
         {
             data.runsCompleted++;
+            data.lifetimeRunsCompleted++;
             if (manualRun)
             {
                 data.manualRunsCompleted++;
+                data.lifetimeManualRunsCompleted++;
             }
 
             data.bestRunScore = Math.Max(data.bestRunScore, Math.Max(0, runScore));
             data.highestBlockEver = Math.Max(data.highestBlockEver, highestMergedBlock);
+            data.lifetimeHighestBlockEver = Math.Max(data.lifetimeHighestBlockEver, highestMergedBlock);
             double highestMultiplier = GetHighestBlockRewardMultiplier(highestMergedBlock);
             double scoreBonus = Math.Max(1, runScore) * 0.22 * highestMultiplier * AgentScoreMultiplier;
             double moveBonus = IsAgentActive(AgentId.MoveDividend)
@@ -1604,6 +1681,7 @@ namespace StackMerge
                 bonus = ApplyIncomeMultiplier(bonus);
                 data.chips += bonus;
                 data.totalChipsEarned += bonus;
+                data.lifetimeChipsEarned += bonus;
             }
             else
             {
@@ -1612,9 +1690,18 @@ namespace StackMerge
 
             EnsureSolverLifetimeRuns();
             int solverIndex = (int)solverId;
-            if (solverIndex >= 0 && solverIndex < data.solverLifetimeRuns.Length)
+            if (!manualRun && solverIndex >= 0 && solverIndex < data.solverLifetimeRuns.Length)
             {
                 data.solverLifetimeRuns[solverIndex]++;
+            }
+
+            EnsureAgentLifetimeRuns();
+            foreach (int agentId in data.activeAgentIds.Distinct())
+            {
+                if (agentId >= 0 && agentId < data.agentLifetimeRuns.Length)
+                {
+                    data.agentLifetimeRuns[agentId]++;
+                }
             }
 
             RecordRunHistory(runScore, solverId, moves, merges, highestMergedBlock);
@@ -1644,6 +1731,22 @@ namespace StackMerge
             }
 
             data.solverLifetimeRuns = resized;
+        }
+
+        private void EnsureAgentLifetimeRuns()
+        {
+            if (data.agentLifetimeRuns != null && data.agentLifetimeRuns.Length >= Agents.Length)
+            {
+                return;
+            }
+
+            int[] resized = new int[Agents.Length];
+            if (data.agentLifetimeRuns != null)
+            {
+                Array.Copy(data.agentLifetimeRuns, resized, Math.Min(data.agentLifetimeRuns.Length, resized.Length));
+            }
+
+            data.agentLifetimeRuns = resized;
         }
 
         public float AwardMachineLearningRun(long runScore, int moves, int merges, int highestMergedBlock, bool trainingMode)
@@ -1737,14 +1840,46 @@ namespace StackMerge
         {
             return achievement.Metric switch
             {
-                AchievementMetric.TotalChipsEarned => TotalChipsEarned,
-                AchievementMetric.TotalChipsSpent => TotalChipsSpent,
-                AchievementMetric.RunsCompleted => RunsCompleted,
-                AchievementMetric.ManualRunsCompleted => ManualRunsCompleted,
-                AchievementMetric.TotalMerges => TotalMerges,
-                AchievementMetric.HighestBlockEver => HighestBlockEver,
+                AchievementMetric.LifetimeChipsEarned => LifetimeChipsEarned,
+                AchievementMetric.LifetimeChipsSpent => LifetimeChipsSpent,
+                AchievementMetric.LifetimeManualRunsCompleted => LifetimeManualRunsCompleted,
+                AchievementMetric.MaxSolverLifetimeRuns => GetMaxSolverLifetimeRuns(),
+                AchievementMetric.LifetimeMoves => LifetimeMoves,
+                AchievementMetric.LifetimeMerges => LifetimeMerges,
+                AchievementMetric.LifetimeHighestBlockEver => LifetimeHighestBlockEver,
+                AchievementMetric.AgentsUnlockedEver => data.lifetimeAgentsUnlocked ? 1 : 0,
+                AchievementMetric.ModifiersUnlockedEver => data.lifetimeModifiersUnlocked ? 1 : 0,
+                AchievementMetric.SolversUsed => GetUsedSolverCount(),
+                AchievementMetric.AgentsUsed => GetUsedAgentCount(),
+                AchievementMetric.LifetimeUnstableSaves => LifetimeUnstableSaves,
+                AchievementMetric.LifetimeJokerMerges => LifetimeJokerMerges,
+                AchievementMetric.PrestigeCount => PrestigeCount,
+                AchievementMetric.MaxedResearchCount => GetMaxedResearchCount(),
                 _ => 0
             };
+        }
+
+        private long GetMaxSolverLifetimeRuns()
+        {
+            EnsureSolverLifetimeRuns();
+            return data.solverLifetimeRuns.Length == 0 ? 0 : data.solverLifetimeRuns.Max();
+        }
+
+        private long GetUsedSolverCount()
+        {
+            EnsureSolverLifetimeRuns();
+            return data.solverLifetimeRuns.Take(StackMergeSolverCatalog.Definitions.Length).Count(runs => runs > 0);
+        }
+
+        private long GetUsedAgentCount()
+        {
+            EnsureAgentLifetimeRuns();
+            return data.agentLifetimeRuns.Take(Agents.Length).Count(runs => runs > 0);
+        }
+
+        private long GetMaxedResearchCount()
+        {
+            return Research.Count(research => IsResearchMaxed(research.Id));
         }
 
         public bool IsAchievementComplete(AchievementDefinition achievement)
@@ -2149,7 +2284,7 @@ namespace StackMerge
             data.solverSafetyTuning = new int[solverCount];
             data.solverLookaheadTuning = new int[solverCount];
             data.solverTuningValues = new int[solverCount * SolverTuningSettings.MaxSlots];
-            data.solverLifetimeRuns = new int[solverCount];
+            data.solverDeselected = false;
             data.solverTuningUnlocked = false;
             data.tokens = 0;
             data.speedLevel = 0;
@@ -2318,6 +2453,7 @@ namespace StackMerge
             {
                 data.chips += offlineChips;
                 data.totalChipsEarned += offlineChips;
+                data.lifetimeChipsEarned += offlineChips;
                 data.lastOfflineChips = offlineChips;
             }
 
@@ -2458,6 +2594,7 @@ namespace StackMerge
 
             data.chips -= cost;
             data.totalChipsSpent += cost;
+            data.lifetimeChipsSpent += cost;
             return true;
         }
 
@@ -2486,12 +2623,14 @@ namespace StackMerge
             data.solverLookaheadTuning = NormalizeSolverTuningArray(data.solverLookaheadTuning, solverCount);
             data.solverTuningValues = NormalizeSolverTuningValues(data.solverTuningValues, solverCount);
             MigrateLegacySolverTunings();
+            EnsureSolverLifetimeRuns();
             data.selectedSolver = Mathf.Clamp(data.selectedSolver, 0, solverCount - 1);
             if (!data.solverUnlocked[data.selectedSolver])
             {
                 data.selectedSolver = 0;
             }
 
+            data.solverDeselected = data.solverDeselected && data.solverUnlocked[data.selectedSolver];
             data.highestUnlockedSolver = Math.Max(data.highestUnlockedSolver, data.selectedSolver);
             data.tokens = Math.Max(0, data.tokens);
             data.mergeTokenProgress = Mathf.Clamp(data.mergeTokenProgress, 0, TokenProspectorMergeTarget - 1);
@@ -2523,6 +2662,8 @@ namespace StackMerge
             {
                 data.modifiersMenuUnlocked = true;
             }
+
+            data.lifetimeModifiersUnlocked |= data.modifiersMenuUnlocked;
 
             if (data.agentUnlocked == null || data.agentUnlocked.Length != Agents.Length)
             {
@@ -2559,6 +2700,9 @@ namespace StackMerge
                 data.agentsMenuUnlocked = hadAgentProgress;
             }
 
+            data.lifetimeAgentsUnlocked |= data.agentsMenuUnlocked;
+            EnsureAgentLifetimeRuns();
+
             if (!data.extraAgentSlotUnlocked && data.activeAgentIds.Length > BaseAgentSlots && data.activeAgentIds[BaseAgentSlots] >= 0)
             {
                 data.extraAgentSlotUnlocked = true;
@@ -2594,6 +2738,15 @@ namespace StackMerge
             data.totalBlocksDropped = Math.Max(0, data.totalBlocksDropped);
             data.totalMerges = Math.Max(data.totalMerges, data.runHistory.Sum(entry => Math.Max(0, entry.merges)));
             data.highestBlockEver = Math.Max(2, data.highestBlockEver);
+            data.lifetimeChipsSpent = Math.Max(data.lifetimeChipsSpent, data.totalChipsSpent);
+            data.lifetimeChipsEarned = Math.Max(data.lifetimeChipsEarned, data.totalChipsEarned);
+            data.lifetimeRunsCompleted = Math.Max(data.lifetimeRunsCompleted, data.runsCompleted);
+            data.lifetimeManualRunsCompleted = Math.Max(data.lifetimeManualRunsCompleted, data.manualRunsCompleted);
+            data.lifetimeMoves = Math.Max(data.lifetimeMoves, data.totalBlocksDropped);
+            data.lifetimeMerges = Math.Max(data.lifetimeMerges, data.totalMerges);
+            data.lifetimeHighestBlockEver = Math.Max(2, Math.Max(data.lifetimeHighestBlockEver, data.highestBlockEver));
+            data.lifetimeUnstableSaves = Math.Max(0, data.lifetimeUnstableSaves);
+            data.lifetimeJokerMerges = Math.Max(0, data.lifetimeJokerMerges);
             data.machineLearningExperience = Math.Max(0f, data.machineLearningExperience);
             data.machineLearningRuns = Math.Max(0, data.machineLearningRuns);
             data.machineLearningBestScore = Math.Max(0, data.machineLearningBestScore);
@@ -2622,6 +2775,7 @@ namespace StackMerge
             if (data.runHistory.Length > 0)
             {
                 data.highestBlockEver = Math.Max(data.highestBlockEver, data.runHistory.Max(entry => Math.Max(0, entry.highestMergedBlock)));
+                data.lifetimeHighestBlockEver = Math.Max(data.lifetimeHighestBlockEver, data.highestBlockEver);
                 data.bestRunScore = Math.Max(data.bestRunScore, data.runHistory.Max(entry => Math.Max(0, entry.score)));
             }
         }

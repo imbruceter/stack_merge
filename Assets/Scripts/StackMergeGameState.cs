@@ -284,7 +284,8 @@ namespace StackMerge
             BlocksDropped++;
             HighestBlock = Math.Max(HighestBlock, Math.Max(1, blockValue));
 
-            int mergeCount = ResolveMerges(stack);
+            MergeResolution mergeResolution = ResolveMerges(stack);
+            int mergeCount = mergeResolution.MergeCount;
             TotalMerges += mergeCount;
             int resultingTop = stack.Count > 0 ? stack[^1] : blockValue;
             if (!usedUnstableSave && nonMergePlacement && !mirrorPlacement && previousHeight >= StackCapacity - 1 && stack.Count >= StackCapacity && unstableSavesRemaining > 0)
@@ -309,7 +310,8 @@ namespace StackMerge
                 highestBlock: HighestBlock,
                 isGameOver: IsGameOver,
                 reason: usedUnstableSave ? "Unstable stack saved the move" : string.Empty,
-                unstableSaveUsed: usedUnstableSave);
+                unstableSaveUsed: usedUnstableSave,
+                jokerMergeCount: mergeResolution.JokerMergeCount);
         }
 
         public bool CanUsePickaxe(int stackIndex, int blockIndex)
@@ -335,7 +337,8 @@ namespace StackMerge
             stack.RemoveAt(blockIndex);
             pickaxeUsesRemaining--;
 
-            int mergeCount = ResolveMerges(stack);
+            MergeResolution mergeResolution = ResolveMerges(stack);
+            int mergeCount = mergeResolution.MergeCount;
             TotalMerges += mergeCount;
             int resultingTop = stack.Count > 0 ? stack[^1] : 0;
             IsGameOver = !HasAvailableAction();
@@ -352,7 +355,8 @@ namespace StackMerge
                 reason: $"Pickaxe removed {removedValue}",
                 actionKind: SolverActionKind.Pickaxe,
                 blockIndex: blockIndex,
-                removedValue: removedValue);
+                removedValue: removedValue,
+                jokerMergeCount: mergeResolution.JokerMergeCount);
         }
 
         public bool CanSkipNextBlock()
@@ -537,9 +541,10 @@ namespace StackMerge
             return jokerBlocksEnabled && placedValue == JokerBlockValue && topValue > 0;
         }
 
-        private int ResolveMerges(List<int> stack)
+        private MergeResolution ResolveMerges(List<int> stack)
         {
             int mergeCount = 0;
+            int jokerMergeCount = 0;
 
             while (true)
             {
@@ -563,6 +568,10 @@ namespace StackMerge
                     HighestBlock = Math.Max(HighestBlock, mergedValue);
                     HighestMergedBlock = Math.Max(HighestMergedBlock, mergedValue);
                     mergeCount++;
+                    if (jokerMerge)
+                    {
+                        jokerMergeCount++;
+                    }
                     merged = true;
                 }
 
@@ -584,7 +593,20 @@ namespace StackMerge
                 }
             }
 
-            return mergeCount;
+            return new MergeResolution(mergeCount, jokerMergeCount);
+        }
+
+        private readonly struct MergeResolution
+        {
+            public MergeResolution(int mergeCount, int jokerMergeCount)
+            {
+                MergeCount = mergeCount;
+                JokerMergeCount = jokerMergeCount;
+            }
+
+            public int MergeCount { get; }
+
+            public int JokerMergeCount { get; }
         }
 
         private bool HasPickaxeTarget()
@@ -692,7 +714,8 @@ namespace StackMerge
             bool unstableSaveUsed = false,
             SolverActionKind actionKind = SolverActionKind.Place,
             int blockIndex = -1,
-            int removedValue = 0)
+            int removedValue = 0,
+            int jokerMergeCount = 0)
         {
             Accepted = accepted;
             StackIndex = stackIndex;
@@ -707,6 +730,7 @@ namespace StackMerge
             ActionKind = actionKind;
             BlockIndex = blockIndex;
             RemovedValue = removedValue;
+            JokerMergeCount = Math.Max(0, jokerMergeCount);
         }
 
         public bool Accepted { get; }
@@ -734,6 +758,8 @@ namespace StackMerge
         public int BlockIndex { get; }
 
         public int RemovedValue { get; }
+
+        public int JokerMergeCount { get; }
 
         public static MoveResult Rejected(int stackIndex, string reason)
         {

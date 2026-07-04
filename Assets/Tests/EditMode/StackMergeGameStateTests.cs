@@ -283,34 +283,66 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_TracksLifetimeStatsAndAchievements()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 1000 });
+            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 50000 });
             MoveResult bigMerge = new MoveResult(
                 accepted: true,
                 stackIndex: 0,
                 placedValue: 4,
-                resultingTopValue: 1024,
-                mergeCount: 50,
-                score: 1024,
-                highestBlock: 1024,
+                resultingTopValue: 8192,
+                mergeCount: 10000,
+                score: 8192,
+                highestBlock: 8192,
                 isGameOver: false,
                 reason: string.Empty);
 
             long chipsGained = progression.AwardMove(bigMerge);
             long runBonus = progression.AwardRunCompleted(5000, SolverId.Heur, 12, 50, 1024, manualRun: true);
+            for (int i = 0; i < 9; i++)
+            {
+                progression.AwardRunCompleted(100 + i, (SolverId)(-1), 1, 0, 0, manualRun: true);
+            }
+
             Assert.That(progression.BuySpeedUpgrade(), Is.True);
+            Assert.That(progression.BuyStackCapacityUpgrade(), Is.True);
 
             Assert.That(chipsGained, Is.GreaterThan(0));
             Assert.That(runBonus, Is.GreaterThan(0));
             Assert.That(progression.TotalChipsEarned, Is.GreaterThanOrEqualTo(chipsGained + runBonus));
-            Assert.That(progression.TotalChipsSpent, Is.EqualTo(6000));
+            Assert.That(progression.TotalChipsSpent, Is.EqualTo(18000));
             Assert.That(progression.TotalBlocksDropped, Is.EqualTo(1));
-            Assert.That(progression.TotalMerges, Is.EqualTo(50));
-            Assert.That(progression.HighestBlockEver, Is.EqualTo(1024));
+            Assert.That(progression.TotalMerges, Is.EqualTo(10000));
+            Assert.That(progression.HighestBlockEver, Is.EqualTo(8192));
             Assert.That(progression.BestRunScore, Is.EqualTo(5000));
-            Assert.That(progression.ManualRunsCompleted, Is.EqualTo(1));
+            Assert.That(progression.ManualRunsCompleted, Is.EqualTo(10));
             Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[0]), Is.True);
-            Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[9]), Is.True);
+            Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[3]), Is.True);
+            Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[6]), Is.True);
+            Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[11]), Is.True);
+            Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[14]), Is.True);
             Assert.That(progression.IsAchievementComplete(StackMergeProgression.Achievements[15]), Is.True);
+            Assert.That(progression.LifetimeChipsEarned, Is.GreaterThanOrEqualTo(progression.TotalChipsEarned));
+            Assert.That(progression.LifetimeChipsSpent, Is.EqualTo(progression.TotalChipsSpent));
+            Assert.That(progression.LifetimeManualRunsCompleted, Is.EqualTo(10));
+        }
+
+        [Test]
+        public void Progression_PersistsManualSolverChoice()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.Heur] = true;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.Heur
+            });
+
+            progression.SetSolverDeselected(true);
+
+            Assert.That(progression.SolverDeselected, Is.True);
+
+            progression.SelectOrUnlockSolver(SolverId.Heur);
+
+            Assert.That(progression.SolverDeselected, Is.False);
         }
 
         [Test]
@@ -481,6 +513,8 @@ namespace StackMerge.Tests
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
             Assert.That(progression.AgentsMenuUnlocked, Is.False);
             Assert.That(progression.BuyAgent(AgentId.MergeBroker), Is.False);
+            Assert.That(progression.BuyExtraAgentSlotUpgrade(), Is.False);
+            Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
             Assert.That(progression.BuyAgentsMenuUnlock(), Is.True);
             Assert.That(progression.AgentsMenuUnlocked, Is.True);
             Assert.That(progression.GetAgentInfo(AgentId.Quartermaster), Is.EqualTo(quartermaster.LockedHint));
@@ -635,6 +669,7 @@ namespace StackMerge.Tests
             Assert.That(progression.Chips, Is.EqualTo(0));
             Assert.That(progression.BestRunScore, Is.EqualTo(0));
             Assert.That(progression.HighestBlockEver, Is.EqualTo(2));
+            Assert.That(progression.LifetimeHighestBlockEver, Is.EqualTo(8192));
         }
 
         [Test]
@@ -809,6 +844,7 @@ namespace StackMerge.Tests
                 new int[] { });
             MoveResult jokerMerge = joker.PlaceNext(0);
             Assert.That(jokerMerge.MergeCount, Is.EqualTo(1));
+            Assert.That(jokerMerge.JokerMergeCount, Is.EqualTo(1));
             Assert.That(joker.Stacks[0], Is.EqualTo(new[] { 16 }));
         }
 
