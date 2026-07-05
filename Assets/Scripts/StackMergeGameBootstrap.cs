@@ -27,6 +27,7 @@ namespace StackMerge
         private const int StartupGameplayLayoutWarmupFrames = 90;
         private const int TabGameplayLayoutWarmupFrames = 18;
         private const int NoArmedGameplayModifier = -1;
+        private const int TrainingMatrixCellWidth = 6;
         private const string ShowFpsSettingKey = "StackMerge.Settings.ShowFps";
         private const string SuppressAchievementNotificationSettingKey = "StackMerge.Settings.SuppressAchievementNotification";
         private const string LanguageSettingKey = "StackMerge.Settings.Language";
@@ -4338,19 +4339,19 @@ namespace StackMerge
             if (trainingOverlayText != null)
             {
                 var builder = new StringBuilder();
-                builder.Append("Next  ");
-                builder.Append("<mspace=0.62em>");
+                builder.AppendLine("<align=\"center\">Next</align>");
+                builder.Append("<align=\"center\"><mspace=0.62em>");
                 for (int i = 0; i < gameState.NextBlocks.Count; i++)
                 {
-                    builder.Append(FormatMatrixCell(gameState.NextBlocks[i]).PadLeft(6));
+                    builder.Append(CenterMatrixCell(FormatMatrixCell(gameState.NextBlocks[i])));
                 }
 
-                builder.Append("</mspace>");
+                builder.Append("</mspace></align>");
                 builder.AppendLine();
                 builder.AppendLine();
-                builder.Append("<mspace=0.62em>");
+                builder.Append("<align=\"center\"><mspace=0.62em>");
                 builder.Append(BuildTrainingMatrix());
-                builder.Append("</mspace>");
+                builder.Append("</mspace></align>");
                 trainingOverlayText.text = builder.ToString();
             }
 
@@ -4365,15 +4366,28 @@ namespace StackMerge
 
         private void UpdatePpoTrainingRunInfo(string statusLine)
         {
-            if (runStatusText == null || gameState == null || progression == null)
+            if (gameState == null || progression == null)
             {
                 return;
             }
 
             StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
-            runStatusText.text = string.IsNullOrWhiteSpace(statusLine)
-                ? StackMergeLocalization.Translate($"{FormatNumber(metrics.Steps)} frames")
-                : StackMergeLocalization.Translate(statusLine);
+            string summary = string.IsNullOrWhiteSpace(statusLine)
+                ? $"{FormatNumber(metrics.Steps)} frames"
+                : statusLine;
+
+            SetText(runStatusText, summary);
+            SetText(feedbackText, BuildPpoTrainingFeedback(metrics));
+        }
+
+        private string BuildPpoTrainingFeedback(StackMergePpoMetrics metrics)
+        {
+            var builder = new StringBuilder();
+            builder.AppendLine($"Policy loss: {metrics.LastPolicyLoss:0.000}");
+            builder.AppendLine($"Value loss: {metrics.LastValueLoss:0.000}");
+            builder.AppendLine($"Entropy: {metrics.LastEntropy:0.000}");
+            builder.Append($"Updates: {FormatNumber(metrics.Updates)}");
+            return builder.ToString();
         }
 
         private string BuildTrainingMatrix()
@@ -4391,7 +4405,7 @@ namespace StackMerge
                 {
                     IReadOnlyList<int> stack = gameState.Stacks[stackIndex];
                     string cell = row < stack.Count ? FormatMatrixCell(stack[row]) : ".";
-                    builder.Append(cell.PadLeft(6));
+                    builder.Append(CenterMatrixCell(cell));
                 }
 
                 builder.AppendLine();
@@ -4403,6 +4417,24 @@ namespace StackMerge
         private static string FormatMatrixCell(int value)
         {
             return value == StackMergeGameState.JokerBlockValue ? "J" : value.ToString();
+        }
+
+        private static string CenterMatrixCell(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                value = ".";
+            }
+
+            if (value.Length >= TrainingMatrixCellWidth)
+            {
+                return value;
+            }
+
+            int padding = TrainingMatrixCellWidth - value.Length;
+            int left = padding / 2;
+            int right = padding - left;
+            return new string(' ', left) + value + new string(' ', right);
         }
 
         private void RefreshGameplayModifiers()
@@ -5158,7 +5190,7 @@ namespace StackMerge
             builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
             if (solverId == SolverId.MachineLearning)
             {
-                builder.AppendLine(progression.GetMachineLearningStatus());
+                builder.AppendLine(progression.IsMachineLearningTrainingActive ? "Mode: PPO Training" : "Mode: PPO Normal");
             }
 
             if (progression.NeuralAcceleratorActive)
@@ -6933,6 +6965,11 @@ namespace StackMerge
                 return false;
             }
 
+            bool trainingLayout = progression != null
+                && progression.IsMachineLearningTrainingActive
+                && selectedTabIndex == 0
+                && !historyOpen
+                && !achievementsOpen;
             float gap = GetGameplaySectionGap(parent);
             float footerHeight = GetSectionHeight(footerRoot, 80f);
             float runInfoHeight = Mathf.Clamp(GetSectionHeight(runInfoPanel, 96f), 56f, 128f);
@@ -6943,11 +6980,6 @@ namespace StackMerge
             float modifierHeight = modifierSectionVisible
                 ? Mathf.Clamp(GetSectionHeight(modifierSection, 58f), 44f, 76f)
                 : 0f;
-            bool trainingLayout = progression != null
-                && progression.IsMachineLearningTrainingActive
-                && selectedTabIndex == 0
-                && !historyOpen
-                && !achievementsOpen;
 
             if (trainingLayout)
             {
@@ -7639,7 +7671,7 @@ namespace StackMerge
             TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
             return text != null
                 && (text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0
-                    || text.text.IndexOf("Kiválasztás törlése", StringComparison.OrdinalIgnoreCase) >= 0);
+                    || text.text.IndexOf("Mellőz", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         // Redesigned Upgrades menu: every upgrade button carries its own NameText + Cost/InfoText
