@@ -59,6 +59,11 @@ namespace StackMerge
             ["Normal mode is still locked."] = "A normál mód még zárolva van.",
             ["PPO: Training mode"] = "PPO: tréning mód",
             ["PPO: Normal mode"] = "PPO: normál mód",
+            ["Training Mode"] = "Tréning mód",
+            ["Normal Mode"] = "Normál mód",
+            ["Normal Mode\nLocked"] = "Normál mód\nZárolva",
+            ["PPO Mode Overlay is not assigned."] = "A PPO Mode Overlay nincs bekötve.",
+            ["Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."] = "Tréning: tovább tanul, de nem szerez chipet.\nNormál: chipekért játszik, mint a többi solver.",
             ["Show FPS"] = "FPS mutatása",
             ["Hide FPS"] = "FPS elrejtése",
             ["Achievement pop-up"] = "Achievement értesítés",
@@ -460,6 +465,8 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Prestige for ", "Prestige jutalom: ");
             translated = ReplacePrefix(translated, "Finish PPO Training first.", "Előbb fejezd be a PPO tréninget.");
             translated = ReplacePrefix(translated, "PPO Normal mode at ", "PPO Normal mód ekkor: ");
+            translated = ReplacePrefix(translated, "Normal mode unlocks after ", "A Normál mód ekkor oldódik fel: ");
+            translated = ReplacePrefix(translated, "Evaluating ", "Kiértékelés ");
             translated = ReplacePrefix(translated, "Warm start:", "Warm start:");
             translated = ReplacePrefix(translated, "New-high learning x", "Új high tanulás x");
             translated = ReplacePrefix(translated, "Survival shaping x", "Túlélési shaping x");
@@ -479,7 +486,9 @@ namespace StackMerge
             translated = translated.Replace(" no", " nem");
             translated = translated.Replace(" (Default)", " (Alap)");
             translated = translated.Replace(" insights. You can keep playing PPO in Playing Mode to increase <sprite name=\"insight\">.", " Insight. Tovább játszhatsz PPO Playing módban, hogy növeld az <sprite name=\"insight\">-ot.");
+            translated = translated.Replace(" trained frames.", " betanított frame.");
             translated = translated.Replace(" frames.", " frame.");
+            translated = translated.Replace(" frames", " frame");
             translated = translated.Replace(" PPO runs retained", " PPO run megőrizve");
             translated = translated.Replace("ON", "BE");
             translated = translated.Replace("OFF", "KI");

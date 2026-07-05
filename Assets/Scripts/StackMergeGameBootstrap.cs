@@ -43,6 +43,8 @@ namespace StackMerge
         [SerializeField] private TMP_Text droppedText;
         [SerializeField] private TMP_Text feedbackText;
         [SerializeField] private RectTransform nextBlocksRoot;
+        [Tooltip("Root of the full Next Blocks Panel. Drag the panel itself here, not only its Content child.")]
+        [SerializeField] private RectTransform nextBlocksPanelRoot;
         [SerializeField] private RectTransform boardRoot;
         [SerializeField] private Button[] stackButtons = Array.Empty<Button>();
         [SerializeField] private RectTransform[] stackBlockLayers = Array.Empty<RectTransform>();
@@ -108,6 +110,17 @@ namespace StackMerge
         [SerializeField] private TMP_Text runStatusText;
         [SerializeField] private TMP_Text agentSlotsText;
         [SerializeField] private Button autoSolveButton;
+        [Header("PPO Scene UI")]
+        [Tooltip("Scene-built PPO mode overlay root. Expected hierarchy: PPO Mode Overlay (Image, Button) > PPO Mode Modal > InfoText + Buttons.")]
+        [SerializeField] private GameObject ppoModeOverlay;
+        [SerializeField] private TMP_Text ppoModeHintText;
+        [SerializeField] private Button ppoTrainingButton;
+        [SerializeField] private Button ppoNormalButton;
+        [Tooltip("Scene-built PPO training overlay. It is positioned over only the Gameplay Next + Board area.")]
+        [SerializeField] private RectTransform trainingOverlay;
+        [SerializeField] private TMP_Text trainingOverlayText;
+        [SerializeField, Min(80f)] private float ppoTrainingOverlayMinHeight = 150f;
+        [SerializeField, Min(0f)] private float ppoTrainingOverlayVerticalPadding = 36f;
         [SerializeField] private Button[] solverButtons = Array.Empty<Button>();
         [Tooltip("Static per-solver \"AlgorithmItem\" cards already placed in the Algorithms menu (one per solver, not instantiated at runtime). Each drives its own Buy/Select/Deselect and Tune button.")]
         [SerializeField] private StackMergeAlgorithmCard[] algorithmCards = Array.Empty<StackMergeAlgorithmCard>();
@@ -259,12 +272,6 @@ namespace StackMerge
         private const float SaveFlushInterval = 4f;
         private float trainingEvalTimer;
         private const float TrainingEvalDuration = 2.5f;
-        private RectTransform trainingOverlay;
-        private TMP_Text trainingOverlayText;
-        private RectTransform ppoModeModal;
-        private Button ppoTrainingButton;
-        private Button ppoNormalButton;
-        private TMP_Text ppoModeHintText;
         // Captured once from the panel's own designed height, then reused every reposition so the
         // panel doesn't grow/shrink as it gets moved around.
         private float runInfoDesignHeight = -1f;
@@ -366,6 +373,9 @@ namespace StackMerge
             SyncSettingsControls();
             ApplyPlayerSettings();
             HideTemplate();
+            EnsurePpoSceneUiReferences();
+            HidePpoModeModal();
+            SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
             EnsureAchievementNotificationReferences();
             WireAchievementNotificationButton();
             PrepareGlobalUiLayering();
@@ -587,7 +597,7 @@ namespace StackMerge
             RebuildLayout(GetGameplaySectionsRoot());
             RebuildLayout(canvas != null ? canvas.transform as RectTransform : null);
             RebuildLayout(boardRoot != null ? boardRoot.parent as RectTransform : null);
-            RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
+            RebuildLayout(GetNextBlocksPanel());
             RebuildLayout(nextBlocksRoot);
 
             boardLayoutDirty = true;
@@ -596,7 +606,7 @@ namespace StackMerge
             Canvas.ForceUpdateCanvases();
             RefreshNextBlocks();
             RebuildLayout(nextBlocksRoot);
-            RebuildLayout(nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null);
+            RebuildLayout(GetNextBlocksPanel());
             RebuildLayout(GetGameplaySectionsRoot());
             Canvas.ForceUpdateCanvases();
         }
@@ -1079,6 +1089,11 @@ namespace StackMerge
             droppedText = dropped;
             feedbackText = feedback;
             nextBlocksRoot = nextRoot;
+            if (nextBlocksPanelRoot == null && nextRoot != null)
+            {
+                nextBlocksPanelRoot = nextRoot.parent as RectTransform;
+            }
+
             boardRoot = board;
             stackButtons = columns;
             stackBlockLayers = blockLayers;
@@ -2818,7 +2833,7 @@ namespace StackMerge
                 {
                     trainingEvalTimer += Time.deltaTime;
                     float percent = Mathf.Clamp01(trainingEvalTimer / TrainingEvalDuration) * 100f;
-                    string status = $"Result evaluation {percent:0}%";
+                    string status = $"Evaluating {percent:0}%";
                     SetText(runStatusText, status);
                     if (selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
                     {
@@ -3442,23 +3457,29 @@ namespace StackMerge
 
         private void HidePpoModeModal()
         {
-            if (ppoModeModal != null)
+            if (ppoModeOverlay != null)
             {
-                SetActive(ppoModeModal.gameObject, false);
+                SetActive(ppoModeOverlay, false);
             }
         }
 
         private void ShowPpoModeModal()
         {
-            EnsurePpoModeModal();
+            EnsurePpoSceneUiReferences();
+            if (ppoModeOverlay == null)
+            {
+                SetText(feedbackText, "PPO Mode Overlay is not assigned.");
+                return;
+            }
+
             bool playingUnlocked = progression.MachineLearningPlayingModeUnlocked;
             long frames = progression.MachineLearningFrames;
 
+            SetButtonText(ppoTrainingButton, "Training Mode");
             if (ppoNormalButton != null)
             {
                 ppoNormalButton.interactable = playingUnlocked;
-                SetButtonText(ppoNormalButton, playingUnlocked ? "Normal Mode" : "Normal Mode\n(Locked)");
-                SetButtonColor(ppoNormalButton, playingUnlocked ? HexColor("#2563EB") : HexColor("#334155"));
+                SetButtonText(ppoNormalButton, playingUnlocked ? "Normal Mode" : "Normal Mode\nLocked");
             }
 
             if (ppoModeHintText != null)
@@ -3468,50 +3489,80 @@ namespace StackMerge
                     : $"Normal mode unlocks after {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)}");
             }
 
-            SetActive(ppoModeModal.gameObject, true);
+            SetActive(ppoModeOverlay, true);
+            ppoModeOverlay.transform.SetAsLastSibling();
             ApplyButtonVisualState(ppoNormalButton);
             ApplyButtonVisualState(ppoTrainingButton);
         }
 
-        private void EnsurePpoModeModal()
+        private void EnsurePpoSceneUiReferences()
         {
-            if (ppoModeModal != null || canvas == null)
+            if (canvas == null)
             {
                 return;
             }
 
-            ppoModeModal = CreateRuntimePanel("PPO Mode Modal", canvas.transform, HexColor("#020617", 0.78f));
-            Stretch(ppoModeModal, 0f, 0f, 0f, 0f);
-            Button backdrop = ppoModeModal.gameObject.AddComponent<Button>();
-            backdrop.transition = Selectable.Transition.None;
-            backdrop.targetGraphic = ppoModeModal.GetComponent<Image>();
-            backdrop.onClick.AddListener(HidePpoModeModal);
-
-            RectTransform card = CreateRuntimePanel("Card", ppoModeModal, HexColor("#111A2E", 1f));
-            card.anchorMin = new Vector2(0.5f, 0.5f);
-            card.anchorMax = new Vector2(0.5f, 0.5f);
-            card.pivot = new Vector2(0.5f, 0.5f);
-            card.anchoredPosition = Vector2.zero;
-            card.sizeDelta = new Vector2(440f, 340f);
-            Image cardImage = card.GetComponent<Image>();
-            if (cardImage != null)
+            if (ppoModeOverlay == null)
             {
-                cardImage.sprite = GetRoundedSprite(Color.white, Color.white, 28);
-                cardImage.type = Image.Type.Sliced;
-                cardImage.color = HexColor("#111A2E");
+                Transform overlay = FindNamedDescendant(canvas.transform, "PPO Mode Overlay");
+                ppoModeOverlay = overlay != null ? overlay.gameObject : null;
             }
 
-            CreateCardChildText("Title", card, "PPO Mode", 30, new Vector2(0f, 128f), new Vector2(400f, 52f), HexColor("#F8FAFC"));
+            if (ppoModeOverlay != null)
+            {
+                ppoModeHintText ??= FindNamedDescendant(ppoModeOverlay.transform, "InfoText")?.GetComponent<TMP_Text>();
 
-            ppoTrainingButton = CreateRuntimeButton("Training Btn", card, "Training Mode", HexColor("#0F766E"), new Vector2(0f, 56f), new Vector2(360f, 64f));
-            ppoTrainingButton.onClick.AddListener(() => ChoosePpoMode(true));
+                Button[] modeButtons = ppoModeOverlay.GetComponentsInChildren<Button>(true)
+                    .Where(button => button != null && button.gameObject != ppoModeOverlay)
+                    .ToArray();
+                ppoTrainingButton ??= FindPpoModeButton(modeButtons, "TrainingModeButton", "Training");
+                ppoNormalButton ??= FindPpoModeButton(modeButtons, "NormalModeButton", "Normal", "PlayingModeButton");
+                if (ppoTrainingButton == null && modeButtons.Length > 0)
+                {
+                    ppoTrainingButton = modeButtons[0];
+                }
 
-            ppoNormalButton = CreateRuntimeButton("Normal Btn", card, "Normal Mode", HexColor("#2563EB"), new Vector2(0f, -24f), new Vector2(360f, 64f));
-            ppoNormalButton.onClick.AddListener(() => ChoosePpoMode(false));
+                if (ppoNormalButton == null && modeButtons.Length > 1)
+                {
+                    ppoNormalButton = modeButtons.FirstOrDefault(button => button != ppoTrainingButton);
+                }
 
-            ppoModeHintText = CreateCardChildText("Hint", card, string.Empty, 16, new Vector2(0f, -110f), new Vector2(400f, 80f), HexColor("#94A3B8"));
+                Button backdrop = ppoModeOverlay.GetComponent<Button>();
+                if (backdrop != null)
+                {
+                    backdrop.onClick.RemoveAllListeners();
+                    backdrop.onClick.AddListener(HidePpoModeModal);
+                }
+            }
 
-            ppoModeModal.gameObject.SetActive(false);
+            if (ppoTrainingButton != null)
+            {
+                ppoTrainingButton.onClick.RemoveAllListeners();
+                ppoTrainingButton.onClick.AddListener(() => ChoosePpoMode(true));
+            }
+
+            if (ppoNormalButton != null)
+            {
+                ppoNormalButton.onClick.RemoveAllListeners();
+                ppoNormalButton.onClick.AddListener(() => ChoosePpoMode(false));
+            }
+
+            EnsureTrainingOverlay();
+        }
+
+        private static Button FindPpoModeButton(Button[] buttons, params string[] names)
+        {
+            if (buttons == null || names == null)
+            {
+                return null;
+            }
+
+            string[] normalizedNames = names.Select(NormalizeLookupName).ToArray();
+            return buttons.FirstOrDefault(button =>
+            {
+                string buttonName = NormalizeLookupName(button.name);
+                return normalizedNames.Any(name => !string.IsNullOrEmpty(name) && buttonName.Contains(name));
+            });
         }
 
         // The Research tree, category layout, and Selected Research popup are now entirely
@@ -4141,11 +4192,12 @@ namespace StackMerge
                 && !historyOpen
                 && !achievementsOpen;
 
-            SetTrainingView(trainingView);
             RefreshGameplayModifiers();
-            if (trainingView)
+            SetTrainingView(trainingView);
+            bool trainingOverlayVisible = trainingView && trainingOverlay != null;
+            if (trainingOverlayVisible)
             {
-                UpdateTrainingOverlay(gameState.IsGameOver ? null : "Auto solving");
+                UpdateTrainingOverlay(null);
             }
             else
             {
@@ -4160,99 +4212,168 @@ namespace StackMerge
         private void SetTrainingView(bool active)
         {
             EnsureTrainingOverlay();
-            if (trainingOverlay != null)
-            {
-                SetActive(trainingOverlay.gameObject, active);
-            }
+            RectTransform nextPanel = GetNextBlocksPanel();
+            bool boardVisible = boardRoot != null && boardRoot.gameObject.activeSelf;
+            bool nextVisible = nextPanel != null && nextPanel.gameObject.activeSelf;
 
-            // While the simplified matrix view is up, hide the graphical board and queue.
             if (boardRoot != null)
             {
                 SetActive(boardRoot.gameObject, !active);
             }
 
-            if (nextBlocksRoot != null && nextBlocksRoot.parent is RectTransform nextPanel)
+            if (nextPanel != null)
             {
                 SetActive(nextPanel.gameObject, !active);
             }
+
+            if (boardVisible == active || nextVisible == active)
+            {
+                boardLayoutDirty = true;
+            }
+
+            if (trainingOverlay != null)
+            {
+                SetActive(trainingOverlay.gameObject, active);
+                if (active)
+                {
+                    TryLayoutGameplaySections();
+                    Canvas.ForceUpdateCanvases();
+                    PositionTrainingOverlay();
+                    trainingOverlay.SetAsLastSibling();
+                }
+            }
+
         }
 
         private void EnsureTrainingOverlay()
         {
-            if (trainingOverlay != null || canvas == null)
+            if (canvas == null)
             {
                 return;
             }
 
-            trainingOverlay = CreateRuntimePanel("Training Overlay", canvas.transform, HexColor("#0E1626", 0.98f));
-            trainingOverlay.anchorMin = new Vector2(0.04f, 0.12f);
-            trainingOverlay.anchorMax = new Vector2(0.96f, 0.82f);
-            trainingOverlay.offsetMin = Vector2.zero;
-            trainingOverlay.offsetMax = Vector2.zero;
-
-            Image background = trainingOverlay.GetComponent<Image>();
-            if (background != null)
+            if (trainingOverlay == null)
             {
-                background.sprite = GetRoundedSprite(Color.white, Color.white, 28);
-                background.type = Image.Type.Sliced;
-                background.color = HexColor("#0E1626", 0.98f);
+                trainingOverlay = FindNamedDescendant(canvas.transform, "PPO Training Overlay") as RectTransform;
             }
 
-            trainingOverlayText = CreateRuntimeText(
-                "Training Text",
-                trainingOverlay,
-                string.Empty,
-                26,
-                FontStyles.Bold,
-                TextAlignmentOptions.Top,
-                HexColor("#E2E8F0"));
-            Stretch(trainingOverlayText.rectTransform, 30f, 26f, 30f, 26f);
-            trainingOverlayText.richText = true;
-            trainingOverlayText.enableAutoSizing = true;
-            trainingOverlayText.fontSizeMin = 12;
-            trainingOverlayText.fontSizeMax = 30;
+            if (trainingOverlay != null)
+            {
+                trainingOverlayText ??= FindNamedDescendant(trainingOverlay, "Training Text")?.GetComponent<TMP_Text>()
+                    ?? trainingOverlay.GetComponentInChildren<TMP_Text>(true);
+                if (trainingOverlayText != null)
+                {
+                    trainingOverlayText.richText = true;
+                }
+            }
+        }
 
-            trainingOverlay.gameObject.SetActive(false);
+        private void PositionTrainingOverlay()
+        {
+            if (trainingOverlay == null || boardRoot == null)
+            {
+                return;
+            }
+
+            RectTransform parent = trainingOverlay.parent as RectTransform;
+            if (parent == null)
+            {
+                return;
+            }
+
+            RectTransform gameplaySectionsParent = boardRoot.parent as RectTransform;
+            if (gameplaySectionsParent == null)
+            {
+                return;
+            }
+
+            GetRectInParent(parent, gameplaySectionsParent, out Vector2 min, out Vector2 max);
+            float desiredHeight = GetTrainingOverlayDesiredHeight();
+            Vector2 size = new(Mathf.Max(1f, max.x - min.x), Mathf.Max(1f, desiredHeight));
+            Vector2 center = new((min.x + max.x) * 0.5f, max.y - size.y * 0.5f);
+
+            trainingOverlay.anchorMin = new Vector2(0.5f, 0.5f);
+            trainingOverlay.anchorMax = new Vector2(0.5f, 0.5f);
+            trainingOverlay.pivot = new Vector2(0.5f, 0.5f);
+            trainingOverlay.anchoredPosition = center;
+            trainingOverlay.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, size.x);
+            trainingOverlay.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, size.y);
+        }
+
+        private static void EncapsulateRectInParent(RectTransform parent, RectTransform target, ref Vector2 min, ref Vector2 max)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            GetRectInParent(parent, target, out Vector2 targetMin, out Vector2 targetMax);
+            min = Vector2.Min(min, targetMin);
+            max = Vector2.Max(max, targetMax);
+        }
+
+        private static void GetRectInParent(RectTransform parent, RectTransform target, out Vector2 min, out Vector2 max)
+        {
+            Vector3[] corners = new Vector3[4];
+            target.GetWorldCorners(corners);
+            Vector3 local = parent.InverseTransformPoint(corners[0]);
+            min = local;
+            max = local;
+            for (int i = 1; i < corners.Length; i++)
+            {
+                local = parent.InverseTransformPoint(corners[i]);
+                min = Vector2.Min(min, local);
+                max = Vector2.Max(max, local);
+            }
         }
 
         private void UpdateTrainingOverlay(string statusLine)
         {
             EnsureTrainingOverlay();
-            if (trainingOverlayText == null || gameState == null || progression == null)
+            if (gameState == null || progression == null)
+            {
+                return;
+            }
+
+            if (trainingOverlayText != null)
+            {
+                var builder = new StringBuilder();
+                builder.Append("Next  ");
+                builder.Append("<mspace=0.62em>");
+                for (int i = 0; i < gameState.NextBlocks.Count; i++)
+                {
+                    builder.Append(FormatMatrixCell(gameState.NextBlocks[i]).PadLeft(6));
+                }
+
+                builder.Append("</mspace>");
+                builder.AppendLine();
+                builder.AppendLine();
+                builder.Append("<mspace=0.62em>");
+                builder.Append(BuildTrainingMatrix());
+                builder.Append("</mspace>");
+                trainingOverlayText.text = builder.ToString();
+            }
+
+            UpdatePpoTrainingRunInfo(statusLine);
+            if (trainingOverlay != null && trainingOverlay.gameObject.activeInHierarchy)
+            {
+                TryLayoutGameplaySections();
+                Canvas.ForceUpdateCanvases();
+                PositionTrainingOverlay();
+            }
+        }
+
+        private void UpdatePpoTrainingRunInfo(string statusLine)
+        {
+            if (runStatusText == null || gameState == null || progression == null)
             {
                 return;
             }
 
             StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
-            var builder = new StringBuilder();
-            builder.AppendLine("<b>PPO TRAINING</b>");
-            builder.AppendLine();
-            builder.Append("<mspace=0.62em>");
-            builder.Append(BuildTrainingMatrix());
-            builder.Append("</mspace>");
-            builder.AppendLine();
-
-            builder.Append("Next  ");
-            builder.Append("<mspace=0.62em>");
-            for (int i = 0; i < gameState.NextBlocks.Count; i++)
-            {
-                builder.Append(FormatMatrixCell(gameState.NextBlocks[i]).PadLeft(6));
-            }
-            builder.Append("</mspace>");
-            builder.AppendLine();
-            builder.AppendLine();
-
-            builder.AppendLine($"Iteration  {metrics.Updates}");
-            builder.AppendLine($"Frames  {metrics.Steps}   (run {gameState.BlocksDropped})");
-            builder.AppendLine($"Score  {FormatNumber(gameState.Score)}   High  {FormatNumber(Math.Max(1, gameState.HighestMergedBlock))}");
-            builder.AppendLine($"Policy loss  {metrics.LastPolicyLoss:0.000}   Entropy  {metrics.LastEntropy:0.000}");
-            if (!string.IsNullOrEmpty(statusLine))
-            {
-                builder.AppendLine();
-                builder.AppendLine($"<color=#F0ABFC>{statusLine}</color>");
-            }
-
-            trainingOverlayText.text = builder.ToString();
+            runStatusText.text = string.IsNullOrWhiteSpace(statusLine)
+                ? StackMergeLocalization.Translate($"{FormatNumber(metrics.Steps)} frames")
+                : StackMergeLocalization.Translate(statusLine);
         }
 
         private string BuildTrainingMatrix()
@@ -4290,8 +4411,7 @@ namespace StackMerge
             bool pickaxeUnlocked = IsGameplayModifierUnlocked(ModifierId.MinersPickaxe);
             bool queueScrubberUnlocked = IsGameplayModifierUnlocked(ModifierId.QueueScrubber);
             bool showSection = selectedTabIndex == 0
-                && (pickaxeUnlocked || queueScrubberUnlocked)
-                && (progression == null || !progression.IsMachineLearningTrainingActive);
+                && (pickaxeUnlocked || queueScrubberUnlocked);
 
             if (!showSection && armedGameplayModifier != NoArmedGameplayModifier)
             {
@@ -4418,18 +4538,14 @@ namespace StackMerge
 
             if (gameState != null && !gameState.IsGameOver)
             {
-                SetText(runStatusText, machineLearningTraining
-                    ? "ML TRAINING - chips paused"
-                    : IsManualModeActive() ? "Manual mode" : "Auto solving");
-                if (runStatusText != null)
+                if (machineLearningTraining)
                 {
-                    runStatusText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#D1D5DB");
+                    UpdatePpoTrainingRunInfo(null);
                 }
-            }
-
-            if (feedbackText != null)
-            {
-                feedbackText.color = machineLearningTraining ? HexColor("#F0ABFC") : HexColor("#000000");
+                else
+                {
+                    SetText(runStatusText, IsManualModeActive() ? "Manual mode" : "Auto solving");
+                }
             }
         }
 
@@ -6805,7 +6921,7 @@ namespace StackMerge
                 return false;
             }
 
-            RectTransform nextSection = GetDirectChildUnder(parent, nextBlocksRoot);
+            RectTransform nextSection = GetNextBlocksPanel(parent);
             if (nextSection == null || nextSection.parent != parent)
             {
                 return false;
@@ -6827,6 +6943,39 @@ namespace StackMerge
             float modifierHeight = modifierSectionVisible
                 ? Mathf.Clamp(GetSectionHeight(modifierSection, 58f), 44f, 76f)
                 : 0f;
+            bool trainingLayout = progression != null
+                && progression.IsMachineLearningTrainingActive
+                && selectedTabIndex == 0
+                && !historyOpen
+                && !achievementsOpen;
+
+            if (trainingLayout)
+            {
+                EnsureTrainingOverlay();
+                float trainingHeight = GetTrainingOverlayLayoutHeight(parentHeight, footerHeight, runInfoHeight, modifierHeight, modifierSectionVisible, gap);
+
+                LayoutGroup trainingParentLayout = parent.GetComponent<LayoutGroup>();
+                if (trainingParentLayout != null)
+                {
+                    trainingParentLayout.enabled = false;
+                }
+
+                SetGameplaySectionTop(nextSection, 0f, trainingHeight);
+                SetGameplaySectionTop(boardRoot, trainingHeight, 0f);
+                SetGameplaySectionBottom(footerRoot, 0f, footerHeight);
+
+                float trainingContentBottomFromTop = trainingHeight;
+                if (modifierSectionVisible)
+                {
+                    float modifierTop = trainingContentBottomFromTop + gap;
+                    SetGameplaySectionTop(modifierSection, modifierTop, modifierHeight);
+                    trainingContentBottomFromTop = modifierTop + modifierHeight;
+                }
+
+                PositionRunInfoBetween(parent, trainingContentBottomFromTop, footerHeight, runInfoHeight, gap);
+                return true;
+            }
+
             float gapCount = modifierSectionVisible ? 4f : 3f;
 
             int capacity = Mathf.Max(1, gameState.StackCapacity);
@@ -6866,7 +7015,73 @@ namespace StackMerge
                 contentBottomFromTop = modifierTop + modifierHeight;
             }
 
-            float footerTopFromTop = parentHeight - footerHeight;
+            PositionRunInfoBetween(parent, contentBottomFromTop, footerHeight, runInfoHeight, gap);
+            return true;
+        }
+
+        private float GetTrainingOverlayLayoutHeight(
+            float parentHeight,
+            float footerHeight,
+            float runInfoHeight,
+            float modifierHeight,
+            bool modifierSectionVisible,
+            float gap)
+        {
+            float desiredHeight = GetTrainingOverlayDesiredHeight();
+            float reservedGaps = gap * (modifierSectionVisible ? 3f : 2f);
+            float maxHeight = parentHeight - footerHeight - runInfoHeight - modifierHeight - reservedGaps;
+            float minHeight = Mathf.Max(80f, ppoTrainingOverlayMinHeight);
+            return Mathf.Clamp(desiredHeight, minHeight, Mathf.Max(minHeight, maxHeight));
+        }
+
+        private float GetTrainingOverlayDesiredHeight()
+        {
+            float textHeight = 0f;
+            if (trainingOverlayText != null)
+            {
+                trainingOverlayText.ForceMeshUpdate();
+                textHeight = Mathf.Max(
+                    trainingOverlayText.preferredHeight,
+                    LayoutUtility.GetPreferredHeight(trainingOverlayText.rectTransform));
+            }
+
+            if (textHeight <= 1f)
+            {
+                float fontSize = trainingOverlayText != null ? Mathf.Max(1f, trainingOverlayText.fontSize) : 22f;
+                float lineHeight = Mathf.Max(20f, fontSize * 1.2f);
+                int matrixLines = (gameState != null ? Mathf.Max(1, gameState.StackCapacity) : 10) + 2;
+                textHeight = matrixLines * lineHeight;
+            }
+
+            return Mathf.Max(ppoTrainingOverlayMinHeight, textHeight + GetTrainingOverlayVerticalPadding());
+        }
+
+        private float GetTrainingOverlayVerticalPadding()
+        {
+            if (trainingOverlay != null && trainingOverlayText != null)
+            {
+                RectTransform textRect = trainingOverlayText.rectTransform;
+                if (textRect != null && textRect.parent == trainingOverlay)
+                {
+                    float padding = Mathf.Abs(textRect.offsetMin.y) + Mathf.Abs(textRect.offsetMax.y);
+                    if (padding > 0.5f)
+                    {
+                        return padding;
+                    }
+                }
+            }
+
+            return ppoTrainingOverlayVerticalPadding;
+        }
+
+        private void PositionRunInfoBetween(RectTransform parent, float contentBottomFromTop, float footerHeight, float runInfoHeight, float gap)
+        {
+            if (runInfoPanel == null || parent == null)
+            {
+                return;
+            }
+
+            float footerTopFromTop = parent.rect.height - footerHeight;
             float freeGap = Mathf.Max(0f, footerTopFromTop - contentBottomFromTop);
             float fittedRunInfoHeight = Mathf.Min(runInfoHeight, Mathf.Max(0f, freeGap - gap * 2f));
             if (fittedRunInfoHeight < 40f && freeGap > 40f)
@@ -6876,7 +7091,25 @@ namespace StackMerge
 
             float runInfoTop = contentBottomFromTop + Mathf.Max(0f, (freeGap - fittedRunInfoHeight) * 0.5f);
             SetGameplaySectionTop(runInfoPanel, runInfoTop, fittedRunInfoHeight);
-            return true;
+        }
+
+        private RectTransform GetNextBlocksPanel(RectTransform layoutParent = null)
+        {
+            if (nextBlocksPanelRoot != null)
+            {
+                return nextBlocksPanelRoot;
+            }
+
+            if (layoutParent != null)
+            {
+                RectTransform directChild = GetDirectChildUnder(layoutParent, nextBlocksRoot);
+                if (directChild != null)
+                {
+                    return directChild;
+                }
+            }
+
+            return nextBlocksRoot != null ? nextBlocksRoot.parent as RectTransform : null;
         }
 
         private static RectTransform GetDirectChildUnder(RectTransform ancestor, RectTransform descendant)
@@ -6979,6 +7212,15 @@ namespace StackMerge
             }
 
             float boardBottomFromTop = -boardRoot.offsetMin.y;
+            EnsureGameplayModifierReferences();
+            if (gameplayModifiersSection != null
+                && gameplayModifiersSection.activeSelf
+                && gameplayModifiersSection.transform is RectTransform modifierSection
+                && modifierSection.parent == parent)
+            {
+                boardBottomFromTop = Mathf.Max(boardBottomFromTop, -modifierSection.offsetMin.y);
+            }
+
             float footerTopFromBottom = footerRoot.offsetMax.y;
             float footerTopFromTop = parent.rect.height - footerTopFromBottom;
 
@@ -7009,6 +7251,11 @@ namespace StackMerge
                 && !trainingActive;
             gameOverOverlay.SetActive(showOverlay);
             if (gameState == null || !gameState.IsGameOver)
+            {
+                return;
+            }
+
+            if (trainingActive)
             {
                 return;
             }
