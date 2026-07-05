@@ -357,7 +357,7 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.MergeReward, "Merge reward", "Changes how much immediate merging competes with setup."),
                 TuneWhole(SolverTuneParameterId.FutureDepth, "Future depth", "Adjusts how many setup moves the combo estimate looks through.", -2, 2),
                 Tune(SolverTuneParameterId.SafetyCushion, "Safety cushion", "Keeps some space open while building combos.")),
-            new(SolverId.MachineLearning, "PPO trains its own actor-critic network. These nudge the learning hyperparameters within safe bounds only — small changes, so the agent cannot be broken.",
+            new(SolverId.MachineLearning, "PPO trains its own actor-critic network. These nudge the learning hyperparameters within safe bounds.",
                 TuneAbsolute(SolverTuneParameterId.Gamma, "Gamma (discount)", "How far ahead future reward is valued. Higher plans longer-term, lower is greedier.", 0.99f, 0.01f, 0.80f, 0.99f),
                 TuneAbsolute(SolverTuneParameterId.Lambda, "Lambda (GAE)", "Advantage estimation bias/variance trade-off. Higher = lower bias, more variance.", 0.95f, 0.01f, 0.80f, 0.99f),
                 TuneAbsolute(SolverTuneParameterId.ClipEpsilon, "Clip epsilon", "How big a policy update each step may make. Smaller is more conservative and stable.", 0.20f, 0.01f, 0.10f, 0.30f))

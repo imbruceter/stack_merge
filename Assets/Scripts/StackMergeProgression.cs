@@ -261,7 +261,7 @@ namespace StackMerge
         private const int AutoSolveUnlockCost = 1200;
         private const int AutoRestartUnlockCost = 8000;
         private const int SolverTuningUnlockCost = 30000;
-        private const int TokenPackCost = 300;
+        private const int TokenPackCost = 10000;
         private const int TokenPackSize = 50;
         private const int ExtraAgentSlotUpgradeCost = 1500000;
         private const int ModifiersMenuUnlockCost = 3000000;

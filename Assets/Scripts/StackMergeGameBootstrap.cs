@@ -27,6 +27,9 @@ namespace StackMerge
         private const int StartupGameplayLayoutWarmupFrames = 90;
         private const int TabGameplayLayoutWarmupFrames = 18;
         private const int NoArmedGameplayModifier = -1;
+        private const string ShowFpsSettingKey = "StackMerge.Settings.ShowFps";
+        private const string SuppressAchievementNotificationSettingKey = "StackMerge.Settings.SuppressAchievementNotification";
+        private const string LanguageSettingKey = "StackMerge.Settings.Language";
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
@@ -80,6 +83,11 @@ namespace StackMerge
         [SerializeField] private GameObject agentsPanel;
         [SerializeField] private GameObject researchPanel;
         [SerializeField] private GameObject settingsPanel;
+        [Header("Settings UI")]
+        [SerializeField] private Toggle showFpsToggle;
+        [SerializeField] private TMP_Text fpsText;
+        [SerializeField] private Toggle suppressAchievementNotificationToggle;
+        [SerializeField] private TMP_Dropdown languageDropdown;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
         [Tooltip("Optional lock icon used by locked bottom-menu tabs. Drag your lock sprite here in the Inspector.")]
         [SerializeField] private Sprite lockedTabIcon;
@@ -283,6 +291,15 @@ namespace StackMerge
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
         private bool solverDeselected = false;
         private int armedGameplayModifier = NoArmedGameplayModifier;
+        private bool showFps;
+        private bool suppressAchievementNotifications;
+        private StackMergeLanguage currentLanguage = StackMergeLanguage.English;
+        private bool syncingSettingsControls;
+        private int lastLanguageDropdownValue = -1;
+        private float fpsSampleTimer;
+        private int fpsSampleFrames;
+        private readonly Dictionary<TMP_Text, string> settingsStaticTextDefaults = new();
+        private readonly Dictionary<TMP_Text, string> staticLocalizedTextDefaults = new();
         private BottomTabVisual[] bottomTabVisuals = Array.Empty<BottomTabVisual>();
         private readonly Dictionary<Button, Color> buttonNormalColors = new();
         private int bottomMenuHighlightIndex = -1;
@@ -343,7 +360,11 @@ namespace StackMerge
             EnsureEventSystem();
             EnsureOptionalUpgradeButtonReferences();
             EnsureGameplayModifierReferences();
+            EnsureSettingsReferences();
+            LoadPlayerSettings();
             WireButtons();
+            SyncSettingsControls();
+            ApplyPlayerSettings();
             HideTemplate();
             EnsureAchievementNotificationReferences();
             WireAchievementNotificationButton();
@@ -452,6 +473,8 @@ namespace StackMerge
             TickBlockAnimations();
             TickGameOverOverlayDelay();
             TickAchievementNotification();
+            TickLanguageDropdownSelection();
+            TickFpsDisplay();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -809,6 +832,12 @@ namespace StackMerge
 
         private void TryShowNextAchievementNotification()
         {
+            if (suppressAchievementNotifications)
+            {
+                HideAchievementNotificationImmediate(clearQueue: true);
+                return;
+            }
+
             if (achievementNotificationState != AchievementNotificationState.Hidden || achievementNotificationQueue.Count == 0)
             {
                 return;
@@ -840,6 +869,12 @@ namespace StackMerge
 
         private void TickAchievementNotification()
         {
+            if (suppressAchievementNotifications)
+            {
+                HideAchievementNotificationImmediate(clearQueue: true);
+                return;
+            }
+
             if (achievementNotificationState == AchievementNotificationState.Hidden)
             {
                 TryShowNextAchievementNotification();
@@ -885,6 +920,18 @@ namespace StackMerge
 
                     break;
             }
+        }
+
+        private void HideAchievementNotificationImmediate(bool clearQueue)
+        {
+            if (clearQueue)
+            {
+                achievementNotificationQueue.Clear();
+            }
+
+            achievementNotificationTimer = 0f;
+            achievementNotificationState = AchievementNotificationState.Hidden;
+            SetActive(achievementNotificationPanel, false);
         }
 
         private void SetAchievementNotificationPosition(Vector2 from, Vector2 to, float normalized)
@@ -1360,6 +1407,8 @@ namespace StackMerge
                 settingsBackButton.onClick.AddListener(CloseSettingsPanel);
             }
 
+            WireSettingsControls();
+
             for (int i = 0; i < tabButtons.Length; i++)
             {
                 int tabIndex = i;
@@ -1711,6 +1760,456 @@ namespace StackMerge
             button.onClick.AddListener(() => ToggleGameplayModifier(modifierId));
         }
 
+        private void EnsureSettingsReferences()
+        {
+            Transform settingsRoot = settingsPanel != null ? settingsPanel.transform : canvas != null ? canvas.transform : null;
+            Transform canvasRoot = canvas != null ? canvas.transform : settingsRoot;
+
+            showFpsToggle ??= FindComponentByNormalizedName<Toggle>(settingsRoot, "ShowFps", "ShowFPSToggle", "FpsToggle");
+            suppressAchievementNotificationToggle ??= FindComponentByNormalizedName<Toggle>(
+                settingsRoot,
+                "AchievementPopup",
+                "AchievementPopip",
+                "GoalNotification",
+                "AchievementNotification",
+                "HideAchievementPopup",
+                "DisableAchievementPopup");
+            languageDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Language", "LanguageDropdown");
+            fpsText ??= FindComponentByNormalizedName<TMP_Text>(canvasRoot, "FPSText", "FpsText", "FPS");
+        }
+
+        private static T FindComponentByNormalizedName<T>(Transform root, params string[] names) where T : Component
+        {
+            if (root == null || names == null || names.Length == 0)
+            {
+                return null;
+            }
+
+            string[] normalizedNames = names
+                .Select(NormalizeLookupName)
+                .Where(name => !string.IsNullOrEmpty(name))
+                .ToArray();
+            if (normalizedNames.Length == 0)
+            {
+                return null;
+            }
+
+            foreach (T component in root.GetComponentsInChildren<T>(true))
+            {
+                string normalizedObjectName = NormalizeLookupName(component.gameObject.name);
+                if (normalizedNames.Any(name => normalizedObjectName == name || normalizedObjectName.Contains(name)))
+                {
+                    return component;
+                }
+            }
+
+            return null;
+        }
+
+        private void LoadPlayerSettings()
+        {
+            showFps = PlayerPrefs.GetInt(ShowFpsSettingKey, 0) == 1;
+            suppressAchievementNotifications = PlayerPrefs.GetInt(SuppressAchievementNotificationSettingKey, 0) == 1;
+            currentLanguage = PlayerPrefs.GetInt(LanguageSettingKey, 0) == 1
+                ? StackMergeLanguage.Magyar
+                : StackMergeLanguage.English;
+            StackMergeLocalization.CurrentLanguage = currentLanguage;
+        }
+
+        private void WireSettingsControls()
+        {
+            EnsureSettingsReferences();
+            ConfigureLanguageDropdownFromScene();
+
+            if (showFpsToggle != null)
+            {
+                showFpsToggle.onValueChanged.RemoveAllListeners();
+                showFpsToggle.onValueChanged.AddListener(SetShowFps);
+            }
+
+            if (suppressAchievementNotificationToggle != null)
+            {
+                suppressAchievementNotificationToggle.onValueChanged.RemoveAllListeners();
+                suppressAchievementNotificationToggle.onValueChanged.AddListener(SetSuppressAchievementNotifications);
+            }
+
+            if (languageDropdown != null)
+            {
+                languageDropdown.onValueChanged.RemoveAllListeners();
+                languageDropdown.onValueChanged.AddListener(SetLanguageFromDropdown);
+            }
+        }
+
+        private void SyncSettingsControls()
+        {
+            EnsureSettingsReferences();
+            syncingSettingsControls = true;
+
+            if (showFpsToggle != null)
+            {
+                showFpsToggle.SetIsOnWithoutNotify(showFps);
+            }
+
+            if (suppressAchievementNotificationToggle != null)
+            {
+                suppressAchievementNotificationToggle.SetIsOnWithoutNotify(suppressAchievementNotifications);
+            }
+
+            if (languageDropdown != null)
+            {
+                ConfigureLanguageDropdownFromScene();
+                int languageIndex = GetLanguageDropdownIndex(currentLanguage);
+                languageDropdown.SetValueWithoutNotify(languageIndex);
+                lastLanguageDropdownValue = languageIndex;
+                languageDropdown.RefreshShownValue();
+            }
+
+            syncingSettingsControls = false;
+        }
+
+        private void ConfigureLanguageDropdownFromScene()
+        {
+            if (languageDropdown == null)
+            {
+                return;
+            }
+
+            if (languageDropdown.captionText == null)
+            {
+                Transform label = FindNamedDescendant(languageDropdown.transform, "Label");
+                languageDropdown.captionText = label != null ? label.GetComponent<TMP_Text>() : null;
+            }
+
+            if (languageDropdown.itemText == null && languageDropdown.template != null)
+            {
+                Transform itemLabel = FindNamedDescendant(languageDropdown.template, "Item Label");
+                if (itemLabel != null)
+                {
+                    languageDropdown.itemText = itemLabel.GetComponent<TMP_Text>();
+                }
+                else
+                {
+                    Toggle itemToggle = languageDropdown.template.GetComponentInChildren<Toggle>(true);
+                    languageDropdown.itemText = itemToggle != null ? itemToggle.GetComponentInChildren<TMP_Text>(true) : null;
+                }
+            }
+        }
+
+        private int GetLanguageDropdownIndex(StackMergeLanguage language)
+        {
+            if (languageDropdown != null)
+            {
+                for (int i = 0; i < languageDropdown.options.Count; i++)
+                {
+                    if (IsLanguageOption(languageDropdown.options[i].text, language))
+                    {
+                        return i;
+                    }
+                }
+
+                if (languageDropdown.options.Count > 0)
+                {
+                    return language == StackMergeLanguage.Magyar
+                        ? Mathf.Min(1, languageDropdown.options.Count - 1)
+                        : 0;
+                }
+            }
+
+            return 0;
+        }
+
+        private StackMergeLanguage ResolveLanguageDropdownSelection(int index)
+        {
+            if (languageDropdown != null && index >= 0 && index < languageDropdown.options.Count)
+            {
+                if (IsLanguageOption(languageDropdown.options[index].text, StackMergeLanguage.Magyar))
+                {
+                    return StackMergeLanguage.Magyar;
+                }
+
+                if (IsLanguageOption(languageDropdown.options[index].text, StackMergeLanguage.English))
+                {
+                    return StackMergeLanguage.English;
+                }
+            }
+
+            return index == GetLanguageDropdownIndex(StackMergeLanguage.Magyar)
+                ? StackMergeLanguage.Magyar
+                : StackMergeLanguage.English;
+        }
+
+        private static bool IsLanguageOption(string optionText, StackMergeLanguage language)
+        {
+            string optionName = NormalizeLookupName(optionText);
+            return language == StackMergeLanguage.Magyar
+                ? optionName == "magyar"
+                : optionName == "english" || optionName == "angol";
+        }
+
+        private void TickLanguageDropdownSelection()
+        {
+            if (languageDropdown == null || syncingSettingsControls)
+            {
+                return;
+            }
+
+            int value = languageDropdown.value;
+            if (value == lastLanguageDropdownValue)
+            {
+                return;
+            }
+
+            SetLanguageFromDropdown(value);
+        }
+
+        private void ApplyPlayerSettings()
+        {
+            StackMergeLocalization.CurrentLanguage = currentLanguage;
+            ApplyFpsVisibility();
+            ApplySettingsPanelLocalization();
+            ApplyStaticSceneLocalization();
+            if (suppressAchievementNotifications)
+            {
+                HideAchievementNotificationImmediate(clearQueue: true);
+            }
+        }
+
+        private void SetShowFps(bool value)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            showFps = value;
+            PlayerPrefs.SetInt(ShowFpsSettingKey, showFps ? 1 : 0);
+            PlayerPrefs.Save();
+            ApplyFpsVisibility();
+        }
+
+        private void SetSuppressAchievementNotifications(bool value)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            suppressAchievementNotifications = value;
+            PlayerPrefs.SetInt(SuppressAchievementNotificationSettingKey, suppressAchievementNotifications ? 1 : 0);
+            PlayerPrefs.Save();
+            if (suppressAchievementNotifications)
+            {
+                HideAchievementNotificationImmediate(clearQueue: true);
+            }
+        }
+
+        private void SetLanguageFromDropdown(int index)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            currentLanguage = ResolveLanguageDropdownSelection(index);
+            lastLanguageDropdownValue = index;
+            StackMergeLocalization.CurrentLanguage = currentLanguage;
+            PlayerPrefs.SetInt(LanguageSettingKey, currentLanguage == StackMergeLanguage.Magyar ? 1 : 0);
+            PlayerPrefs.Save();
+            ApplyLanguageToUi();
+        }
+
+        private void ApplyLanguageToUi()
+        {
+            if (currentLanguage == StackMergeLanguage.English)
+            {
+                ApplyStaticSceneLocalization();
+            }
+
+            if (progression != null)
+            {
+                RefreshEverything();
+            }
+            else
+            {
+                RefreshHud();
+            }
+
+            ApplySettingsPanelLocalization();
+            ApplyStaticSceneLocalization();
+            RefreshTabButtons();
+            RefreshBottomMenuIconStates();
+            SyncSettingsControls();
+        }
+
+        private void ApplySettingsPanelLocalization()
+        {
+            if (settingsPanel == null)
+            {
+                return;
+            }
+
+            foreach (TMP_Text text in settingsPanel.GetComponentsInChildren<TMP_Text>(true))
+            {
+                if (text == null || text == fpsText || (languageDropdown != null && text.transform.IsChildOf(languageDropdown.transform)))
+                {
+                    continue;
+                }
+
+                if (!settingsStaticTextDefaults.ContainsKey(text))
+                {
+                    settingsStaticTextDefaults[text] = text.text;
+                }
+
+                SetText(text, settingsStaticTextDefaults[text]);
+            }
+        }
+
+        private void ApplyStaticSceneLocalization()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            foreach (TMP_Text text in canvas.GetComponentsInChildren<TMP_Text>(true))
+            {
+                if (ShouldSkipStaticSceneLocalization(text))
+                {
+                    continue;
+                }
+
+                if (!staticLocalizedTextDefaults.TryGetValue(text, out string original))
+                {
+                    original = text.text;
+                    staticLocalizedTextDefaults[text] = original;
+                }
+
+                text.text = StackMergeLocalization.Translate(original);
+            }
+        }
+
+        private bool ShouldSkipStaticSceneLocalization(TMP_Text text)
+        {
+            if (text == null
+                || text == fpsText
+                || text == scoreText
+                || text == bestText
+                || text == highestText
+                || text == droppedText
+                || text == feedbackText
+                || text == tokensText
+                || text == solverText
+                || text == speedText
+                || text == capacityText
+                || text == queueText
+                || text == runStatusText
+                || text == agentSlotsText
+                || text == solverDetailNameText
+                || text == solverDetailInfoText
+                || text == solverDetailStatusText
+                || text == solverTuneTitleText
+                || text == solverTuneSummaryText
+                || text == modifierSummaryText
+                || text == modifierDetailNameText
+                || text == modifierDetailInfoText
+                || text == modifierDetailStatusText
+                || text == agentDetailNameText
+                || text == agentDetailInfoText
+                || text == agentDetailStatusText
+                || text == researchDetailNameText
+                || text == researchDetailInfoText
+                || text == researchDetailStatusText
+                || text == prestigeSummaryText
+                || text == historySummaryText
+                || text == historyInsightText
+                || text == achievementStatsText
+                || text == gameplayInfoText
+                || text == achievementNotificationGoalText
+                || text == gameOverScoreText
+                || text == gameOverBestText)
+            {
+                return true;
+            }
+
+            if (languageDropdown != null && text.transform.IsChildOf(languageDropdown.transform))
+            {
+                return true;
+            }
+
+            if (settingsPanel != null && text.transform.IsChildOf(settingsPanel.transform))
+            {
+                return true;
+            }
+
+            if (ContainsText(chipsTexts, text)
+                || ContainsText(insightsTexts, text)
+                || ContainsText(solverTuneNameTexts, text)
+                || ContainsText(solverTuneValueTexts, text)
+                || ContainsText(solverTuneDescriptionTexts, text)
+                || ContainsText(agentSlotTexts, text))
+            {
+                return true;
+            }
+
+            return text.GetComponentInParent<StackMergeGoalRow>(true) != null
+                || text.GetComponentInParent<StackMergeRecentRunRow>(true) != null
+                || text.GetComponentInParent<StackMergeSolverStatRow>(true) != null
+                || text.GetComponentInParent<StackMergeAlgorithmCard>(true) != null
+                || text.GetComponentInParent<StackMergeAgentCard>(true) != null
+                || text.GetComponentInParent<StackMergeAgentSlot>(true) != null
+                || text.GetComponentInParent<StackMergeModifierCard>(true) != null
+                || text.GetComponentInParent<StackMergeResearchCard>(true) != null
+                || text.GetComponentInParent<StackMergeTuneButtonRow>(true) != null
+                || text.GetComponentInParent<StackMergeTuneSliderRow>(true) != null
+                || text.GetComponentInParent<StackMergeButtonLabelPair>(true) != null;
+        }
+
+        private static bool ContainsText(TMP_Text[] texts, TMP_Text text)
+        {
+            return texts != null && Array.IndexOf(texts, text) >= 0;
+        }
+
+        private void ApplyFpsVisibility()
+        {
+            if (fpsText == null)
+            {
+                return;
+            }
+
+            SetActive(fpsText.gameObject, showFps);
+            if (showFps)
+            {
+                fpsSampleTimer = 0f;
+                fpsSampleFrames = 0;
+                SetText(fpsText, "FPS --");
+            }
+        }
+
+        private void TickFpsDisplay()
+        {
+            if (!showFps || fpsText == null)
+            {
+                return;
+            }
+
+            if (!fpsText.gameObject.activeSelf)
+            {
+                fpsText.gameObject.SetActive(true);
+            }
+
+            fpsSampleFrames++;
+            fpsSampleTimer += Time.unscaledDeltaTime;
+            if (fpsSampleTimer < 0.25f)
+            {
+                return;
+            }
+
+            float fps = fpsSampleTimer > 0f ? fpsSampleFrames / fpsSampleTimer : 0f;
+            SetText(fpsText, $"{Mathf.RoundToInt(fps)} FPS");
+            fpsSampleTimer = 0f;
+            fpsSampleFrames = 0;
+        }
+
         private bool HasAssignedResearchCardButtons()
         {
             if (researchCards == null)
@@ -1895,6 +2394,7 @@ namespace StackMerge
             solverTuneOpen = true;
             SetActive(solverTunePanel, true);
             RefreshSolverTunePanel();
+            RefreshHud();
         }
 
         private void CloseSolverTunePanel()
@@ -1902,6 +2402,7 @@ namespace StackMerge
             solverTuneOpen = false;
             SetActive(solverTunePanel, false);
             RefreshSolverDetails();
+            RefreshHud();
         }
 
         private void RefreshTabButtons()
@@ -1993,7 +2494,7 @@ namespace StackMerge
 
             if (visual.label != null)
             {
-                visual.label.text = locked ? "Locked" : visual.unlockedLabel;
+                visual.label.text = StackMergeLocalization.Translate(locked ? "Locked" : visual.unlockedLabel);
                 visual.label.color = locked ? HexColor("#808080") : visual.unlockedLabelColor;
             }
 
@@ -2527,6 +3028,7 @@ namespace StackMerge
         private bool IsManualModeActive()
         {
             return progression == null
+                || !progression.HasPurchasedSolver
                 || (!progression.IsMachineLearningTrainingActive && (solverDeselected || !progression.AutoSolveEnabled));
         }
 
@@ -3875,7 +4377,7 @@ namespace StackMerge
             // visibility has to be driven explicitly here instead of by the per-tab SetActive calls
             // in SelectTab/OpenHistoryPanel/OpenAchievementsPanel. RefreshHud already runs after
             // every one of those, so this one spot covers all navigation paths.
-            bool showGlobalStatusBar = !historyOpen && !achievementsOpen && selectedTabIndex != 6;
+            bool showGlobalStatusBar = !historyOpen && !achievementsOpen && !solverTuneOpen && selectedTabIndex != 6;
             SetActive(globalStatusBarRoot, showGlobalStatusBar);
             if (showGlobalStatusBar && globalStatusBarRoot != null && !gameplayInfoOpen)
             {
@@ -3898,7 +4400,7 @@ namespace StackMerge
             RebuildCurrencyLayout(chipsTexts);
             RebuildCurrencyLayout(insightsTexts);
             RebuildTextLayout(tokensText);
-            if (solverDeselected)
+            if (!progression.HasPurchasedSolver || solverDeselected)
             {
                 SetText(solverText, "Manual");
             }
@@ -4859,7 +5361,10 @@ namespace StackMerge
                 }
             }
 
-            SetText(modifierSummaryText, $"Modifier Lab online. Active families: {unlockedCount}/{StackMergeProgression.Modifiers.Length} | Total levels: {totalLevels}\nModifiers apply to new runs and amplify solver differences.");
+            SetText(
+                modifierSummaryText,
+                $"Modifier Lab online. Active families: {unlockedCount}/{StackMergeProgression.Modifiers.Length} | Total levels: {totalLevels}\n" +
+                "They expand the game rules, allowing for further production. Each solver is effective in different ways.");
 
             int selectedLevel = progression.GetModifierLevel(selectedModifierId);
             bool maxed = progression.IsModifierMaxed(selectedModifierId);
@@ -5059,12 +5564,22 @@ namespace StackMerge
             {
                 if (progression.AgentsMenuUnlocked)
                 {
-                    SetUpgradeButtonLabels(agentsMenuUnlockButton, "Agents", "Unlocked", false);
+                    SetUpgradeButtonLabels(
+                        agentsMenuUnlockButton,
+                        "Agents",
+                        "Unlocked",
+                        false,
+                        "They give you extra bonuses when you unlock them.");
                 }
                 else
                 {
                     long cost = progression.GetAgentsMenuUnlockCost();
-                    SetUpgradeButtonLabels(agentsMenuUnlockButton, "Agents", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(
+                        agentsMenuUnlockButton,
+                        "Agents",
+                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        progression.Chips >= cost,
+                        "They give you extra bonuses when you unlock them.");
                 }
             }
 
@@ -5077,13 +5592,23 @@ namespace StackMerge
                 int maxLevel = progression.MaxStackCapacityLevel;
                 if (progression.IsMaxStackCapacity)
                 {
-                    SetUpgradeButtonLabels(stackCapacityUpgradeButton, $"{progression.StackCapacity} row ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(
+                        stackCapacityUpgradeButton,
+                        $"{progression.StackCapacity} row ({level}/{maxLevel})",
+                        "Maxed",
+                        false,
+                        "Increases the capacity of each stack by 1 per level.");
                 }
                 else
                 {
                     int nextCapacity = progression.StackCapacity + 1;
                     long cost = progression.GetStackCapacityUpgradeCost();
-                    SetUpgradeButtonLabels(stackCapacityUpgradeButton, $"{nextCapacity} row ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(
+                        stackCapacityUpgradeButton,
+                        $"{nextCapacity} row ({level}/{maxLevel})",
+                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        progression.Chips >= cost,
+                        "Increases the capacity of each stack by 1 per level.");
                 }
             }
 
@@ -5095,12 +5620,22 @@ namespace StackMerge
                 int maxLevel = progression.MaxQueuePreviewLevel;
                 if (progression.IsMaxQueuePreview)
                 {
-                    SetUpgradeButtonLabels(queuePreviewUpgradeButton, $"+{level} block ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(
+                        queuePreviewUpgradeButton,
+                        $"+{level} block ({level}/{maxLevel})",
+                        "Maxed",
+                        false,
+                        "Shows 1 more upcoming block per level.");
                 }
                 else
                 {
                     long cost = progression.GetQueuePreviewUpgradeCost();
-                    SetUpgradeButtonLabels(queuePreviewUpgradeButton, $"+{level + 1} block ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(
+                        queuePreviewUpgradeButton,
+                        $"+{level + 1} block ({level}/{maxLevel})",
+                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        progression.Chips >= cost,
+                        "Shows 1 more upcoming block per level.");
                 }
             }
 
@@ -6733,7 +7268,7 @@ namespace StackMerge
         {
             if (target != null)
             {
-                target.text = value;
+                target.text = StackMergeLocalization.Translate(value);
             }
         }
 
@@ -6856,14 +7391,15 @@ namespace StackMerge
         {
             TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
             return text != null
-                && text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0;
+                && (text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.text.IndexOf("Kiválasztás törlése", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         // Redesigned Upgrades menu: every upgrade button carries its own NameText + Cost/InfoText
         // children via a StackMergeButtonLabelPair component. Looked up per-call (not cached) since
         // this only runs during UI refreshes, never per-frame. Falls back to the button's own combined
         // text if no label-pair component is present yet, so nothing breaks while wiring is in progress.
-        private static void SetUpgradeButtonLabels(Button button, string name, string cost, bool interactable)
+        private static void SetUpgradeButtonLabels(Button button, string name, string cost, bool interactable, string description = null)
         {
             if (button == null)
             {
@@ -6871,17 +7407,96 @@ namespace StackMerge
             }
 
             button.interactable = interactable;
+            description ??= GetUpgradeButtonDescription(button, name);
 
             StackMergeButtonLabelPair labels = button.GetComponent<StackMergeButtonLabelPair>();
             if (labels != null)
             {
                 SetText(labels.nameText, name);
+                SetText(labels.descText, description);
                 SetText(labels.costText, cost);
             }
             else
             {
-                SetButtonText(button, $"{name}\n{cost}");
+                SetButtonText(button, string.IsNullOrEmpty(description) ? $"{name}\n{cost}" : $"{name}\n{description}\n{cost}");
             }
+        }
+
+        private static string GetUpgradeButtonDescription(Button button, string name)
+        {
+            string lookup = NormalizeLookupName($"{button.name} {name}");
+
+            if (lookup.Contains("modifierlab") || lookup.Contains("modifiersmenu"))
+            {
+                return "Unlocks rule-changing modules that apply to new runs.";
+            }
+
+            if (lookup.Contains("solverspeed") || lookup.Contains("speedupgrade") || lookup.Contains("faster"))
+            {
+                return "The solver places blocks faster with each level.";
+            }
+
+            if (lookup.Contains("autosolve"))
+            {
+                return "Solver is automatically playing the game.";
+            }
+
+            if (lookup.Contains("autorestart"))
+            {
+                return "When the run ends, a new one starts automatically.";
+            }
+
+            if (lookup.Contains("tokenpack") || lookup.Contains("tokens"))
+            {
+                return "The currency for Auto restart.";
+            }
+
+            if (lookup.Contains("solvertuning"))
+            {
+                return "Allows you to modify the solver parameters.";
+            }
+
+            if (lookup.Contains("extraagentslot") || lookup.Contains("agentslot"))
+            {
+                return "Another slot so you can use 3 Agents at once.";
+            }
+
+            if (lookup.Contains("agentsmenu") || lookup == NormalizeLookupName("Agents"))
+            {
+                return "They give you extra bonuses when you unlock them.";
+            }
+
+            if (lookup.Contains("stackcapacity"))
+            {
+                return "Increases the capacity of each stack by 1 per level.";
+            }
+
+            if (lookup.Contains("queuepreview") || lookup.Contains("nextpreview"))
+            {
+                return "Shows 1 more upcoming block per level.";
+            }
+
+            if (lookup.Contains("difficultyscaling") || lookup.Contains("maxtier"))
+            {
+                return "Increases the chance of spawning higher blocks.";
+            }
+
+            if (lookup.Contains("scalingfrequency") || lookup.Contains("highodds"))
+            {
+                return "Slightly increases how often higher blocks appear.";
+            }
+
+            if (lookup.Contains("profitableending") || lookup.Contains("ending"))
+            {
+                return "Boosts the <sprite name=\"chips\"> bonus at the end of the runs.";
+            }
+
+            if (lookup.Contains("chipyield") || lookup.Contains("income") || lookup.Contains("yield"))
+            {
+                return "Boosts the <sprite name=\"chips\"> earned during merges and runs.";
+            }
+
+            return null;
         }
 
         // Intentionally a no-op. Button background colours are owned by each Button's
