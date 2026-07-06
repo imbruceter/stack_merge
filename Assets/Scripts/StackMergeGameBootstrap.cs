@@ -150,6 +150,8 @@ namespace StackMerge
         [SerializeField] private Button solverTuneResetButton;
         [Tooltip("Single Solver Speed upgrade button (replaces the old one-button-per-level array). Needs a StackMergeButtonLabelPair component for its Name/Cost texts.")]
         [SerializeField] private Button speedUpgradeButton;
+        [Tooltip("Single Compute Speed upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Compute Speed\".")]
+        [SerializeField] private Button computeSpeedUpgradeButton;
         [SerializeField] private Button autoRestartButton;
         [SerializeField] private Button tokenPackButton;
         [SerializeField] private Button solverTuningUnlockButton;
@@ -166,6 +168,12 @@ namespace StackMerge
         [SerializeField] private Button scalingFrequencyUpgradeButton;
         [Tooltip("Single Profitable Ending upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Profitable Ending\".")]
         [SerializeField] private Button profitableEndingUpgradeButton;
+        [Tooltip("Single Passive Yield upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Passive Yield\".")]
+        [SerializeField] private Button passiveYieldUpgradeButton;
+        [Tooltip("Single Passive Tick Rate upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Passive Tick Rate\".")]
+        [SerializeField] private Button passiveTickRateUpgradeButton;
+        [Tooltip("Single Active Multiplier upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Active Multiplier\".")]
+        [SerializeField] private Button activeMultiplierUpgradeButton;
         [SerializeField] private TMP_Text progressionStageText;
         [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
@@ -293,6 +301,11 @@ namespace StackMerge
         private int currentRunManualMoves;
         private float currentRunElapsed;
         private long currentRunChipsEarned;
+        // Drives the Active Multiplier upgrade: "actively playing" means a move (manual or
+        // solver) happened recently, not literally this frame — otherwise the bonus would flicker
+        // off between individual solver moves at slow Speed levels.
+        private float timeSinceLastAcceptedMove = float.MaxValue;
+        private const float ActivePlayWindowSeconds = 4f;
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
@@ -486,6 +499,7 @@ namespace StackMerge
             TickAchievementNotification();
             TickLanguageDropdownSelection();
             TickFpsDisplay();
+            TickPassiveProduction();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -1240,6 +1254,26 @@ namespace StackMerge
             {
                 profitableEndingUpgradeButton = FindButtonByLooseName("Profitable Ending");
             }
+
+            if (passiveYieldUpgradeButton == null)
+            {
+                passiveYieldUpgradeButton = FindButtonByLooseName("Passive Yield");
+            }
+
+            if (passiveTickRateUpgradeButton == null)
+            {
+                passiveTickRateUpgradeButton = FindButtonByLooseName("Passive Tick Rate");
+            }
+
+            if (activeMultiplierUpgradeButton == null)
+            {
+                activeMultiplierUpgradeButton = FindButtonByLooseName("Active Multiplier");
+            }
+
+            if (computeSpeedUpgradeButton == null)
+            {
+                computeSpeedUpgradeButton = FindButtonByLooseName("Compute Speed");
+            }
         }
 
         private Button FindButtonByLooseName(string expectedName)
@@ -1517,6 +1551,12 @@ namespace StackMerge
                 speedUpgradeButton.onClick.AddListener(BuySpeedUpgrade);
             }
 
+            if (computeSpeedUpgradeButton != null)
+            {
+                computeSpeedUpgradeButton.onClick.RemoveAllListeners();
+                computeSpeedUpgradeButton.onClick.AddListener(BuyComputeSpeedUpgrade);
+            }
+
             if (autoRestartButton != null)
             {
                 autoRestartButton.onClick.RemoveAllListeners();
@@ -1581,6 +1621,24 @@ namespace StackMerge
             {
                 profitableEndingUpgradeButton.onClick.RemoveAllListeners();
                 profitableEndingUpgradeButton.onClick.AddListener(BuyProfitableEndingUpgrade);
+            }
+
+            if (passiveYieldUpgradeButton != null)
+            {
+                passiveYieldUpgradeButton.onClick.RemoveAllListeners();
+                passiveYieldUpgradeButton.onClick.AddListener(BuyPassiveYieldUpgrade);
+            }
+
+            if (passiveTickRateUpgradeButton != null)
+            {
+                passiveTickRateUpgradeButton.onClick.RemoveAllListeners();
+                passiveTickRateUpgradeButton.onClick.AddListener(BuyPassiveTickRateUpgrade);
+            }
+
+            if (activeMultiplierUpgradeButton != null)
+            {
+                activeMultiplierUpgradeButton.onClick.RemoveAllListeners();
+                activeMultiplierUpgradeButton.onClick.AddListener(BuyActiveMultiplierUpgrade);
             }
 
             if (modifiersMenuUnlockButton != null)
@@ -2224,6 +2282,27 @@ namespace StackMerge
             SetText(fpsText, $"{Mathf.RoundToInt(fps)} FPS");
             fpsSampleTimer = 0f;
             fpsSampleFrames = 0;
+        }
+
+        // Passive Production ticks independent of moves — it's the point of the upgrade family.
+        // "Actively playing" only gates the Active Multiplier bonus, not the base tick itself.
+        private void TickPassiveProduction()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            timeSinceLastAcceptedMove += Time.deltaTime;
+            bool isActivelyPlaying = gameState != null
+                && !gameState.IsGameOver
+                && timeSinceLastAcceptedMove <= ActivePlayWindowSeconds;
+
+            long gained = progression.TickPassiveProduction(Time.deltaTime, isActivelyPlaying);
+            if (gained > 0)
+            {
+                RefreshHud();
+            }
         }
 
         private bool HasAssignedResearchCardButtons()
@@ -3173,6 +3252,8 @@ namespace StackMerge
 
         private void HandleAcceptedMove(MoveResult result, string reason, bool autoSolverMove, bool wasGameOver)
         {
+            timeSinceLastAcceptedMove = 0f;
+
             // Trigger block drop animation.
             blockDropStack = result.StackIndex;
             blockDropTimer = BlockDropDuration;
@@ -3777,6 +3858,19 @@ namespace StackMerge
             RefreshEverything();
         }
 
+        private void BuyComputeSpeedUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyComputeSpeedUpgrade();
+            SetText(feedbackText, bought ? $"Compute speed level {progression.ComputeSpeedLevel}" : "Compute speed upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
         private void ToggleOrBuyAutoRestart()
         {
             if (progression == null)
@@ -4043,6 +4137,45 @@ namespace StackMerge
 
             bool bought = progression.BuyProfitableEndingUpgrade();
             SetText(feedbackText, bought ? $"Profitable ending level {progression.ProfitableEndingLevel}" : "Profitable ending upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyPassiveYieldUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyPassiveYieldUpgrade();
+            SetText(feedbackText, bought ? $"Passive yield level {progression.PassiveYieldLevel}" : "Passive yield upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyPassiveTickRateUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyPassiveTickRateUpgrade();
+            SetText(feedbackText, bought ? $"Passive tick rate level {progression.PassiveTickRateLevel}" : "Passive tick rate upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyActiveMultiplierUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyActiveMultiplierUpgrade();
+            SetText(feedbackText, bought ? $"Active multiplier level {progression.ActiveMultiplierLevel}" : "Active multiplier upgrade unavailable");
             progression.Save();
             RefreshEverything();
         }
@@ -5637,6 +5770,26 @@ namespace StackMerge
                 }
             }
 
+            // Compute Speed: a second, narrower speed lever. Only shrinks the pacing overhead of
+            // the compute-heavy search solvers (Plan3/Plan5/MOCA/MOCA+/MCTS) — light solvers get
+            // nothing from it, so it matters or not depending on which solver you actually run.
+            if (computeSpeedUpgradeButton != null)
+            {
+                int level = progression.ComputeSpeedLevel;
+                int maxLevel = progression.MaxComputeSpeedLevel;
+                if (progression.IsMaxComputeSpeed)
+                {
+                    float percent = StackMergeProgression.GetComputeSpeedEffectPercent(level);
+                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{percent:0}% delay ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    float nextPercent = StackMergeProgression.GetComputeSpeedEffectPercent(level + 1);
+                    long cost = progression.GetComputeSpeedUpgradeCost();
+                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{nextPercent:0}% delay ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
             if (autoSolveButton != null)
             {
                 if (progression.AutoSolveUnlocked)
@@ -5834,6 +5987,61 @@ namespace StackMerge
                 {
                     long cost = progression.GetProfitableEndingUpgradeCost();
                     SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level + 1):0}% ending ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Passive Yield: single button, always targets the next level. Chips/tick this grants —
+            // 0 levels means Passive Production hasn't started producing anything yet.
+            if (passiveYieldUpgradeButton != null)
+            {
+                int level = progression.PassiveYieldLevel;
+                int maxLevel = progression.MaxPassiveYieldLevel;
+                if (progression.IsMaxPassiveYield)
+                {
+                    long perTick = StackMergeProgression.GetPassiveYieldPerTick(level);
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{perTick} <sprite name=\"chips\">/tick ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long nextPerTick = StackMergeProgression.GetPassiveYieldPerTick(level + 1);
+                    long cost = progression.GetPassiveYieldUpgradeCost();
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{nextPerTick} <sprite name=\"chips\">/tick ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Passive Tick Rate: single button, always targets the next level. Shows the resulting
+            // tick interval buying grants (lower = more ticks per minute).
+            if (passiveTickRateUpgradeButton != null)
+            {
+                int level = progression.PassiveTickRateLevel;
+                int maxLevel = progression.MaxPassiveTickRateLevel;
+                if (progression.IsMaxPassiveTickRate)
+                {
+                    float interval = StackMergeProgression.GetPassiveTickInterval(level);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {interval:0.#}s ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    float nextInterval = StackMergeProgression.GetPassiveTickInterval(level + 1);
+                    long cost = progression.GetPassiveTickRateUpgradeCost();
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Active Multiplier: single button, always targets the next level. Bonus only applies
+            // while a run is actively being played (see TickPassiveProduction in Update()).
+            if (activeMultiplierUpgradeButton != null)
+            {
+                int level = progression.ActiveMultiplierLevel;
+                int maxLevel = progression.MaxActiveMultiplierLevel;
+                if (progression.IsMaxActiveMultiplier)
+                {
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level):0}% while active ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetActiveMultiplierUpgradeCost();
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -7715,6 +7923,11 @@ namespace StackMerge
                 return "The solver places blocks faster with each level.";
             }
 
+            if (lookup.Contains("computespeed"))
+            {
+                return "Shrinks the delay of Planning and Monte Carlo solvers.";
+            }
+
             if (lookup.Contains("autosolve"))
             {
                 return "Solver is automatically playing the game.";
@@ -7768,6 +7981,23 @@ namespace StackMerge
             if (lookup.Contains("profitableending") || lookup.Contains("ending"))
             {
                 return "Boosts the <sprite name=\"chips\"> bonus at the end of the runs.";
+            }
+
+            // Must be checked before the generic "yield" match below (Chip Yield), since
+            // "Passive Yield" also contains the substring "yield".
+            if (lookup.Contains("passiveyield"))
+            {
+                return "Chips trickle in on a timer, on top of your normal play.";
+            }
+
+            if (lookup.Contains("passivetickrate") || lookup.Contains("tickrate"))
+            {
+                return "Passive Production ticks more often.";
+            }
+
+            if (lookup.Contains("activemultiplier") || lookup.Contains("whileactive"))
+            {
+                return "Boosts Passive Production while you're actively playing.";
             }
 
             if (lookup.Contains("chipyield") || lookup.Contains("income") || lookup.Contains("yield"))

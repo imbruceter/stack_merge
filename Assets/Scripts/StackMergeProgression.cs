@@ -20,6 +20,7 @@ namespace StackMerge
         public bool solverTuningUnlocked;
         public long tokens;
         public int speedLevel;
+        public int computeSpeedLevel;
         public bool autoSolveUnlocked;
         public bool autoSolveEnabled;
         public bool autoRestartUnlocked;
@@ -30,6 +31,9 @@ namespace StackMerge
         public int difficultyLevel;
         public int scalingFrequencyLevel;
         public int profitableEndingLevel;
+        public int passiveYieldLevel;
+        public int passiveTickRateLevel;
+        public int activeMultiplierLevel;
         public bool modifiersMenuUnlocked;
         public int[] modifierLevels;
         public int runsCompleted;
@@ -278,6 +282,11 @@ namespace StackMerge
 
         private static readonly int[] SpeedUpgradeCosts = { 6000, 30000, 150000, 800000, 4000000 };
         private static readonly float[] MoveIntervals = { 0.18f, 0.12f, 0.08f, 0.055f, 0.035f, 0.022f };
+        // Second Solver Speed axis: shrinks the pacing overhead specific to the compute-heavy
+        // search solvers (Plan3/Plan5/MOCA/MOCA+/MCTS) instead of every solver uniformly. Priced a
+        // little above base Speed since it's a narrower, more specialized payoff.
+        private static readonly int[] ComputeSpeedUpgradeCosts = { 150000, 300000, 700000, 2000000, 4500000 };
+        private const double ComputeSpeedReductionPerLevel = 0.11; // -11%/level pacing overhead for heavy solvers, capped at 65% (Mathf.Max floor in GetMoveInterval)
         private static readonly int[] StackCapacityCosts = { 12000, 70000, 400000, 2200000, 11000000 };
         private static readonly int[] QueuePreviewUpgradeCosts = { 40000, 400000 };
         private static readonly int[] IncomeUpgradeCosts = { 4000, 40000, 350000, 2500000, 15000000 };
@@ -286,6 +295,17 @@ namespace StackMerge
         private static readonly int[] ProfitableEndingUpgradeCosts = { 80000, 240000, 750000, 2200000, 7000000 };
         private const double ScalingFrequencyPressurePerLevel = 0.09;
         private const double ProfitableEndingBonusPerLevel = 0.08;
+
+        // Passive Production family: chips trickle in on a timer, independent of moves/merges, so
+        // there's always something accruing even while just watching the solver play.
+        private static readonly int[] PassiveYieldUpgradeCosts = { 5000, 28000, 140000, 750000, 3800000 };
+        private const long PassiveYieldPerLevel = 3; // chips per tick per level, before stage/income multipliers
+        private static readonly int[] PassiveTickRateUpgradeCosts = { 7000, 35000, 175000, 900000, 4500000 };
+        // Seconds between passive ticks. Index 0 is the base rate before any Tick Rate level is bought.
+        private static readonly float[] PassiveTickIntervals = { 14f, 10f, 7f, 5f, 3.5f, 2.5f };
+        private static readonly int[] ActiveMultiplierUpgradeCosts = { 4000, 25000, 130000, 700000, 4500000 };
+        private const double ActiveMultiplierBonusPerLevel = 0.4; // +40% passive yield per level while actively playing
+
         private const int AgentsMenuUnlockCost = 120000;
         private const int MaxHistoryEntries = 250;
 
@@ -362,6 +382,10 @@ namespace StackMerge
 
         private readonly StackMergeProgressionData data;
         private readonly StackMergePpoAgent machineLearningAgent;
+        // Runtime-only clock for Passive Production — deliberately not persisted (losing a
+        // fraction of a tick across a save/quit is inconsequential, and offline accrual is handled
+        // separately by the Offline Engine/Buffer research).
+        private float passiveProductionTimer;
 
         public StackMergeProgression(StackMergeProgressionData data)
         {
@@ -381,6 +405,12 @@ namespace StackMerge
         public bool SolverDeselected => data.solverDeselected;
 
         public int SpeedLevel => data.speedLevel;
+
+        public int ComputeSpeedLevel => data.computeSpeedLevel;
+
+        public int MaxComputeSpeedLevel => ComputeSpeedUpgradeCosts.Length;
+
+        public bool IsMaxComputeSpeed => data.computeSpeedLevel >= ComputeSpeedUpgradeCosts.Length;
 
         public bool HasPurchasedSolver => data.solverUnlocked != null && data.solverUnlocked.Any(unlocked => unlocked);
 
@@ -429,6 +459,18 @@ namespace StackMerge
         public int ProfitableEndingLevel => data.profitableEndingLevel;
 
         public int MaxProfitableEndingLevel => ProfitableEndingUpgradeCosts.Length;
+
+        public int PassiveYieldLevel => data.passiveYieldLevel;
+
+        public int MaxPassiveYieldLevel => PassiveYieldUpgradeCosts.Length;
+
+        public int PassiveTickRateLevel => data.passiveTickRateLevel;
+
+        public int MaxPassiveTickRateLevel => PassiveTickRateUpgradeCosts.Length;
+
+        public int ActiveMultiplierLevel => data.activeMultiplierLevel;
+
+        public int MaxActiveMultiplierLevel => ActiveMultiplierUpgradeCosts.Length;
 
         public int RunsCompleted => data.runsCompleted;
 
@@ -583,6 +625,13 @@ namespace StackMerge
             return (1f - MoveIntervals[clamped] / MoveIntervals[0]) * 100f;
         }
 
+        /// <summary>How much pacing overhead Compute Speed strips from the heavy search solvers at a given level.</summary>
+        public static float GetComputeSpeedEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, ComputeSpeedUpgradeCosts.Length);
+            return Mathf.Min(65f, (float)(clamped * ComputeSpeedReductionPerLevel * 100.0));
+        }
+
         public static float GetDifficultyMaxTierBonus(int level)
         {
             int clamped = Mathf.Clamp(level, 0, DifficultyUpgradeCosts.Length);
@@ -601,6 +650,25 @@ namespace StackMerge
             return (float)(clamped * ProfitableEndingBonusPerLevel * 100.0);
         }
 
+        /// <summary>Raw chips-per-tick at a given Passive Yield level, before stage/income multipliers.</summary>
+        public static long GetPassiveYieldPerTick(int level)
+        {
+            return Math.Max(0, level) * PassiveYieldPerLevel;
+        }
+
+        /// <summary>Seconds between passive ticks at a given Passive Tick Rate level.</summary>
+        public static float GetPassiveTickInterval(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, PassiveTickIntervals.Length - 1);
+            return PassiveTickIntervals[clamped];
+        }
+
+        public static float GetActiveMultiplierEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, ActiveMultiplierUpgradeCosts.Length);
+            return (float)(clamped * ActiveMultiplierBonusPerLevel * 100.0);
+        }
+
         public bool IsMaxSpeed => data.speedLevel >= MoveIntervals.Length - 1;
 
         public int MaxSpeedLevel => SpeedUpgradeCosts.Length;
@@ -617,6 +685,12 @@ namespace StackMerge
 
         public bool IsMaxProfitableEnding => data.profitableEndingLevel >= ProfitableEndingUpgradeCosts.Length;
 
+        public bool IsMaxPassiveYield => data.passiveYieldLevel >= PassiveYieldUpgradeCosts.Length;
+
+        public bool IsMaxPassiveTickRate => data.passiveTickRateLevel >= PassiveTickRateUpgradeCosts.Length;
+
+        public bool IsMaxActiveMultiplier => data.activeMultiplierLevel >= ActiveMultiplierUpgradeCosts.Length;
+
         public int ActiveAgentSlots => BaseAgentSlots + (data.extraAgentSlotUnlocked ? 1 : 0);
 
         public int MaxAgentSlots => BaseAgentSlots + 1;
@@ -626,7 +700,27 @@ namespace StackMerge
             float baseInterval = MoveIntervals[Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1)];
             float minInterval = solverId == SolverId.MachineLearning ? 0.006f : 0.012f;
             float trainingMultiplier = solverId == SolverId.MachineLearning && data.machineLearningTrainingMode ? 0.70f : 1f;
-            return Mathf.Max(minInterval, baseInterval * GetSolverPacingMultiplier(solverId) * AgentMoveIntervalMultiplier * trainingMultiplier);
+            float pacing = GetSolverPacingMultiplier(solverId);
+            if (IsComputeHeavySolver(solverId))
+            {
+                // Compute Speed only shrinks the EXTRA overhead that heavy search-based solvers
+                // carry on top of the shared baseline — it does nothing for light solvers (RAND,
+                // MERG, BAL, ...), which is what makes it a different lever from Solver Speed
+                // instead of just the same upgrade under a second name.
+                pacing *= Mathf.Max(0.35f, 1f - data.computeSpeedLevel * (float)ComputeSpeedReductionPerLevel);
+            }
+
+            return Mathf.Max(minInterval, baseInterval * pacing * AgentMoveIntervalMultiplier * trainingMultiplier);
+        }
+
+        /// <summary>
+        /// The compute-heavy, search-based solvers Compute Speed targets. Light solvers (RAND
+        /// through AntiStall) already run near-instantly and get nothing from this upgrade — only
+        /// Solver Speed helps them.
+        /// </summary>
+        public static bool IsComputeHeavySolver(SolverId solverId)
+        {
+            return solverId is SolverId.Plan3 or SolverId.Plan5 or SolverId.Moca or SolverId.MocaPlus or SolverId.Mcts;
         }
 
         public double GetHighestBlockRewardMultiplier(int highestBlock)
@@ -1080,6 +1174,22 @@ namespace StackMerge
             return upgradeIndex == data.speedLevel && BuySpeedUpgrade();
         }
 
+        public long GetComputeSpeedUpgradeCost()
+        {
+            return IsMaxComputeSpeed ? 0 : ComputeSpeedUpgradeCosts[data.computeSpeedLevel];
+        }
+
+        public bool BuyComputeSpeedUpgrade()
+        {
+            if (IsMaxComputeSpeed || !Spend(GetComputeSpeedUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.computeSpeedLevel++;
+            return true;
+        }
+
         public long GetAutoSolveCost()
         {
             return data.autoSolveUnlocked ? 0 : AutoSolveUnlockCost;
@@ -1327,6 +1437,90 @@ namespace StackMerge
         public bool BuyProfitableEndingUpgrade(int upgradeIndex)
         {
             return upgradeIndex == data.profitableEndingLevel && BuyProfitableEndingUpgrade();
+        }
+
+        public long GetPassiveYieldUpgradeCost()
+        {
+            return IsMaxPassiveYield ? 0 : PassiveYieldUpgradeCosts[data.passiveYieldLevel];
+        }
+
+        public bool BuyPassiveYieldUpgrade()
+        {
+            if (IsMaxPassiveYield || !Spend(GetPassiveYieldUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.passiveYieldLevel++;
+            return true;
+        }
+
+        public long GetPassiveTickRateUpgradeCost()
+        {
+            return IsMaxPassiveTickRate ? 0 : PassiveTickRateUpgradeCosts[data.passiveTickRateLevel];
+        }
+
+        public bool BuyPassiveTickRateUpgrade()
+        {
+            if (IsMaxPassiveTickRate || !Spend(GetPassiveTickRateUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.passiveTickRateLevel++;
+            return true;
+        }
+
+        public long GetActiveMultiplierUpgradeCost()
+        {
+            return IsMaxActiveMultiplier ? 0 : ActiveMultiplierUpgradeCosts[data.activeMultiplierLevel];
+        }
+
+        public bool BuyActiveMultiplierUpgrade()
+        {
+            if (IsMaxActiveMultiplier || !Spend(GetActiveMultiplierUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.activeMultiplierLevel++;
+            return true;
+        }
+
+        // Advances the passive-production clock by `deltaSeconds` and grants any whole ticks that
+        // elapsed. `isActivelyPlaying` applies the Active Multiplier bonus for this call only — it's
+        // not stored, so it can vary frame to frame with no extra bookkeeping. Chips pass through the
+        // same stage/income multipliers as every other income source, so late-game investment (Income
+        // upgrade, Yield Theory research) keeps Passive Production relevant instead of it going stale.
+        public long TickPassiveProduction(float deltaSeconds, bool isActivelyPlaying)
+        {
+            if (data.passiveYieldLevel <= 0 || IsMachineLearningTrainingActive)
+            {
+                return 0;
+            }
+
+            passiveProductionTimer += Math.Max(0f, deltaSeconds);
+            float interval = GetPassiveTickInterval(data.passiveTickRateLevel);
+            if (passiveProductionTimer < interval)
+            {
+                return 0;
+            }
+
+            int ticks = (int)(passiveProductionTimer / interval);
+            passiveProductionTimer -= ticks * interval;
+
+            double multiplier = isActivelyPlaying ? 1.0 + data.activeMultiplierLevel * ActiveMultiplierBonusPerLevel : 1.0;
+            long perTick = Math.Max(1, (long)Math.Ceiling(GetPassiveYieldPerTick(data.passiveYieldLevel) * multiplier));
+            long gained = perTick * ticks;
+
+            gained = ApplyStageMultiplier(gained);
+            gained = ApplyIncomeMultiplier(gained);
+            data.chips += gained;
+            data.totalChipsEarned += gained;
+            data.lifetimeChipsEarned += gained;
+            Save();
+
+            return gained;
         }
 
         public long GetAgentsMenuUnlockCost()
@@ -2288,6 +2482,7 @@ namespace StackMerge
             data.solverTuningUnlocked = false;
             data.tokens = 0;
             data.speedLevel = 0;
+            data.computeSpeedLevel = 0;
             data.autoSolveUnlocked = false;
             data.autoSolveEnabled = false;
             data.autoRestartUnlocked = false;
@@ -2298,6 +2493,10 @@ namespace StackMerge
             data.difficultyLevel = 0;
             data.scalingFrequencyLevel = 0;
             data.profitableEndingLevel = 0;
+            data.passiveYieldLevel = 0;
+            data.passiveTickRateLevel = 0;
+            data.activeMultiplierLevel = 0;
+            passiveProductionTimer = 0f;
             data.modifiersMenuUnlocked = false;
             data.modifierLevels = new int[Modifiers.Length];
             data.runsCompleted = 0;
@@ -2645,12 +2844,16 @@ namespace StackMerge
             }
 
             data.speedLevel = Mathf.Clamp(data.speedLevel, 0, MoveIntervals.Length - 1);
+            data.computeSpeedLevel = Mathf.Clamp(data.computeSpeedLevel, 0, ComputeSpeedUpgradeCosts.Length);
             data.stackCapacityLevel = Mathf.Clamp(data.stackCapacityLevel, 0, StackMergeGameState.MaxStackCapacity - StackMergeGameState.DefaultStackCapacity);
             data.queuePreviewLevel = Mathf.Clamp(data.queuePreviewLevel, 0, QueuePreviewUpgradeCosts.Length);
             data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
             data.difficultyLevel = Mathf.Clamp(data.difficultyLevel, 0, DifficultyUpgradeCosts.Length);
             data.scalingFrequencyLevel = Mathf.Clamp(data.scalingFrequencyLevel, 0, ScalingFrequencyUpgradeCosts.Length);
             data.profitableEndingLevel = Mathf.Clamp(data.profitableEndingLevel, 0, ProfitableEndingUpgradeCosts.Length);
+            data.passiveYieldLevel = Mathf.Clamp(data.passiveYieldLevel, 0, PassiveYieldUpgradeCosts.Length);
+            data.passiveTickRateLevel = Mathf.Clamp(data.passiveTickRateLevel, 0, PassiveTickRateUpgradeCosts.Length);
+            data.activeMultiplierLevel = Mathf.Clamp(data.activeMultiplierLevel, 0, ActiveMultiplierUpgradeCosts.Length);
             data.modifierLevels = NormalizeModifierLevels(data.modifierLevels);
             data.researchInsight = Math.Max(0, data.researchInsight);
             data.lifetimeResearchInsight = Math.Max(data.lifetimeResearchInsight, data.researchInsight);

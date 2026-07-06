@@ -101,6 +101,14 @@ namespace StackMerge
             ["Slightly increases how often higher blocks appear."] = "Óvatosan növeli a magasabb blokkok gyakoriságát.",
             ["Boosts the <sprite name=\"chips\"> bonus at the end of the runs."] = "Növeli a run befejezésekor járó <sprite name=\"chips\"> bónuszt.",
             ["Boosts the <sprite name=\"chips\"> earned during merges and runs."] = "Növeli a merge-ekből és runokból szerzett <sprite name=\"chips\">-eket.",
+            ["Shrinks the delay of Planning and Monte Carlo solvers."] = "Csökkenti a Planning és Monte Carlo solverek késleltetését.",
+            ["Chips trickle in on a timer, on top of your normal play."] = "A normál játék mellett időzítve is termelődik <sprite name=\"chips\">.",
+            ["Passive Production ticks more often."] = "Gyakrabban termelődik a <sprite name=\"chips\">/tick.",
+            ["Boosts Passive Production while you're actively playing."] = "Növeli a <sprite name=\"chips\">/tick-et a runok alatt.",
+            ["Passive yield upgrade unavailable"] = "A Passzív Termelés fejlesztés nem elérhető",
+            ["Passive tick rate upgrade unavailable"] = "A Passzív Termelés gyakoriság fejlesztés nem elérhető",
+            ["Active multiplier upgrade unavailable"] = "Az Aktív Szorzó fejlesztés nem elérhető",
+            ["Compute speed upgrade unavailable"] = "A Számítási Sebesség fejlesztés nem elérhető",
             ["Stage locked"] = "Szakasz zárolva",
             ["Needs algorithm"] = "Algoritmus szükséges",
             ["Needs Agents"] = "Ügynökök szükségesek",
@@ -456,6 +464,12 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Special blocks:", "Speciális blokkok:");
             translated = ReplacePrefix(translated, "Score:", "Pontszám:");
             translated = ReplacePrefix(translated, "Highest block:", "Legmagasabb blokk:");
+            translated = ReplacePrefix(translated, "Scaling frequency level ", "Skálázási gyakoriság szint ");
+            translated = ReplacePrefix(translated, "Profitable ending level ", "Nyereséges befejezés szint ");
+            translated = ReplacePrefix(translated, "Passive yield level ", "Passzív termelés szint ");
+            translated = ReplacePrefix(translated, "Passive tick rate level ", "Passzív termelés gyakoriság szint ");
+            translated = ReplacePrefix(translated, "Active multiplier level ", "Aktív szorzó szint ");
+            translated = ReplacePrefix(translated, "Compute speed level ", "Számítási sebesség szint ");
             translated = ReplacePrefix(translated, "Level ", "Szint ");
             translated = ReplacePrefix(translated, "Slot ", "Slot ");
             translated = ReplacePrefix(translated, "Speed L", "Sebesség L");
