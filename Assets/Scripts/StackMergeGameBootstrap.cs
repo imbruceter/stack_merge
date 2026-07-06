@@ -251,6 +251,7 @@ namespace StackMerge
         [SerializeField] private GameObject gameOverOverlay;
         [SerializeField] private TMP_Text gameOverScoreText;
         [SerializeField] private TMP_Text gameOverBestText;
+        [SerializeField] private Slider gameOverAutoRestartSlider;
 
         [Header("Achievement Notification")]
         [SerializeField] private GameObject achievementNotificationPanel;
@@ -280,7 +281,6 @@ namespace StackMerge
         private float saveFlushTimer;
         private const float SaveFlushInterval = 4f;
         private float trainingEvalTimer;
-        private const float TrainingEvalDuration = 2.5f;
         // Captured once from the panel's own designed height, then reused every reposition so the
         // panel doesn't grow/shrink as it gets moved around.
         private float runInfoDesignHeight = -1f;
@@ -360,17 +360,19 @@ namespace StackMerge
 
         private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
         {
-            (ResearchId.InsightAmplifier, ResearchId.SeedCapital),
-            (ResearchId.InsightAmplifier, ResearchId.PpoBootcamp),
-            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
             (ResearchId.SeedCapital, ResearchId.AutomationMemory),
+            (ResearchId.SeedCapital, ResearchId.PpoBootcamp),
+            (ResearchId.SeedCapital, ResearchId.InsightAmplifier),
             (ResearchId.AutomationMemory, ResearchId.AlgorithmArchive),
-            (ResearchId.AlgorithmArchive, ResearchId.YieldTheory),
-            (ResearchId.PpoBootcamp, ResearchId.PpoMemory),
+            (ResearchId.AlgorithmArchive, ResearchId.AgentSynergy),
+            (ResearchId.AgentSynergy, ResearchId.BulkDiscount),
+            (ResearchId.BulkDiscount, ResearchId.YieldTheory),
+            (ResearchId.PpoBootcamp, ResearchId.EvaluationEfficiency),
+            (ResearchId.EvaluationEfficiency, ResearchId.PpoMemory),
             (ResearchId.PpoMemory, ResearchId.PpoHighFocus),
             (ResearchId.PpoHighFocus, ResearchId.PpoStability),
             (ResearchId.PpoStability, ResearchId.InsightExtractor),
-            (ResearchId.PassiveInsight, ResearchId.InsightExtractor),
+            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
             (ResearchId.PassiveInsight, ResearchId.OfflineEfficiency),
             (ResearchId.OfflineEfficiency, ResearchId.OfflineTime)
         };
@@ -390,6 +392,7 @@ namespace StackMerge
             EnsurePpoSceneUiReferences();
             HidePpoModeModal();
             SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
+            SetActive(gameOverAutoRestartSlider != null ? gameOverAutoRestartSlider.gameObject : null, false);
             EnsureAchievementNotificationReferences();
             WireAchievementNotificationButton();
             PrepareGlobalUiLayering();
@@ -2535,6 +2538,7 @@ namespace StackMerge
         {
             if (bottomTabVisuals.Length == tabButtons.Length)
             {
+                RefreshBottomTabCanonicalLabels();
                 return;
             }
 
@@ -2562,10 +2566,6 @@ namespace StackMerge
                 Image icon = iconTransform != null ? iconTransform.GetComponent<Image>() : null;
                 RectTransform iconBackgroundRect = iconBackground != null ? iconBackground.rectTransform : null;
 
-                string labelText = label != null && !string.Equals(label.text, "Locked", StringComparison.OrdinalIgnoreCase)
-                    ? label.text
-                    : GetDefaultBottomTabLabel(i);
-
                 bottomTabVisuals[i] = new BottomTabVisual
                 {
                     iconBackground = iconBackground,
@@ -2573,10 +2573,24 @@ namespace StackMerge
                     icon = icon,
                     label = label,
                     unlockedIcon = icon != null ? icon.sprite : null,
-                    unlockedLabel = labelText,
+                    unlockedLabel = GetDefaultBottomTabLabel(i),
                     unlockedLabelColor = label != null ? label.color : Color.white,
                     iconBackgroundHomePosition = iconBackgroundRect != null ? iconBackgroundRect.anchoredPosition : Vector2.zero
                 };
+            }
+
+            RefreshBottomTabCanonicalLabels();
+        }
+
+        private void RefreshBottomTabCanonicalLabels()
+        {
+            for (int i = 0; i < bottomTabVisuals.Length; i++)
+            {
+                BottomTabVisual visual = bottomTabVisuals[i];
+                if (visual != null)
+                {
+                    visual.unlockedLabel = GetDefaultBottomTabLabel(i);
+                }
             }
         }
 
@@ -2911,8 +2925,11 @@ namespace StackMerge
                 // game-over menu).
                 if (progression.IsMachineLearningTrainingActive)
                 {
+                    // Pause length comes from progression so the Evaluation Efficiency research can
+                    // shorten it (base 2.5s, -15%/level).
+                    float evalDuration = progression.MachineLearningEvaluationSeconds;
                     trainingEvalTimer += Time.deltaTime;
-                    float percent = Mathf.Clamp01(trainingEvalTimer / TrainingEvalDuration) * 100f;
+                    float percent = Mathf.Clamp01(trainingEvalTimer / Mathf.Max(0.01f, evalDuration)) * 100f;
                     string status = $"Evaluating {percent:0}%";
                     SetText(runStatusText, status);
                     if (selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
@@ -2920,7 +2937,7 @@ namespace StackMerge
                         UpdateTrainingOverlay(status);
                     }
 
-                    if (trainingEvalTimer >= TrainingEvalDuration)
+                    if (trainingEvalTimer >= evalDuration)
                     {
                         trainingEvalTimer = 0f;
                         StartNewGame();
@@ -2933,6 +2950,7 @@ namespace StackMerge
                 {
                     autoRestartTimer += Time.deltaTime;
                     SetText(runStatusText, $"Restart in {Mathf.Max(0f, AutoRestartDelay - autoRestartTimer):0.0}s");
+                    UpdateGameOverAutoRestartSlider();
                     if (autoRestartTimer >= AutoRestartDelay)
                     {
                         if (progression.TryConsumeAutoRestartToken())
@@ -2953,6 +2971,7 @@ namespace StackMerge
             }
 
             autoRestartTimer = 0f;
+            UpdateGameOverAutoRestartSlider(false);
             trainingEvalTimer = 0f;
             // Training always auto-runs even if the player hasn't enabled auto-solve.
             if (!progression.AutoSolveEnabled && !progression.IsMachineLearningTrainingActive)
@@ -5389,7 +5408,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    label += $"\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}";
+                    label += $"\n<sprite name=\"chips_white\"> {FormatNumber(progression.GetAgentCost(definition.Id))}";
                 }
 
                 SetButtonText(button, label);
@@ -5460,11 +5479,12 @@ namespace StackMerge
 
             if (!unlocked)
             {
+                long agentCost = progression.GetAgentCost(selectedAgentId);
                 SetText(agentDetailStatusText, "Locked");
-                SetButtonText(agentDetailActionButton, $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                SetButtonText(agentDetailActionButton, $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(agentCost)}");
                 if (agentDetailActionButton != null)
                 {
-                    agentDetailActionButton.interactable = progression.Chips >= definition.Cost;
+                    agentDetailActionButton.interactable = progression.Chips >= agentCost;
                 }
                 return;
             }
@@ -5519,8 +5539,9 @@ namespace StackMerge
                 bool unlocked = progression.IsAgentUnlocked(card.agentId);
                 if (!unlocked)
                 {
-                    SetButtonText(card.button, $"<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
-                    if (card.button != null) card.button.interactable = progression.Chips >= definition.Cost;
+                    long cardCost = progression.GetAgentCost(card.agentId);
+                    SetButtonText(card.button, $"<sprite name=\"chips_white\"> {FormatNumber(cardCost)}");
+                    if (card.button != null) card.button.interactable = progression.Chips >= cardCost;
                     continue;
                 }
 
@@ -7492,11 +7513,13 @@ namespace StackMerge
             gameOverOverlay.SetActive(showOverlay);
             if (gameState == null || !gameState.IsGameOver)
             {
+                UpdateGameOverAutoRestartSlider(false);
                 return;
             }
 
             if (trainingActive)
             {
+                UpdateGameOverAutoRestartSlider(false);
                 return;
             }
 
@@ -7509,6 +7532,36 @@ namespace StackMerge
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");
+            UpdateGameOverAutoRestartSlider(showOverlay);
+        }
+
+        private void UpdateGameOverAutoRestartSlider(bool? overlayVisibleOverride = null)
+        {
+            if (gameOverAutoRestartSlider == null)
+            {
+                return;
+            }
+
+            bool overlayVisible = overlayVisibleOverride ?? (gameOverOverlay != null && gameOverOverlay.activeSelf);
+            bool show = overlayVisible
+                && gameState != null
+                && gameState.IsGameOver
+                && progression != null
+                && progression.AutoRestartUnlocked
+                && progression.AutoRestartEnabled
+                && (progression.AutoRestartIsTokenFree || progression.Tokens > 0);
+
+            SetActive(gameOverAutoRestartSlider.gameObject, show);
+            if (!show)
+            {
+                gameOverAutoRestartSlider.SetValueWithoutNotify(0f);
+                return;
+            }
+
+            gameOverAutoRestartSlider.minValue = 0f;
+            gameOverAutoRestartSlider.maxValue = 1f;
+            float remainingFraction = 1f - Mathf.Clamp01(autoRestartTimer / Mathf.Max(0.01f, AutoRestartDelay));
+            gameOverAutoRestartSlider.SetValueWithoutNotify(remainingFraction);
         }
 
         private RectTransform CreateBlockInstance(Transform parent)

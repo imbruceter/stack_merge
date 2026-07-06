@@ -12,12 +12,25 @@ namespace StackMerge
     /// Headless progression "bot". It plays the real game economy run after run — using the actual
     /// per-move and per-run chip awards, multipliers and purchase methods from
     /// <see cref="StackMergeProgression"/> — while an auto-buyer spends chips cheapest-first
-    /// (respecting prerequisites). It logs at which run number every solver / upgrade / agent /
-    /// modifier becomes affordable and is bought, all the way to unlocking PPO. This lets us tune the
-    /// economy against the intended progression curve without playing thousands of runs by hand.
+    /// (respecting prerequisites) across every purchasable system: solvers, upgrades (including the
+    /// Passive Production family and Compute Speed), agents, token packs, modifiers and research.
+    ///
+    /// On top of the run counter it keeps a virtual real-time clock: every move costs the real
+    /// <see cref="StackMergeProgression.GetMoveInterval"/> (so Speed / Compute Speed / Overclocker /
+    /// PPO training pacing all matter), every game-over costs the restart delay (auto-restart tokens
+    /// are consumed like in the game), PPO training frames cost training-mode move intervals, and the
+    /// Passive Production ticker is fed the same simulated seconds. Phase milestones (Auto Solve,
+    /// Agents, Modifiers, PPO, Prestige, ...) are stamped with run number AND simulated wall-clock
+    /// time per prestige cycle, so the report directly shows how long a playthrough takes and how
+    /// much the permanent research bonuses shorten each subsequent cycle.
     /// </summary>
     public sealed class StackMergeProgressionSimulatorWindow : EditorWindow
     {
+        // Mirrors StackMergeGameBootstrap.AutoRestartDelay — keep in sync.
+        private const double AutoRestartDelaySeconds = 1.2;
+        // Keep at least this many restart tokens banked before spending chips on other purchases.
+        private const int TokenReserve = 25;
+
         // Solvers preferred for grinding income — fastest strong solvers first. The two slowest
         // (MCTS, MOCA+) are skipped so the simulation stays fast; a grinding player uses a quick
         // solver anyway. PPO is excluded (training-only / endgame).
@@ -28,6 +41,18 @@ namespace StackMerge
             SolverId.Balance, SolverId.Rand
         };
 
+        // Which agents to keep equipped when there are more hired agents than slots (2, or 3 with
+        // the Extra Slot). Ordered by chips-per-real-second impact: Overclocker shortens every move
+        // interval (+33% throughput), Merge Broker boosts the dominant merge income, Velocity Trader's
+        // end-of-run throughput bonus is large once move intervals get short. Restart Sponsor is last:
+        // token packs are cheap relative to late-game income, so a slot is worth more than the tokens.
+        private static readonly AgentId[] AgentPriority =
+        {
+            AgentId.Overclocker, AgentId.MergeBroker, AgentId.VelocityTrader,
+            AgentId.HighwaterAnalyst, AgentId.ScoreAuditor, AgentId.Quartermaster,
+            AgentId.MoveDividend, AgentId.TokenProspector, AgentId.RestartSponsor
+        };
+
         private int maxRuns = 8000;
         private int seed = 12345;
         private int moveCap = 1000;
@@ -36,7 +61,11 @@ namespace StackMerge
         private int targetPrestiges = 6;
         private int ppoNormalRunsPerPrestige = 90;
         private int ppoTrainingFramesPerStep = 90000;
+        private int ppoTrainingMovesPerRun = 150;
         private SolverId manualProxy = SolverId.Rand;
+        private float manualSecondsPerMove = 1.0f;
+        private float manualRestartSeconds = 5.0f;
+        private int wallClockLimitSeconds = 600;
         private Vector2 scroll;
         private string summary = "Configure and press Run.";
         private string lastPath = string.Empty;
@@ -44,29 +73,35 @@ namespace StackMerge
         [MenuItem("Tools/Stack Merge/Progression Simulator")]
         public static void Open()
         {
-            GetWindow<StackMergeProgressionSimulatorWindow>("Progression Sim").minSize = new Vector2(520f, 520f);
+            GetWindow<StackMergeProgressionSimulatorWindow>("Progression Sim").minSize = new Vector2(520f, 560f);
         }
 
         private void OnGUI()
         {
             EditorGUILayout.LabelField("Progression Simulator", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Plays the real economy run-by-run with an auto-buyer (cheapest affordable first). " +
-                "Reports the run number each thing is bought. With Research simulation enabled it continues through prestige cycles and auto-buys research nodes.",
+                "Plays the real economy run-by-run with an auto-buyer (cheapest affordable first) covering solvers, " +
+                "all upgrades, agents (best loadout equipped), token packs, modifiers and research. Tracks a virtual " +
+                "real-time clock (move intervals, restart delays, PPO training pacing, passive production) and reports " +
+                "when each phase is reached per prestige cycle — both in runs and in simulated wall-clock time.",
                 MessageType.Info);
 
             maxRuns = Mathf.Clamp(EditorGUILayout.IntField("Max runs", maxRuns), 10, 1000000);
             seed = EditorGUILayout.IntField("Seed", seed);
             moveCap = Mathf.Clamp(EditorGUILayout.IntField("Move cap / run", moveCap), 20, 5000);
             stopAtPpo = EditorGUILayout.Toggle("Stop when PPO unlocks", stopAtPpo);
-            simulateResearch = EditorGUILayout.Toggle(new GUIContent("Simulate prestige / research", "Continues after PPO by injecting editor-only PPO training/normal progress and buying research."), simulateResearch);
+            simulateResearch = EditorGUILayout.Toggle(new GUIContent("Simulate prestige / research", "Continues after PPO through training, Normal-mode runs and prestige cycles, auto-buying research nodes."), simulateResearch);
             using (new EditorGUI.DisabledScope(!simulateResearch || stopAtPpo))
             {
                 targetPrestiges = Mathf.Clamp(EditorGUILayout.IntField("Target prestiges", targetPrestiges), 1, 1000);
                 ppoTrainingFramesPerStep = Mathf.Clamp(EditorGUILayout.IntField("PPO training frames / step", ppoTrainingFramesPerStep), 1000, 2000000);
+                ppoTrainingMovesPerRun = Mathf.Clamp(EditorGUILayout.IntField(new GUIContent("PPO training moves / run", "Estimated average run length while training — used to count the per-run 'Evaluating…' pauses."), ppoTrainingMovesPerRun), 20, 2000);
                 ppoNormalRunsPerPrestige = Mathf.Clamp(EditorGUILayout.IntField("PPO normal runs / prestige", ppoNormalRunsPerPrestige), 1, 10000);
             }
             manualProxy = (SolverId)EditorGUILayout.EnumPopup(new GUIContent("Manual play proxy", "Solver used to model the human player before Auto Solve is bought."), manualProxy);
+            manualSecondsPerMove = Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Manual sec / move", "How long a human takes per move before Auto Solve."), manualSecondsPerMove), 0.1f, 30f);
+            manualRestartSeconds = Mathf.Clamp(EditorGUILayout.FloatField(new GUIContent("Manual restart sec", "Time to restart by hand — also used when Auto Restart has no token."), manualRestartSeconds), 0.5f, 120f);
+            wallClockLimitSeconds = Mathf.Clamp(EditorGUILayout.IntField(new GUIContent("Editor time limit (s)", "Safety cap on how long the simulation may hog the editor."), wallClockLimitSeconds), 30, 14400);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -96,10 +131,10 @@ namespace StackMerge
             var progression = new StackMergeProgression(new StackMergeProgressionData());
             IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
             var rng = new System.Random(seed);
+            var sim = new SimState();
 
-            var purchases = new List<PurchaseRecord>();
             var details = new StringBuilder();
-            details.AppendLine("Run\tChips\tInsight\tCycleInsight\tPrestiges\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
+            details.AppendLine("Run\tSimTime\tChips\tInsight\tCycleInsight\tPrestiges\tGrossIncome\tCumEarned\tSolver\tScore\tMoves\tHigh\tBought");
 
             int run = 0;
             bool ppoUnlocked = false;
@@ -109,38 +144,82 @@ namespace StackMerge
             while (run < maxRuns && !(stopAtPpo && ppoUnlocked) && !ResearchTargetReached(progression))
             {
                 run++;
-                bool auto = progression.AutoSolveEnabled && progression.HasPurchasedSolver;
-                SolverId solverId = auto ? BestIncomeSolver(progression) : manualProxy;
+                bool researchLayer = simulateResearch && !stopAtPpo && progression.IsSolverUnlocked(SolverId.MachineLearning);
+                long gross = 0;
+                string activity;
+                RunResult result = default;
+                SolverId solverId = manualProxy;
 
-                RunResult result = PlayRun(progression, solvers, solverId, rng);
-                long runBonus = progression.AwardRunCompleted(result.Score, solverId, result.Moves, result.Merges, result.High, !auto, 0f);
-                long gross = result.MoveIncome + runBonus;
-
-                string bought = AutoBuy(progression, purchases, run);
-                ppoUnlocked = progression.IsSolverUnlocked(SolverId.MachineLearning);
-                string researchEvent = SimulateResearchLayer(progression, purchases, run, rng);
-                if (!string.IsNullOrEmpty(researchEvent))
+                if (researchLayer && !progression.MachineLearningPlayingModeUnlocked)
                 {
-                    bought = string.IsNullOrEmpty(bought) ? researchEvent : $"{bought}, {researchEvent}";
+                    // PPO training phase. It is EXCLUSIVE like in the real game: the board plays PPO in
+                    // training mode, so there is no chip income and Passive Production is suspended.
+                    activity = AdvancePpoTraining(progression, sim, run);
+                    solverId = SolverId.MachineLearning;
                 }
+                else if (researchLayer)
+                {
+                    // PPO Normal-mode phase: batch of Normal runs (estimated performance, real time
+                    // cost per move), then prestige once Insight is on the table.
+                    activity = AdvancePpoNormalAndPrestige(progression, sim, run, rng);
+                    solverId = SolverId.MachineLearning;
+                }
+                else
+                {
+                    // Regular income run with the fastest strong unlocked solver (or the manual proxy).
+                    bool auto = progression.AutoSolveEnabled && progression.HasPurchasedSolver;
+                    solverId = auto ? BestIncomeSolver(progression) : manualProxy;
+                    if (auto)
+                    {
+                        // Keep the game's "selected solver" in sync with what we actually play, so
+                        // IsMachineLearningTrainingActive can't wrongly suppress income once PPO is owned.
+                        progression.SelectOrUnlockSolver(solverId);
+                    }
+
+                    result = PlayRun(progression, solvers, solverId, rng);
+                    double moveInterval = auto ? progression.GetMoveInterval(solverId) : manualSecondsPerMove;
+                    double runSeconds = result.Moves * moveInterval;
+                    sim.Clock += runSeconds;
+                    progression.TickPassiveProduction((float)runSeconds, true);
+
+                    long runBonus = progression.AwardRunCompleted(result.Score, solverId, result.Moves, result.Merges, result.High, !auto, (float)runSeconds);
+                    gross = result.MoveIncome + runBonus;
+
+                    double restartSeconds = ConsumeRestartDelay(progression, auto);
+                    sim.Clock += restartSeconds;
+                    progression.TickPassiveProduction((float)restartSeconds, false);
+                    activity = string.Empty;
+                }
+
+                string bought = AutoBuy(progression, sim, run);
+                if (!string.IsNullOrEmpty(activity))
+                {
+                    bought = string.IsNullOrEmpty(bought) ? activity : $"{bought}, {activity}";
+                }
+
+                ApplyAgentLoadout(progression);
+                RecordPhases(progression, sim, run);
+                ppoUnlocked = progression.IsSolverUnlocked(SolverId.MachineLearning);
 
                 if (run % sampleEvery == 0 || bought.Length > 0 || run <= 12)
                 {
                     long earned = progression.TotalChipsEarned;
-                    details.AppendLine($"{run}\t{progression.Chips}\t{progression.ResearchInsight}\t{progression.ResearchInsightEarnedThisPrestige}\t{progression.PrestigeCount}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
+                    details.AppendLine($"{run}\t{FormatTime(sim.Clock)}\t{progression.Chips}\t{progression.ResearchInsight}\t{progression.ResearchInsightEarnedThisPrestige}\t{progression.PrestigeCount}\t{gross}\t{earned}\t{solverId}\t{result.Score}\t{result.Moves}\t{result.High}\t{bought}");
                 }
 
-                if (stopwatch.Elapsed.TotalSeconds > 600)
+                if (stopwatch.Elapsed.TotalSeconds > wallClockLimitSeconds)
                 {
-                    summary = $"Stopped after {run} runs ({stopwatch.Elapsed.TotalSeconds:0}s safety limit). Increase the limit in code or reduce Max runs.\n\n" + BuildSummary(progression, purchases, run, false);
-                    lastPath = WriteFile(details, purchases, progression, run);
+                    CloseOpenCycle(sim, progression, run);
+                    summary = $"Stopped after {run} runs ({stopwatch.Elapsed.TotalSeconds:0}s safety limit). Raise 'Editor time limit' or reduce Max runs.\n\n" + BuildSummary(progression, sim, run, false);
+                    lastPath = WriteFile(details, sim, progression, run);
                     Repaint();
                     return;
                 }
             }
 
-            summary = BuildSummary(progression, purchases, run, ppoUnlocked);
-            lastPath = WriteFile(details, purchases, progression, run);
+            CloseOpenCycle(sim, progression, run);
+            summary = BuildSummary(progression, sim, run, ppoUnlocked);
+            lastPath = WriteFile(details, sim, progression, run);
             Repaint();
         }
 
@@ -195,6 +274,21 @@ namespace StackMerge
             return new RunResult(state.Score, state.BlocksDropped, state.TotalMerges, state.HighestMergedBlock, moveIncome);
         }
 
+        /// <summary>
+        /// Advances the clock across one game-over → next-run gap. Auto Restart takes 1.2s and eats a
+        /// token exactly like the game does; without a token (or without Auto Restart) the player
+        /// restarts by hand.
+        /// </summary>
+        private double ConsumeRestartDelay(StackMergeProgression progression, bool autoPlay)
+        {
+            if (autoPlay && progression.AutoRestartUnlocked && progression.AutoRestartEnabled && progression.TryConsumeAutoRestartToken())
+            {
+                return AutoRestartDelaySeconds;
+            }
+
+            return manualRestartSeconds;
+        }
+
         private static SolverId BestIncomeSolver(StackMergeProgression progression)
         {
             foreach (SolverId candidate in IncomeSolverPreference)
@@ -208,87 +302,84 @@ namespace StackMerge
             return SolverId.Rand;
         }
 
-        private string AutoBuy(StackMergeProgression progression, List<PurchaseRecord> purchases, int run)
+        /// <summary>
+        /// PPO training phase step: injects a chunk of training frames and charges the clock the real
+        /// training-mode move interval per frame. No chips are earned while training (matches the game).
+        /// </summary>
+        private string AdvancePpoTraining(StackMergeProgression progression, SimState sim, int run)
         {
-            var boughtThisRun = new List<string>();
-            int guard = 0;
-            while (guard++ < 300)
+            progression.SelectOrUnlockSolver(SolverId.MachineLearning);
+            progression.SetMachineLearningTrainingMode(true);
+
+            long missingFrames = progression.MachineLearningPlayingModeFrameRequirement - progression.MachineLearningFrames;
+            int frames = (int)Math.Min(Math.Max(0, missingFrames), ppoTrainingFramesPerStep);
+            var events = new List<string>();
+            if (frames > 0)
             {
-                List<Candidate> candidates = GetCandidates(progression);
-                Candidate? cheapest = null;
-                foreach (Candidate candidate in candidates)
-                {
-                    if (candidate.Cost <= progression.Chips && (cheapest == null || candidate.Cost < cheapest.Value.Cost))
-                    {
-                        cheapest = candidate;
-                    }
-                }
-
-                if (cheapest == null)
-                {
-                    break;
-                }
-
-                long costPaid = cheapest.Value.Cost;
-                if (!cheapest.Value.Buy())
-                {
-                    break;
-                }
-
-                purchases.Add(new PurchaseRecord(run, cheapest.Value.Label, costPaid, progression.Chips, progression.TotalChipsEarned));
-                boughtThisRun.Add(cheapest.Value.Label);
+                double interval = progression.GetMoveInterval(SolverId.MachineLearning);
+                // Each training run ends in the artificial "Evaluating…" pause (research-reducible),
+                // then restarts for free — so training time = moves + per-run evaluation pauses.
+                double trainingRuns = frames / (double)Mathf.Max(20, ppoTrainingMovesPerRun);
+                double evalSeconds = trainingRuns * progression.MachineLearningEvaluationSeconds;
+                progression.AddMachineLearningSimulationProgress(frames, 0, 0, 0, 1, 0);
+                sim.Clock += frames * interval + evalSeconds;
+                events.Add($"PPO train +{frames:N0}f ({FormatTime(frames * interval + evalSeconds)}, eval {FormatTime(evalSeconds)})");
             }
 
-            return string.Join(", ", boughtThisRun);
-        }
-
-        private bool ResearchTargetReached(StackMergeProgression progression)
-        {
-            return simulateResearch
-                && !stopAtPpo
-                && targetPrestiges > 0
-                && progression.PrestigeCount >= targetPrestiges;
-        }
-
-        private string SimulateResearchLayer(StackMergeProgression progression, List<PurchaseRecord> purchases, int run, System.Random rng)
-        {
-            if (!simulateResearch || stopAtPpo || !progression.IsSolverUnlocked(SolverId.MachineLearning))
+            if (progression.MachineLearningPlayingModeUnlocked)
             {
-                return string.Empty;
+                progression.SetMachineLearningTrainingMode(false);
+                sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, "PPO Training Complete", 0, "frames", progression.MachineLearningFrames, progression.TotalChipsEarned));
+                events.Add("PPO Training Complete");
             }
+
+            return string.Join(", ", events);
+        }
+
+        /// <summary>
+        /// PPO Normal-mode phase step: a batch of Normal runs (estimated result, real per-move time in
+        /// non-training pacing, restart delays and token use included), then prestige + research buys.
+        /// </summary>
+        private string AdvancePpoNormalAndPrestige(StackMergeProgression progression, SimState sim, int run, System.Random rng)
+        {
+            progression.SelectOrUnlockSolver(SolverId.MachineLearning);
+            progression.SetMachineLearningTrainingMode(false);
 
             var events = new List<string>();
-            if (!progression.MachineLearningPlayingModeUnlocked)
+            (long score, int high, int moves, int merges) = EstimatePpoNormalRun(progression, rng);
+            long insightBefore = progression.ResearchInsight;
+            progression.AddMachineLearningSimulationProgress(0, ppoNormalRunsPerPrestige, score, high, moves, merges);
+            long passiveInsight = progression.ResearchInsight - insightBefore;
+            if (passiveInsight > 0)
             {
-                long missingFrames = progression.MachineLearningPlayingModeFrameRequirement - progression.MachineLearningFrames;
-                int frames = (int)Math.Min(Math.Max(0, missingFrames), ppoTrainingFramesPerStep);
-                if (frames > 0)
-                {
-                    progression.AddMachineLearningSimulationProgress(frames, 0, 0, 0, 1, 0);
-                    events.Add($"PPO train +{frames:N0}f");
-                }
-
-                if (progression.MachineLearningPlayingModeUnlocked)
-                {
-                    progression.SetMachineLearningTrainingMode(false);
-                    purchases.Add(new PurchaseRecord(run, "PPO Training Complete", 0, "frames", progression.MachineLearningFrames, progression.TotalChipsEarned));
-                    events.Add("PPO Training Complete");
-                }
-
-                return string.Join(", ", events);
+                // Normal-mode runs trickle Insight directly (Passive Insight mechanic) on top of the
+                // prestige payout — surface it so the Insight bookkeeping in the report adds up.
+                events.Add($"Passive Insight +{passiveInsight}");
             }
 
-            (long score, int high, int moves, int merges) = EstimatePpoNormalRun(progression, rng);
-            progression.AddMachineLearningSimulationProgress(0, ppoNormalRunsPerPrestige, score, high, moves, merges);
-            events.Add($"PPO Normal x{ppoNormalRunsPerPrestige}");
+            double interval = progression.GetMoveInterval(SolverId.MachineLearning);
+            double playSeconds = (double)ppoNormalRunsPerPrestige * moves * interval;
+            double restartSeconds = 0;
+            for (int i = 0; i < ppoNormalRunsPerPrestige; i++)
+            {
+                restartSeconds += ConsumeRestartDelay(progression, true);
+            }
+
+            sim.Clock += playSeconds + restartSeconds;
+            progression.TickPassiveProduction((float)playSeconds, true);
+            progression.TickPassiveProduction((float)restartSeconds, false);
+            events.Add($"PPO Normal x{ppoNormalRunsPerPrestige} ({FormatTime(playSeconds + restartSeconds)})");
 
             long preview = progression.PreviewPrestigeInsightGain();
             if (preview > 0 && progression.PrestigeCount < targetPrestiges)
             {
                 long gained = progression.ExecutePrestige();
-                purchases.Add(new PurchaseRecord(run, $"Prestige +{gained} Insight", 0, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
+                sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, $"Prestige +{gained} Insight", 0, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
+                RecordPhase(sim, $"Prestige #{progression.PrestigeCount}", run);
                 events.Add($"Prestige +{gained}");
-                string research = AutoBuyResearch(progression, purchases, run);
+                StartNewCycle(sim, run, gained, progression.PrestigeCount);
+
+                string research = AutoBuyResearch(progression, sim, run);
                 if (!string.IsNullOrEmpty(research))
                 {
                     events.Add(research);
@@ -319,7 +410,102 @@ namespace StackMerge
             return (score, high, moves, merges);
         }
 
-        private string AutoBuyResearch(StackMergeProgression progression, List<PurchaseRecord> purchases, int run)
+        private string AutoBuy(StackMergeProgression progression, SimState sim, int run)
+        {
+            var boughtThisRun = new List<string>();
+
+            // Token maintenance first: Auto Restart is worthless without tokens, and the pack is a
+            // repeatable purchase the cheapest-first loop must not see (it would buy packs forever).
+            if (progression.AutoRestartUnlocked && !progression.AutoRestartIsTokenFree)
+            {
+                int packGuard = 0;
+                while (progression.Tokens < TokenReserve
+                       && progression.Chips >= progression.GetTokenPackCost() * 4
+                       && packGuard++ < 10
+                       && progression.BuyTokenPack())
+                {
+                    sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, "Token Pack", progression.GetTokenPackCost(), progression.Chips, progression.TotalChipsEarned));
+                    boughtThisRun.Add("Token Pack");
+                }
+            }
+
+            int guard = 0;
+            while (guard++ < 300)
+            {
+                List<Candidate> candidates = GetCandidates(progression);
+                Candidate? cheapest = null;
+                foreach (Candidate candidate in candidates)
+                {
+                    if (candidate.Cost <= progression.Chips && (cheapest == null || candidate.Cost < cheapest.Value.Cost))
+                    {
+                        cheapest = candidate;
+                    }
+                }
+
+                if (cheapest == null)
+                {
+                    break;
+                }
+
+                long costPaid = cheapest.Value.Cost;
+                if (!cheapest.Value.Buy())
+                {
+                    break;
+                }
+
+                sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, cheapest.Value.Label, costPaid, progression.Chips, progression.TotalChipsEarned));
+                boughtThisRun.Add(cheapest.Value.Label);
+            }
+
+            return string.Join(", ", boughtThisRun);
+        }
+
+        /// <summary>
+        /// Keeps the best hired agents equipped. The game auto-equips whatever was bought first, but a
+        /// real player swaps to the strongest loadout once slots are contended.
+        /// </summary>
+        private static void ApplyAgentLoadout(StackMergeProgression progression)
+        {
+            if (!progression.AgentsMenuUnlocked)
+            {
+                return;
+            }
+
+            var desired = new List<AgentId>();
+            foreach (AgentId agentId in AgentPriority)
+            {
+                if (progression.IsAgentUnlocked(agentId) && desired.Count < progression.ActiveAgentSlots)
+                {
+                    desired.Add(agentId);
+                }
+            }
+
+            foreach (AgentDefinition definition in StackMergeProgression.Agents)
+            {
+                if (progression.IsAgentActive(definition.Id) && !desired.Contains(definition.Id))
+                {
+                    progression.UnequipAgent(definition.Id);
+                }
+            }
+
+            foreach (AgentId agentId in desired)
+            {
+                if (!progression.IsAgentActive(agentId))
+                {
+                    progression.EquipAgent(agentId);
+                }
+            }
+        }
+
+        private bool ResearchTargetReached(StackMergeProgression progression)
+        {
+            return simulateResearch
+                && !stopAtPpo
+                && targetPrestiges > 0
+                && progression.PrestigeCount >= targetPrestiges;
+        }
+
+        private string AutoBuyResearch(StackMergeProgression progression, SimState sim, int run)
         {
             var boughtThisRun = new List<string>();
             int guard = 0;
@@ -346,7 +532,7 @@ namespace StackMerge
                     break;
                 }
 
-                purchases.Add(new PurchaseRecord(run, cheapest.Value.Label, costPaid, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
+                sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, cheapest.Value.Label, costPaid, "Insight", progression.ResearchInsight, progression.TotalChipsEarned));
                 boughtThisRun.Add(cheapest.Value.Label);
             }
 
@@ -439,6 +625,11 @@ namespace StackMerge
                 list.Add(new Candidate($"Speed L{p.SpeedLevel + 1}", p.GetSpeedUpgradeCost(), p.BuySpeedUpgrade));
             }
 
+            if (!p.IsMaxComputeSpeed)
+            {
+                list.Add(new Candidate($"Compute Speed L{p.ComputeSpeedLevel + 1}", p.GetComputeSpeedUpgradeCost(), p.BuyComputeSpeedUpgrade));
+            }
+
             if (!p.IsMaxStackCapacity)
             {
                 list.Add(new Candidate($"Stack Cap L{p.StackCapacityLevel + 1}", p.GetStackCapacityUpgradeCost(), p.BuyStackCapacityUpgrade));
@@ -469,6 +660,21 @@ namespace StackMerge
                 list.Add(new Candidate($"Profitable Ending L{p.ProfitableEndingLevel + 1}", p.GetProfitableEndingUpgradeCost(), p.BuyProfitableEndingUpgrade));
             }
 
+            if (!p.IsMaxPassiveYield)
+            {
+                list.Add(new Candidate($"Passive Yield L{p.PassiveYieldLevel + 1}", p.GetPassiveYieldUpgradeCost(), p.BuyPassiveYieldUpgrade));
+            }
+
+            if (!p.IsMaxPassiveTickRate)
+            {
+                list.Add(new Candidate($"Passive Tick Rate L{p.PassiveTickRateLevel + 1}", p.GetPassiveTickRateUpgradeCost(), p.BuyPassiveTickRateUpgrade));
+            }
+
+            if (!p.IsMaxActiveMultiplier)
+            {
+                list.Add(new Candidate($"Active Multiplier L{p.ActiveMultiplierLevel + 1}", p.GetActiveMultiplierUpgradeCost(), p.BuyActiveMultiplierUpgrade));
+            }
+
             if (p.AgentsMenuUnlocked)
             {
                 foreach (AgentDefinition agent in StackMergeProgression.Agents)
@@ -476,7 +682,7 @@ namespace StackMerge
                     if (!p.IsAgentUnlocked(agent.Id))
                     {
                         AgentId agentId = agent.Id;
-                        list.Add(new Candidate($"Agent {agent.DisplayName}", agent.Cost, () => p.BuyOrToggleAgent(agentId)));
+                        list.Add(new Candidate($"Agent {agent.DisplayName}", p.GetAgentCost(agentId), () => p.BuyOrToggleAgent(agentId)));
                     }
                 }
             }
@@ -496,16 +702,128 @@ namespace StackMerge
             return list;
         }
 
-        private string BuildSummary(StackMergeProgression progression, List<PurchaseRecord> purchases, int runs, bool ppoUnlocked)
+        // ---------------------------------------------------------------------------------------
+        // Phase / cycle tracking
+        // ---------------------------------------------------------------------------------------
+
+        private static void RecordPhases(StackMergeProgression p, SimState sim, int run)
         {
+            void Check(string name, bool condition)
+            {
+                if (condition)
+                {
+                    RecordPhase(sim, name, run);
+                }
+            }
+
+            Check("First solver bought", p.HasPurchasedSolver);
+            Check("Auto Solve", p.AutoSolveUnlocked);
+            Check("Auto Restart", p.AutoRestartUnlocked);
+            Check("Solver Tuning", p.SolverTuningUnlocked);
+            Check("Agents Menu", p.AgentsMenuUnlocked);
+            Check("All agents hired", StackMergeProgression.Agents.All(agent => p.IsAgentUnlocked(agent.Id)));
+            Check("Modifiers Menu", p.ModifiersMenuUnlocked);
+            Check("All modifiers maxed (PPO gate)", p.CanUnlockMachineLearning);
+            Check("PPO bought", p.IsSolverUnlocked(SolverId.MachineLearning));
+            Check("PPO Normal mode", p.IsSolverUnlocked(SolverId.MachineLearning) && p.MachineLearningPlayingModeUnlocked);
+            Check("All chip upgrades maxed",
+                p.IsMaxSpeed && p.IsMaxComputeSpeed && p.IsMaxStackCapacity && p.IsMaxQueuePreview
+                && p.IsMaxIncome && p.IsMaxDifficulty && p.IsMaxScalingFrequency && p.IsMaxProfitableEnding
+                && p.IsMaxPassiveYield && p.IsMaxPassiveTickRate && p.IsMaxActiveMultiplier);
+        }
+
+        private static void RecordPhase(SimState sim, string name, int run)
+        {
+            if (!sim.PhasesThisCycle.Add(name))
+            {
+                return;
+            }
+
+            sim.Phases.Add(new PhaseRecord(sim.CycleIndex, name, run, sim.Clock, sim.Clock - sim.CycleStartSeconds));
+        }
+
+        private static void StartNewCycle(SimState sim, int run, long insightGained, int prestigeCount)
+        {
+            sim.Cycles.Add(new CycleRecord(sim.CycleIndex, sim.CycleStartRun, run, sim.CycleStartSeconds, sim.Clock, insightGained, prestigeCount));
+            sim.CycleIndex++;
+            sim.CycleStartSeconds = sim.Clock;
+            sim.CycleStartRun = run + 1;
+            sim.PhasesThisCycle.Clear();
+        }
+
+        private static void CloseOpenCycle(SimState sim, StackMergeProgression progression, int run)
+        {
+            if (run >= sim.CycleStartRun)
+            {
+                sim.Cycles.Add(new CycleRecord(sim.CycleIndex, sim.CycleStartRun, run, sim.CycleStartSeconds, sim.Clock, 0, progression.PrestigeCount) { Unfinished = true });
+            }
+        }
+
+        private static string FormatTime(double seconds)
+        {
+            if (seconds < 0 || double.IsNaN(seconds))
+            {
+                seconds = 0;
+            }
+
+            TimeSpan t = TimeSpan.FromSeconds(seconds);
+            return t.TotalDays >= 1.0
+                ? $"{(int)t.TotalDays}d {t.Hours:00}:{t.Minutes:00}:{t.Seconds:00}"
+                : $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}";
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Reporting
+        // ---------------------------------------------------------------------------------------
+
+        private string BuildSummary(StackMergeProgression progression, SimState sim, int runs, bool ppoUnlocked)
+        {
+            List<PurchaseRecord> purchases = sim.Purchases;
             var sb = new StringBuilder();
-            sb.AppendLine($"Simulated {runs} runs  |  final chips {progression.Chips:N0}  |  total earned {progression.TotalChipsEarned:N0}");
+            sb.AppendLine($"Simulated {runs} runs  |  total sim time {FormatTime(sim.Clock)} (active play)  |  final chips {progression.Chips:N0}  |  total earned {progression.TotalChipsEarned:N0}");
             sb.AppendLine($"Prestiges: {progression.PrestigeCount:N0}  |  Insight {progression.ResearchInsight:N0}  |  Cycle Insight {progression.ResearchInsightEarnedThisPrestige:N0}  |  Lifetime Insight {progression.LifetimeResearchInsight:N0}  |  Last prestige {progression.LastPrestigeInsight:N0}");
-            sb.AppendLine($"PPO unlocked: {(ppoUnlocked ? $"YES at run {FirstRun(purchases, "Solver PPO")}" : "no")}");
+            // ppoUnlocked only reflects the final state (a prestige resets it) — report the first
+            // actual purchase instead so multi-prestige summaries don't claim "no".
+            PurchaseRecord? firstPpo = FindFirst(purchases, "Solver PPO");
+            sb.AppendLine($"PPO first unlocked: {(firstPpo.HasValue ? $"run {firstPpo.Value.Run} ({FormatTime(firstPpo.Value.SimSeconds)})" : "never")}");
             sb.AppendLine($"Highest block ever: {progression.HighestBlockEver}  |  best run score: {progression.BestRunScore:N0}");
             sb.AppendLine();
 
-            sb.AppendLine("=== Key milestones (run # when bought) ===");
+            sb.AppendLine("=== Prestige cycles (real-time length of each playthrough) ===");
+            foreach (CycleRecord cycle in sim.Cycles)
+            {
+                string ending = cycle.Unfinished
+                    ? "(unfinished / end of sim)"
+                    : $"→ Prestige #{cycle.PrestigeCountAfter} (+{cycle.InsightGained} Insight)";
+                sb.AppendLine($"  Cycle {cycle.Index}: {FormatTime(cycle.DurationSeconds),-14}  runs {cycle.StartRun}-{cycle.EndRun}  {ending}");
+            }
+
+            if (sim.Cycles.Count(c => !c.Unfinished) >= 2)
+            {
+                CycleRecord first = sim.Cycles.First(c => !c.Unfinished);
+                CycleRecord last = sim.Cycles.Last(c => !c.Unfinished);
+                if (first.DurationSeconds > 1)
+                {
+                    sb.AppendLine($"  Permanent-bonus effect: cycle {last.Index} took {last.DurationSeconds / first.DurationSeconds:P0} of cycle {first.Index}'s time.");
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("=== Phase timeline per cycle (Δ = time since cycle start) ===");
+            int currentCycle = -1;
+            foreach (PhaseRecord phase in sim.Phases)
+            {
+                if (phase.Cycle != currentCycle)
+                {
+                    currentCycle = phase.Cycle;
+                    sb.AppendLine($"  Cycle {currentCycle}:");
+                }
+
+                sb.AppendLine($"    {phase.Name,-32} run {phase.Run,6}   Δ {FormatTime(phase.CycleSeconds),-12} (t = {FormatTime(phase.SimSeconds)})");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("=== Key milestones (first occurrence) ===");
             AppendMilestone(sb, purchases, "Solver RAND", "Solver RAND");
             AppendMilestone(sb, purchases, "Auto Solve", "Auto Solve");
             AppendMilestone(sb, purchases, "First Chip Yield", "Chip Yield");
@@ -523,13 +841,13 @@ namespace StackMerge
             AppendMilestone(sb, purchases, "Solver PPO", "Solver PPO");
             AppendMilestone(sb, purchases, "PPO Training Done", "PPO Training Complete");
             AppendMilestone(sb, purchases, "First Prestige", "Prestige +");
-            AppendMilestone(sb, purchases, "Root Research", "Research Insight Amplifier");
+            AppendMilestone(sb, purchases, "Root Research", "Research Seed Capital");
             sb.AppendLine();
 
             sb.AppendLine("=== Full purchase timeline ===");
             foreach (PurchaseRecord record in purchases)
             {
-                sb.AppendLine($"Run {record.Run,6}  |  {record.Label,-32}  {record.Cost,14:N0} {record.Currency,-7}  (balance {record.BalanceAfter,14:N0})");
+                sb.AppendLine($"Run {record.Run,6}  t {FormatTime(record.SimSeconds),-12}  |  {record.Label,-36}  {record.Cost,14:N0} {record.Currency,-7}  (balance {record.BalanceAfter,14:N0})");
             }
 
             return sb.ToString();
@@ -537,24 +855,36 @@ namespace StackMerge
 
         private static void AppendMilestone(StringBuilder sb, List<PurchaseRecord> purchases, string label, string startsWith)
         {
-            int run = FirstRun(purchases, startsWith);
-            sb.AppendLine($"  {label,-22}: {(run > 0 ? $"run {run}" : "not reached")}");
+            PurchaseRecord? record = FindFirst(purchases, startsWith);
+            sb.AppendLine($"  {label,-22}: {(record.HasValue ? $"run {record.Value.Run}  ({FormatTime(record.Value.SimSeconds)})" : "not reached")}");
         }
 
         private static int FirstRun(List<PurchaseRecord> purchases, string startsWith)
+        {
+            PurchaseRecord? record = FindFirst(purchases, startsWith);
+            return record?.Run ?? 0;
+        }
+
+        private static string FirstTime(List<PurchaseRecord> purchases, string startsWith)
+        {
+            PurchaseRecord? record = FindFirst(purchases, startsWith);
+            return record.HasValue ? FormatTime(record.Value.SimSeconds) : "-";
+        }
+
+        private static PurchaseRecord? FindFirst(List<PurchaseRecord> purchases, string startsWith)
         {
             foreach (PurchaseRecord record in purchases)
             {
                 if (record.Label.StartsWith(startsWith, StringComparison.Ordinal))
                 {
-                    return record.Run;
+                    return record;
                 }
             }
 
-            return 0;
+            return null;
         }
 
-        private string WriteFile(StringBuilder details, List<PurchaseRecord> purchases, StackMergeProgression progression, int runs)
+        private string WriteFile(StringBuilder details, SimState sim, StackMergeProgression progression, int runs)
         {
             try
             {
@@ -564,13 +894,29 @@ namespace StackMerge
 
                 var sb = new StringBuilder();
                 sb.AppendLine("# Progression simulation");
-                sb.AppendLine($"# runs={runs} seed={seed} moveCap={moveCap} manualProxy={manualProxy} stopAtPpo={stopAtPpo} simulateResearch={simulateResearch} targetPrestiges={targetPrestiges} ppoNormalRunsPerPrestige={ppoNormalRunsPerPrestige}");
-                sb.AppendLine($"# finalChips={progression.Chips} totalEarned={progression.TotalChipsEarned} prestiges={progression.PrestigeCount} insight={progression.ResearchInsight} cycleInsight={progression.ResearchInsightEarnedThisPrestige} lifetimeInsight={progression.LifetimeResearchInsight}");
-                sb.AppendLine("# Purchases:");
-                sb.AppendLine("Run\tLabel\tCost\tCurrency\tBalanceAfter\tTotalEarnedAfter");
-                foreach (PurchaseRecord record in purchases)
+                sb.AppendLine($"# runs={runs} seed={seed} moveCap={moveCap} manualProxy={manualProxy} manualSecPerMove={manualSecondsPerMove} manualRestartSec={manualRestartSeconds} stopAtPpo={stopAtPpo} simulateResearch={simulateResearch} targetPrestiges={targetPrestiges} ppoNormalRunsPerPrestige={ppoNormalRunsPerPrestige} ppoTrainingMovesPerRun={ppoTrainingMovesPerRun}");
+                sb.AppendLine($"# finalChips={progression.Chips} totalEarned={progression.TotalChipsEarned} prestiges={progression.PrestigeCount} insight={progression.ResearchInsight} cycleInsight={progression.ResearchInsightEarnedThisPrestige} lifetimeInsight={progression.LifetimeResearchInsight} simSeconds={sim.Clock:0}");
+                sb.AppendLine("# Cycles:");
+                sb.AppendLine("Cycle\tStartRun\tEndRun\tStartSeconds\tEndSeconds\tDurationSeconds\tInsightGained\tUnfinished");
+                foreach (CycleRecord cycle in sim.Cycles)
                 {
-                    sb.AppendLine($"{record.Run}\t{record.Label}\t{record.Cost}\t{record.Currency}\t{record.BalanceAfter}\t{record.TotalEarnedAfter}");
+                    sb.AppendLine($"{cycle.Index}\t{cycle.StartRun}\t{cycle.EndRun}\t{cycle.StartSeconds:0}\t{cycle.EndSeconds:0}\t{cycle.DurationSeconds:0}\t{cycle.InsightGained}\t{cycle.Unfinished}");
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("# Phases:");
+                sb.AppendLine("Cycle\tPhase\tRun\tSimSeconds\tCycleSeconds");
+                foreach (PhaseRecord phase in sim.Phases)
+                {
+                    sb.AppendLine($"{phase.Cycle}\t{phase.Name}\t{phase.Run}\t{phase.SimSeconds:0}\t{phase.CycleSeconds:0}");
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("# Purchases:");
+                sb.AppendLine("Run\tSimSeconds\tLabel\tCost\tCurrency\tBalanceAfter\tTotalEarnedAfter");
+                foreach (PurchaseRecord record in sim.Purchases)
+                {
+                    sb.AppendLine($"{record.Run}\t{record.SimSeconds:0}\t{record.Label}\t{record.Cost}\t{record.Currency}\t{record.BalanceAfter}\t{record.TotalEarnedAfter}");
                 }
 
                 sb.AppendLine();
@@ -586,6 +932,76 @@ namespace StackMerge
                 Debug.LogWarning($"Progression sim: failed to write log: {exception.Message}");
                 return string.Empty;
             }
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Data holders
+        // ---------------------------------------------------------------------------------------
+
+        private sealed class SimState
+        {
+            public double Clock;
+            public int CycleIndex;
+            public double CycleStartSeconds;
+            public int CycleStartRun = 1;
+            public readonly List<PurchaseRecord> Purchases = new();
+            public readonly List<PhaseRecord> Phases = new();
+            public readonly HashSet<string> PhasesThisCycle = new();
+            public readonly List<CycleRecord> Cycles = new();
+        }
+
+        private readonly struct PhaseRecord
+        {
+            public PhaseRecord(int cycle, string name, int run, double simSeconds, double cycleSeconds)
+            {
+                Cycle = cycle;
+                Name = name;
+                Run = run;
+                SimSeconds = simSeconds;
+                CycleSeconds = cycleSeconds;
+            }
+
+            public int Cycle { get; }
+
+            public string Name { get; }
+
+            public int Run { get; }
+
+            public double SimSeconds { get; }
+
+            public double CycleSeconds { get; }
+        }
+
+        private sealed class CycleRecord
+        {
+            public CycleRecord(int index, int startRun, int endRun, double startSeconds, double endSeconds, long insightGained, int prestigeCountAfter)
+            {
+                Index = index;
+                StartRun = startRun;
+                EndRun = endRun;
+                StartSeconds = startSeconds;
+                EndSeconds = endSeconds;
+                InsightGained = insightGained;
+                PrestigeCountAfter = prestigeCountAfter;
+            }
+
+            public int Index { get; }
+
+            public int StartRun { get; }
+
+            public int EndRun { get; }
+
+            public double StartSeconds { get; }
+
+            public double EndSeconds { get; }
+
+            public double DurationSeconds => Math.Max(0, EndSeconds - StartSeconds);
+
+            public long InsightGained { get; }
+
+            public int PrestigeCountAfter { get; }
+
+            public bool Unfinished { get; set; }
         }
 
         private readonly struct RunResult
@@ -628,14 +1044,15 @@ namespace StackMerge
 
         private readonly struct PurchaseRecord
         {
-            public PurchaseRecord(int run, string label, long cost, long chipsAfter, long totalEarnedAfter)
-                : this(run, label, cost, "chips", chipsAfter, totalEarnedAfter)
+            public PurchaseRecord(int run, double simSeconds, string label, long cost, long chipsAfter, long totalEarnedAfter)
+                : this(run, simSeconds, label, cost, "chips", chipsAfter, totalEarnedAfter)
             {
             }
 
-            public PurchaseRecord(int run, string label, long cost, string currency, long balanceAfter, long totalEarnedAfter)
+            public PurchaseRecord(int run, double simSeconds, string label, long cost, string currency, long balanceAfter, long totalEarnedAfter)
             {
                 Run = run;
+                SimSeconds = simSeconds;
                 Label = label;
                 Cost = cost;
                 Currency = currency;
@@ -644,6 +1061,8 @@ namespace StackMerge
             }
 
             public int Run { get; }
+
+            public double SimSeconds { get; }
 
             public string Label { get; }
 

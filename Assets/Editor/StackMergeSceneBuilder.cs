@@ -23,17 +23,19 @@ namespace StackMerge.Editor
 
         private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
         {
-            (ResearchId.InsightAmplifier, ResearchId.SeedCapital),
-            (ResearchId.InsightAmplifier, ResearchId.PpoBootcamp),
-            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
             (ResearchId.SeedCapital, ResearchId.AutomationMemory),
+            (ResearchId.SeedCapital, ResearchId.PpoBootcamp),
+            (ResearchId.SeedCapital, ResearchId.InsightAmplifier),
             (ResearchId.AutomationMemory, ResearchId.AlgorithmArchive),
-            (ResearchId.AlgorithmArchive, ResearchId.YieldTheory),
-            (ResearchId.PpoBootcamp, ResearchId.PpoMemory),
+            (ResearchId.AlgorithmArchive, ResearchId.AgentSynergy),
+            (ResearchId.AgentSynergy, ResearchId.BulkDiscount),
+            (ResearchId.BulkDiscount, ResearchId.YieldTheory),
+            (ResearchId.PpoBootcamp, ResearchId.EvaluationEfficiency),
+            (ResearchId.EvaluationEfficiency, ResearchId.PpoMemory),
             (ResearchId.PpoMemory, ResearchId.PpoHighFocus),
             (ResearchId.PpoHighFocus, ResearchId.PpoStability),
             (ResearchId.PpoStability, ResearchId.InsightExtractor),
-            (ResearchId.PassiveInsight, ResearchId.InsightExtractor),
+            (ResearchId.InsightAmplifier, ResearchId.PassiveInsight),
             (ResearchId.PassiveInsight, ResearchId.OfflineEfficiency),
             (ResearchId.OfflineEfficiency, ResearchId.OfflineTime)
         };

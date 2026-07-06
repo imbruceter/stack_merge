@@ -224,7 +224,10 @@ namespace StackMerge
         InsightExtractor = 9,
         PassiveInsight = 10,
         OfflineEfficiency = 11,
-        OfflineTime = 12
+        OfflineTime = 12,
+        AgentSynergy = 13,
+        BulkDiscount = 14,
+        EvaluationEfficiency = 15
     }
 
     public readonly struct ResearchDefinition
@@ -308,6 +311,9 @@ namespace StackMerge
 
         private const int AgentsMenuUnlockCost = 120000;
         private const int MaxHistoryEntries = 250;
+        // Base "Evaluating…" pause after a PPO Training run — mirrors the pacing the bootstrap used
+        // to hardcode; Evaluation Efficiency research shrinks it (see MachineLearningEvaluationSeconds).
+        private const float BaseTrainingEvaluationSeconds = 2.5f;
 
         public static readonly AgentDefinition[] Agents =
         {
@@ -360,24 +366,36 @@ namespace StackMerge
             new(22, "Joker Merges", "Merge with a Joker for a total of 100 times", AchievementMetric.LifetimeJokerMerges, 100),
             new(23, "First Prestige", "Prestige reset for the first time", AchievementMetric.PrestigeCount, 1),
             new(24, "Prestige Loop", "Prestige reset for a total of 5 times", AchievementMetric.PrestigeCount, 5),
-            new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 13)
+            new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 16)
         };
 
+        // Array index MUST equal the ResearchId enum value (GetResearchDefinition indexes by id).
+        // Tree: Seed Capital is the root; three columns below it, strictly downward within a column.
+        //   col0: Automation Memory → Algorithm Archive → Agent Synergy → Bulk Discount → Yield Theory
+        //   col1: PPO Bootcamp → Evaluation Efficiency → PPO Memory → High Focus → Stability → Insight Extractor
+        //   col2: Insight Amplifier → Passive Insight → Offline Engine → Offline Buffer
+        // Cost ladders are shared per tier so every branch progresses at the same pace:
+        //   T0 root 1/45/120/280/650 | T1 25/70/180/450/1100 | T2 90/240/600/1500/3600
+        //   T3 300/800/2000/5000/12000 | T4 1200/3000/7500(/18000/42000)
+        //   T5 2500/6000/15000/36000/85000 | T6 5000/12000/30000/72000/170000
         public static readonly ResearchDefinition[] Research =
         {
-            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige. This is the root research: every branch starts here.", 1, 0, 50, 130, 300, 700, 1600),
-            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself.", 0, 1, 200, 500, 1200, 2800, 6500),
-            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 0, 2, 1000, 2500, 6000),
-            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 3, 6000, 14000, 32000, 75000),
-            new(ResearchId.YieldTheory, "Yield Theory", "+18% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers.", 0, 4, 30000, 70000, 160000, 380000, 850000),
-            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 200, 500, 1200, 2800, 6500),
-            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 2, 1000, 2500, 6000, 14000, 32000),
-            new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 3, 6000, 14000, 32000, 75000, 170000),
-            new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 4, 30000, 70000, 160000, 380000, 850000),
-            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 5, 150000, 350000, 800000, 1800000, 4000000),
-            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 1, 200, 500, 1200, 2800, 6500),
-            new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 2, 1000, 2500, 6000, 14000, 32000),
-            new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 3, 6000, 14000, 32000, 75000, 170000)
+            new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% Insight from every future prestige per level.", 2, 1, 25, 70, 180, 450, 1100),
+            new(ResearchId.SeedCapital, "Seed Capital", "Start each prestige with chips already banked. This is the root research: every branch starts here — L1 costs exactly the 1 Insight the first prestige grants.", 1, 0, 1, 45, 120, 280, 650),
+            new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning.", 0, 1, 25, 70, 180),
+            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 2, 90, 240, 600, 1500),
+            new(ResearchId.YieldTheory, "Yield Theory", "+30% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
+            new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 25, 70, 180, 450, 1100),
+            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 4, 1200, 3000, 7500, 18000, 42000),
+            new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 5, 2500, 6000, 15000, 36000, 85000),
+            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 6, 5000, 12000, 30000, 72000, 170000),
+            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 2, 90, 240, 600, 1500, 3600),
+            new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 4, 1200, 3000, 7500),
+            new(ResearchId.AgentSynergy, "Agent Synergy", "Every hired Agent's bonus effect is 25% stronger per level. Agents become a core engine of faster replays.", 0, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.BulkDiscount, "Bulk Discount", "Upgrades, Agents and Modifiers cost 5% less per level — 25% cheaper at max. Cheaper shopping compounds with higher income to shorten every cycle.", 0, 4, 1200, 3000, 7500, 18000, 42000),
+            new(ResearchId.EvaluationEfficiency, "Evaluation Efficiency", "Shortens the result-evaluation pause after every PPO Training run by 15% per level, so Training mode gets through its runs much faster.", 1, 2, 90, 240, 600, 1500, 3600)
         };
 
         private readonly StackMergeProgressionData data;
@@ -900,6 +918,9 @@ namespace StackMerge
                 ResearchId.PassiveInsight => $"Normal Insight x{GetNormalModeInsightMultiplier():0.00}",
                 ResearchId.OfflineEfficiency => $"Offline efficiency {GetOfflineEfficiency() * 100:0}%",
                 ResearchId.OfflineTime => $"Offline cap {GetOfflineHourCap():0.#}h",
+                ResearchId.AgentSynergy => $"Agent bonuses x{AgentSynergyMultiplier:0.00}",
+                ResearchId.BulkDiscount => $"Shop prices x{ShopDiscountMultiplier:0.00}",
+                ResearchId.EvaluationEfficiency => $"Training eval pause {MachineLearningEvaluationSeconds:0.0}s",
                 _ => string.Empty
             };
         }
@@ -1079,7 +1100,7 @@ namespace StackMerge
 
         public long GetSolverTuningUnlockCost()
         {
-            return data.solverTuningUnlocked ? 0 : SolverTuningUnlockCost;
+            return data.solverTuningUnlocked ? 0 : ApplyShopDiscount(SolverTuningUnlockCost);
         }
 
         public bool BuySolverTuningUnlock()
@@ -1089,7 +1110,7 @@ namespace StackMerge
                 return true;
             }
 
-            if (!Spend(SolverTuningUnlockCost))
+            if (!Spend(GetSolverTuningUnlockCost()))
             {
                 return false;
             }
@@ -1150,12 +1171,12 @@ namespace StackMerge
 
         public long GetSpeedUpgradeCost()
         {
-            return IsMaxSpeed ? 0 : SpeedUpgradeCosts[data.speedLevel];
+            return IsMaxSpeed ? 0 : ApplyShopDiscount(SpeedUpgradeCosts[data.speedLevel]);
         }
 
         public long GetSpeedUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < SpeedUpgradeCosts.Length ? SpeedUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < SpeedUpgradeCosts.Length ? ApplyShopDiscount(SpeedUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuySpeedUpgrade()
@@ -1176,7 +1197,7 @@ namespace StackMerge
 
         public long GetComputeSpeedUpgradeCost()
         {
-            return IsMaxComputeSpeed ? 0 : ComputeSpeedUpgradeCosts[data.computeSpeedLevel];
+            return IsMaxComputeSpeed ? 0 : ApplyShopDiscount(ComputeSpeedUpgradeCosts[data.computeSpeedLevel]);
         }
 
         public bool BuyComputeSpeedUpgrade()
@@ -1192,14 +1213,14 @@ namespace StackMerge
 
         public long GetAutoSolveCost()
         {
-            return data.autoSolveUnlocked ? 0 : AutoSolveUnlockCost;
+            return data.autoSolveUnlocked ? 0 : ApplyShopDiscount(AutoSolveUnlockCost);
         }
 
         public bool ToggleOrBuyAutoSolve()
         {
             if (!data.autoSolveUnlocked)
             {
-                if (!HasPurchasedSolver || !Spend(AutoSolveUnlockCost))
+                if (!HasPurchasedSolver || !Spend(GetAutoSolveCost()))
                 {
                     return false;
                 }
@@ -1215,7 +1236,7 @@ namespace StackMerge
 
         public long GetAutoRestartCost()
         {
-            return data.autoRestartUnlocked ? 0 : AutoRestartUnlockCost;
+            return data.autoRestartUnlocked ? 0 : ApplyShopDiscount(AutoRestartUnlockCost);
         }
 
         public bool ToggleOrBuyAutoRestart()
@@ -1285,12 +1306,12 @@ namespace StackMerge
 
         public long GetStackCapacityUpgradeCost()
         {
-            return IsMaxStackCapacity ? 0 : StackCapacityCosts[data.stackCapacityLevel];
+            return IsMaxStackCapacity ? 0 : ApplyShopDiscount(StackCapacityCosts[data.stackCapacityLevel]);
         }
 
         public long GetStackCapacityUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < StackCapacityCosts.Length ? StackCapacityCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < StackCapacityCosts.Length ? ApplyShopDiscount(StackCapacityCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyStackCapacityUpgrade()
@@ -1311,12 +1332,12 @@ namespace StackMerge
 
         public long GetQueuePreviewUpgradeCost()
         {
-            return IsMaxQueuePreview ? 0 : QueuePreviewUpgradeCosts[data.queuePreviewLevel];
+            return IsMaxQueuePreview ? 0 : ApplyShopDiscount(QueuePreviewUpgradeCosts[data.queuePreviewLevel]);
         }
 
         public long GetQueuePreviewUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < QueuePreviewUpgradeCosts.Length ? QueuePreviewUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < QueuePreviewUpgradeCosts.Length ? ApplyShopDiscount(QueuePreviewUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyQueuePreviewUpgrade()
@@ -1337,12 +1358,12 @@ namespace StackMerge
 
         public long GetIncomeUpgradeCost()
         {
-            return IsMaxIncome ? 0 : IncomeUpgradeCosts[data.incomeLevel];
+            return IsMaxIncome ? 0 : ApplyShopDiscount(IncomeUpgradeCosts[data.incomeLevel]);
         }
 
         public long GetIncomeUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < IncomeUpgradeCosts.Length ? IncomeUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < IncomeUpgradeCosts.Length ? ApplyShopDiscount(IncomeUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyIncomeUpgrade()
@@ -1363,12 +1384,12 @@ namespace StackMerge
 
         public long GetDifficultyUpgradeCost()
         {
-            return IsMaxDifficulty ? 0 : DifficultyUpgradeCosts[data.difficultyLevel];
+            return IsMaxDifficulty ? 0 : ApplyShopDiscount(DifficultyUpgradeCosts[data.difficultyLevel]);
         }
 
         public long GetDifficultyUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < DifficultyUpgradeCosts.Length ? DifficultyUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < DifficultyUpgradeCosts.Length ? ApplyShopDiscount(DifficultyUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyDifficultyUpgrade()
@@ -1389,12 +1410,12 @@ namespace StackMerge
 
         public long GetScalingFrequencyUpgradeCost()
         {
-            return IsMaxScalingFrequency ? 0 : ScalingFrequencyUpgradeCosts[data.scalingFrequencyLevel];
+            return IsMaxScalingFrequency ? 0 : ApplyShopDiscount(ScalingFrequencyUpgradeCosts[data.scalingFrequencyLevel]);
         }
 
         public long GetScalingFrequencyUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < ScalingFrequencyUpgradeCosts.Length ? ScalingFrequencyUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < ScalingFrequencyUpgradeCosts.Length ? ApplyShopDiscount(ScalingFrequencyUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyScalingFrequencyUpgrade()
@@ -1415,12 +1436,12 @@ namespace StackMerge
 
         public long GetProfitableEndingUpgradeCost()
         {
-            return IsMaxProfitableEnding ? 0 : ProfitableEndingUpgradeCosts[data.profitableEndingLevel];
+            return IsMaxProfitableEnding ? 0 : ApplyShopDiscount(ProfitableEndingUpgradeCosts[data.profitableEndingLevel]);
         }
 
         public long GetProfitableEndingUpgradeCost(int upgradeIndex)
         {
-            return upgradeIndex >= 0 && upgradeIndex < ProfitableEndingUpgradeCosts.Length ? ProfitableEndingUpgradeCosts[upgradeIndex] : 0;
+            return upgradeIndex >= 0 && upgradeIndex < ProfitableEndingUpgradeCosts.Length ? ApplyShopDiscount(ProfitableEndingUpgradeCosts[upgradeIndex]) : 0;
         }
 
         public bool BuyProfitableEndingUpgrade()
@@ -1441,7 +1462,7 @@ namespace StackMerge
 
         public long GetPassiveYieldUpgradeCost()
         {
-            return IsMaxPassiveYield ? 0 : PassiveYieldUpgradeCosts[data.passiveYieldLevel];
+            return IsMaxPassiveYield ? 0 : ApplyShopDiscount(PassiveYieldUpgradeCosts[data.passiveYieldLevel]);
         }
 
         public bool BuyPassiveYieldUpgrade()
@@ -1457,7 +1478,7 @@ namespace StackMerge
 
         public long GetPassiveTickRateUpgradeCost()
         {
-            return IsMaxPassiveTickRate ? 0 : PassiveTickRateUpgradeCosts[data.passiveTickRateLevel];
+            return IsMaxPassiveTickRate ? 0 : ApplyShopDiscount(PassiveTickRateUpgradeCosts[data.passiveTickRateLevel]);
         }
 
         public bool BuyPassiveTickRateUpgrade()
@@ -1473,7 +1494,7 @@ namespace StackMerge
 
         public long GetActiveMultiplierUpgradeCost()
         {
-            return IsMaxActiveMultiplier ? 0 : ActiveMultiplierUpgradeCosts[data.activeMultiplierLevel];
+            return IsMaxActiveMultiplier ? 0 : ApplyShopDiscount(ActiveMultiplierUpgradeCosts[data.activeMultiplierLevel]);
         }
 
         public bool BuyActiveMultiplierUpgrade()
@@ -1525,7 +1546,7 @@ namespace StackMerge
 
         public long GetAgentsMenuUnlockCost()
         {
-            return data.agentsMenuUnlocked ? 0 : AgentsMenuUnlockCost;
+            return data.agentsMenuUnlocked ? 0 : ApplyShopDiscount(AgentsMenuUnlockCost);
         }
 
         public bool BuyAgentsMenuUnlock()
@@ -1535,7 +1556,7 @@ namespace StackMerge
                 return true;
             }
 
-            if (!Spend(AgentsMenuUnlockCost))
+            if (!Spend(GetAgentsMenuUnlockCost()))
             {
                 return false;
             }
@@ -1547,7 +1568,7 @@ namespace StackMerge
 
         public long GetExtraAgentSlotUpgradeCost()
         {
-            return data.extraAgentSlotUnlocked ? 0 : ExtraAgentSlotUpgradeCost;
+            return data.extraAgentSlotUnlocked ? 0 : ApplyShopDiscount(ExtraAgentSlotUpgradeCost);
         }
 
         public bool BuyExtraAgentSlotUpgrade()
@@ -1562,7 +1583,7 @@ namespace StackMerge
                 return true;
             }
 
-            if (!Spend(ExtraAgentSlotUpgradeCost))
+            if (!Spend(GetExtraAgentSlotUpgradeCost()))
             {
                 return false;
             }
@@ -1573,7 +1594,7 @@ namespace StackMerge
 
         public long GetModifiersMenuUnlockCost()
         {
-            return data.modifiersMenuUnlocked ? 0 : ModifiersMenuUnlockCost;
+            return data.modifiersMenuUnlocked ? 0 : ApplyShopDiscount(ModifiersMenuUnlockCost);
         }
 
         public string GetModifiersGateStatus()
@@ -1593,7 +1614,7 @@ namespace StackMerge
                 return true;
             }
 
-            if (!CanUnlockModifiersMenu || !Spend(ModifiersMenuUnlockCost))
+            if (!CanUnlockModifiersMenu || !Spend(GetModifiersMenuUnlockCost()))
             {
                 return false;
             }
@@ -1624,7 +1645,7 @@ namespace StackMerge
         {
             ModifierDefinition definition = GetModifierDefinition(modifierId);
             int level = GetModifierLevel(modifierId);
-            return level >= definition.MaxLevel ? 0 : definition.Costs[level];
+            return level >= definition.MaxLevel ? 0 : ApplyShopDiscount(definition.Costs[level]);
         }
 
         public bool BuyModifierUpgrade(ModifierId modifierId)
@@ -1707,6 +1728,18 @@ namespace StackMerge
             return IsAgentUnlocked(agentId) ? definition.Description : definition.LockedHint;
         }
 
+        /// <summary>Hire price of an Agent with the Bulk Discount research applied (0 once hired).</summary>
+        public long GetAgentCost(AgentId agentId)
+        {
+            int index = (int)agentId;
+            if (index < 0 || index >= Agents.Length || IsAgentUnlocked(agentId))
+            {
+                return 0;
+            }
+
+            return ApplyShopDiscount(Agents[index].Cost);
+        }
+
         public bool BuyAgent(AgentId agentId)
         {
             int index = (int)agentId;
@@ -1715,7 +1748,7 @@ namespace StackMerge
                 return false;
             }
 
-            if (!Spend(Agents[index].Cost))
+            if (!Spend(GetAgentCost(agentId)))
             {
                 return false;
             }
@@ -1755,7 +1788,7 @@ namespace StackMerge
 
             if (!IsAgentUnlocked(agentId))
             {
-                if (!Spend(Agents[index].Cost))
+                if (!Spend(GetAgentCost(agentId)))
                 {
                     return false;
                 }
@@ -1862,10 +1895,10 @@ namespace StackMerge
             double highestMultiplier = GetHighestBlockRewardMultiplier(highestMergedBlock);
             double scoreBonus = Math.Max(1, runScore) * 0.22 * highestMultiplier * AgentScoreMultiplier;
             double moveBonus = IsAgentActive(AgentId.MoveDividend)
-                ? Math.Max(0, moves) * Math.Max(1.0, highestMultiplier * 0.35) * 4.0
+                ? Math.Max(0, moves) * Math.Max(1.0, highestMultiplier * 0.35) * 4.0 * AgentSynergyMultiplier
                 : 0;
             double speedBonus = IsAgentActive(AgentId.VelocityTrader) && elapsedSeconds > 0.01f
-                ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18)
+                ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18) * AgentSynergyMultiplier
                 : 0;
             double profitableEndingMultiplier = 1.0 + data.profitableEndingLevel * ProfitableEndingBonusPerLevel;
             long bonus = Math.Max(1, (long)Math.Ceiling((scoreBonus + moveBonus + speedBonus) * profitableEndingMultiplier * IncomeScale));
@@ -2170,15 +2203,15 @@ namespace StackMerge
             }
         }
 
-        private double AgentMergeMultiplier => IsAgentActive(AgentId.MergeBroker) ? 1.75 : 1.0;
+        private double AgentMergeMultiplier => IsAgentActive(AgentId.MergeBroker) ? 1.0 + 0.75 * AgentSynergyMultiplier : 1.0;
 
-        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 2.40 : 1.0;
+        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 1.0 + 1.40 * AgentSynergyMultiplier : 1.0;
 
-        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.60 : 1.0;
+        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.0 + 0.60 * AgentSynergyMultiplier : 1.0;
 
         private float AgentMoveIntervalMultiplier => IsAgentActive(AgentId.Overclocker) ? 0.75f : 1f;
 
-        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? 4 : 0;
+        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? (int)Math.Round(4 * AgentSynergyMultiplier) : 0;
 
         private double ModifierMergeMultiplier => GetModifierLevel(ModifierId.CatalystStack) > 0 ? 2.0 : 1.0;
 
@@ -2194,7 +2227,25 @@ namespace StackMerge
 
         private double GetResearchIncomeMultiplier()
         {
-            return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.18;
+            return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.30;
+        }
+
+        /// <summary>Agent Synergy research: scales the bonus part of every hired Agent's effect.</summary>
+        private double AgentSynergyMultiplier => 1.0 + GetResearchLevel(ResearchId.AgentSynergy) * 0.25;
+
+        /// <summary>Bulk Discount research: price multiplier for Upgrades, Agents and Modifiers (not solvers or token packs). -5%/level, -25% at max.</summary>
+        private double ShopDiscountMultiplier => Math.Max(0.75, 1.0 - GetResearchLevel(ResearchId.BulkDiscount) * 0.05);
+
+        /// <summary>
+        /// Seconds of the artificial "Evaluating…" pause after each PPO Training run (see
+        /// TickAutomation in the bootstrap). Evaluation Efficiency research trims it 15%/level.
+        /// </summary>
+        public float MachineLearningEvaluationSeconds =>
+            BaseTrainingEvaluationSeconds * Mathf.Max(0.25f, 1f - GetResearchLevel(ResearchId.EvaluationEfficiency) * 0.15f);
+
+        private long ApplyShopDiscount(long cost)
+        {
+            return cost <= 0 ? cost : Math.Max(1, (long)Math.Round(cost * ShopDiscountMultiplier));
         }
 
         private double GetPassiveInsightMultiplier()
@@ -2285,33 +2336,33 @@ namespace StackMerge
 
         private static long GetPrestigeStartChips(int seedCapitalLevel)
         {
+            // A head start, not a skip: L1 covers the first solver + Auto Solve, L5 is still well
+            // short of the Agents Menu + agent prices, so every cycle is actually played. The big
+            // cycle-time cuts must come from the multiplicative researches (Yield Theory, Bulk
+            // Discount, Agent Synergy), which speed the whole cycle up evenly instead of deleting
+            // its opening.
             return seedCapitalLevel switch
             {
                 <= 0 => 0,
-                1 => 2500,
-                2 => 12000,
-                3 => 60000,
-                4 => 250000,
-                _ => 900000
+                1 => 8000,
+                2 => 20000,
+                3 => 50000,
+                4 => 100000,
+                _ => 250000
             };
         }
 
         private bool IsResearchPrerequisiteMet(ResearchId researchId, out string reason)
         {
             reason = string.Empty;
+            // Strictly downward within a column, never sideways. Seed Capital is the root: its L1
+            // opens the top of all three columns; from there each node only needs the node above it.
             switch (researchId)
             {
-                case ResearchId.SeedCapital:
-                case ResearchId.PpoBootcamp:
-                case ResearchId.PassiveInsight:
-                    if (GetResearchLevel(ResearchId.InsightAmplifier) < 1)
-                    {
-                        reason = "Requires Insight Amplifier L1.";
-                        return false;
-                    }
-
-                    return true;
+                // Tier 1 — one entry point per column, all gated only on the root.
                 case ResearchId.AutomationMemory:
+                case ResearchId.PpoBootcamp:
+                case ResearchId.InsightAmplifier:
                     if (GetResearchLevel(ResearchId.SeedCapital) < 1)
                     {
                         reason = "Requires Seed Capital L1.";
@@ -2319,6 +2370,7 @@ namespace StackMerge
                     }
 
                     return true;
+                // Left column: Automation Memory → Algorithm Archive → Agent Synergy → Bulk Discount → Yield Theory.
                 case ResearchId.AlgorithmArchive:
                     if (GetResearchLevel(ResearchId.AutomationMemory) < 1)
                     {
@@ -2327,7 +2379,7 @@ namespace StackMerge
                     }
 
                     return true;
-                case ResearchId.YieldTheory:
+                case ResearchId.AgentSynergy:
                     if (GetResearchLevel(ResearchId.AlgorithmArchive) < 1)
                     {
                         reason = "Requires Algorithm Archive L1.";
@@ -2335,10 +2387,35 @@ namespace StackMerge
                     }
 
                     return true;
-                case ResearchId.PpoMemory:
+                case ResearchId.BulkDiscount:
+                    if (GetResearchLevel(ResearchId.AgentSynergy) < 1)
+                    {
+                        reason = "Requires Agent Synergy L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.YieldTheory:
+                    if (GetResearchLevel(ResearchId.BulkDiscount) < 1)
+                    {
+                        reason = "Requires Bulk Discount L1.";
+                        return false;
+                    }
+
+                    return true;
+                // Middle column: PPO Bootcamp → Evaluation Efficiency → PPO Memory → High Focus → Stability → Insight Extractor.
+                case ResearchId.EvaluationEfficiency:
                     if (GetResearchLevel(ResearchId.PpoBootcamp) < 1)
                     {
                         reason = "Requires PPO Bootcamp L1.";
+                        return false;
+                    }
+
+                    return true;
+                case ResearchId.PpoMemory:
+                    if (GetResearchLevel(ResearchId.EvaluationEfficiency) < 1)
+                    {
+                        reason = "Requires Evaluation Efficiency L1.";
                         return false;
                     }
 
@@ -2360,12 +2437,18 @@ namespace StackMerge
 
                     return true;
                 case ResearchId.InsightExtractor:
-                    // Same-column only: this sits directly below Stability Model in the middle
-                    // column. It must NOT also require Passive Insight (right column) — the tree
-                    // only allows moving straight down within a column, never sideways.
                     if (GetResearchLevel(ResearchId.PpoStability) < 1)
                     {
                         reason = "Requires Stability Model L1.";
+                        return false;
+                    }
+
+                    return true;
+                // Right column: Insight Amplifier → Passive Insight → Offline Engine → Offline Buffer.
+                case ResearchId.PassiveInsight:
+                    if (GetResearchLevel(ResearchId.InsightAmplifier) < 1)
+                    {
+                        reason = "Requires Insight Amplifier L1.";
                         return false;
                     }
 
@@ -2387,6 +2470,7 @@ namespace StackMerge
 
                     return true;
                 default:
+                    // Seed Capital (the root) has no prerequisite.
                     return true;
             }
         }
