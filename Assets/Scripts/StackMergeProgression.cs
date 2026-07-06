@@ -73,7 +73,7 @@ namespace StackMerge
         public int machineLearningNormalBestHigh;
         public long machineLearningNormalFrames;
         public StackMergePpoTrainingData machineLearningPrestigeMemoryPolicy;
-        public int machineLearningPrestigeMemoryRuns;
+        public long machineLearningPrestigeMemoryFrames;
         public long researchInsight;
         public long lifetimeResearchInsight;
         public int prestigeCount;
@@ -386,10 +386,10 @@ namespace StackMerge
             new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 2, 90, 240, 600, 1500),
             new(ResearchId.YieldTheory, "Yield Theory", "+30% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%.", 1, 1, 25, 70, 180, 450, 1100),
-            new(ResearchId.PpoMemory, "PPO Memory", "Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts.", 1, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.PpoMemory, "PPO Memory", "Prestige banks 50,000 PPO training frames per level. The next playthrough's PPO Training starts from that saved progress — with the knowledge already learned — instead of zero.", 1, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs.", 1, 4, 1200, 3000, 7500, 18000, 42000),
             new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 5, 2500, 6000, 15000, 36000, 85000),
-            new(ResearchId.InsightExtractor, "Insight Extractor", "+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 6, 5000, 12000, 30000, 72000, 170000),
+            new(ResearchId.InsightExtractor, "Insight Extractor", "+50% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node.", 1, 6, 5000, 12000, 30000, 72000, 170000),
             new(ResearchId.PassiveInsight, "Passive Insight", "Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 2, 90, 240, 600, 1500, 3600),
             new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength.", 2, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline chips and Insight.", 2, 4, 1200, 3000, 7500),
@@ -528,7 +528,7 @@ namespace StackMerge
 
         public long MachineLearningNormalFrames => Math.Max(0, data.machineLearningNormalFrames);
 
-        public int MachineLearningMemoryRuns => Math.Max(0, data.machineLearningPrestigeMemoryRuns);
+        public long MachineLearningMemoryFrames => Math.Max(0, data.machineLearningPrestigeMemoryFrames);
 
         public long LastOfflineChips => Math.Max(0, data.lastOfflineChips);
 
@@ -911,7 +911,7 @@ namespace StackMerge
                 },
                 ResearchId.YieldTheory => $"Chip rewards x{GetResearchIncomeMultiplier():0.00}",
                 ResearchId.PpoBootcamp => $"PPO Normal mode at {MachineLearningPlayingModeFrameRequirement} frames",
-                ResearchId.PpoMemory => $"Warm start: {GetPpoMemoryRunLimit(level)} PPO runs retained",
+                ResearchId.PpoMemory => $"Warm start: {GetPpoMemoryFrameAllowance(level):N0} frames retained",
                 ResearchId.PpoHighFocus => $"New-high learning x{GetPpoHighFocusMultiplier():0.00}",
                 ResearchId.PpoStability => $"Survival shaping x{GetPpoStabilityMultiplier():0.00}",
                 ResearchId.InsightExtractor => $"Normal-mode prestige x{GetInsightExtractorMultiplier():0.00}",
@@ -979,11 +979,10 @@ namespace StackMerge
 
             if (!MachineLearningPlayingModeUnlocked)
             {
-                return $"Finish PPO Training first. {MachineLearningFrames}/{MachineLearningPlayingModeFrameRequirement} frames.";
+                return $"Finish PPO Training first.\n<b>{MachineLearningFrames:N0} / {MachineLearningPlayingModeFrameRequirement:N0} frames</b>.";
             }
 
-            long gain = PreviewPrestigeInsightGain();
-            return $"Prestige for {gain} insights. You can keep playing PPO in Playing Mode to increase insight.";
+            return $"PPO is trained, prestige reset unlocked.\n<b>Gain: <sprite name=\"insight\"> {PreviewPrestigeInsightGain():N0}</b>.";
         }
 
         public long ExecutePrestige()
@@ -2222,7 +2221,7 @@ namespace StackMerge
 
         private double GetInsightExtractorMultiplier()
         {
-            return 1.0 + GetResearchLevel(ResearchId.InsightExtractor) * 0.20;
+            return 1.0 + GetResearchLevel(ResearchId.InsightExtractor) * 0.50;
         }
 
         private double GetResearchIncomeMultiplier()
@@ -2316,39 +2315,32 @@ namespace StackMerge
             return 1f + GetResearchLevel(ResearchId.PpoStability) * 0.10f;
         }
 
-        private static int GetPpoMemoryRunLimit(int level)
+        /// <summary>PPO Memory research: how many training frames survive a prestige (50k per level).</summary>
+        public static long GetPpoMemoryFrameAllowance(int level)
         {
-            return level switch
-            {
-                <= 0 => 0,
-                1 => 500,
-                2 => 1000,
-                3 => 2000,
-                4 => 3500,
-                _ => 5000
-            };
+            return Math.Max(0, level) * 50000L;
         }
 
-        private int GetPpoMemoryRunLimit()
+        private long GetPpoMemoryFrameAllowance()
         {
-            return GetPpoMemoryRunLimit(GetResearchLevel(ResearchId.PpoMemory));
+            return GetPpoMemoryFrameAllowance(GetResearchLevel(ResearchId.PpoMemory));
         }
 
         private static long GetPrestigeStartChips(int seedCapitalLevel)
         {
-            // A head start, not a skip: L1 covers the first solver + Auto Solve, L5 is still well
-            // short of the Agents Menu + agent prices, so every cycle is actually played. The big
-            // cycle-time cuts must come from the multiplicative researches (Yield Theory, Bulk
-            // Discount, Agent Synergy), which speed the whole cycle up evenly instead of deleting
-            // its opening.
+            // A head start, not a skip: L1 covers the first solver + Auto Solve + a bit of shopping,
+            // L5 is still well short of the whole Agents/Modifiers economy, so every cycle is
+            // actually played. The big cycle-time cuts must come from the multiplicative researches
+            // (Yield Theory, Bulk Discount, Agent Synergy), which speed the whole cycle up evenly
+            // instead of deleting its opening.
             return seedCapitalLevel switch
             {
                 <= 0 => 0,
-                1 => 8000,
-                2 => 20000,
-                3 => 50000,
-                4 => 100000,
-                _ => 250000
+                1 => 20000,
+                2 => 50000,
+                3 => 100000,
+                4 => 250000,
+                _ => 500000
             };
         }
 
@@ -2661,47 +2653,51 @@ namespace StackMerge
             }
         }
 
+        // PPO Memory is frames-based: each research level banks 50k training frames. The snapshot is
+        // refreshed while training progresses and freezes once the allowance is reached, so the next
+        // prestige restores the network roughly as it was at `allowance` frames — PPO keeps its
+        // knowledge and the Training requirement starts partially filled instead of at zero.
         private void CaptureMachineLearningMemoryIfEligible()
         {
-            int limit = GetPpoMemoryRunLimit();
-            if (limit <= 0 || machineLearningAgent == null)
+            long allowance = GetPpoMemoryFrameAllowance();
+            if (allowance <= 0 || machineLearningAgent == null)
             {
                 return;
             }
 
-            int runs = Math.Min(MachineLearningRuns, limit);
-            if (runs <= 0)
+            long frames = Math.Min(MachineLearningFrames, allowance);
+            if (frames <= 0)
             {
                 return;
             }
 
             if (data.machineLearningPrestigeMemoryPolicy != null
-                && data.machineLearningPrestigeMemoryRuns >= runs
-                && data.machineLearningPrestigeMemoryRuns >= Math.Min(limit, MachineLearningRuns))
+                && data.machineLearningPrestigeMemoryFrames >= frames
+                && data.machineLearningPrestigeMemoryFrames >= Math.Min(allowance, MachineLearningFrames))
             {
                 return;
             }
 
             data.machineLearningPrestigeMemoryPolicy = StackMergePpoAgent.CloneData(machineLearningAgent.Data);
-            data.machineLearningPrestigeMemoryRuns = runs;
+            data.machineLearningPrestigeMemoryFrames = frames;
         }
 
         private void ApplyMachineLearningMemoryAfterReset()
         {
-            int limit = GetPpoMemoryRunLimit();
-            if (limit <= 0 || data.machineLearningPrestigeMemoryPolicy == null || machineLearningAgent == null)
+            long allowance = GetPpoMemoryFrameAllowance();
+            if (allowance <= 0 || data.machineLearningPrestigeMemoryPolicy == null || machineLearningAgent == null)
             {
                 return;
             }
 
-            int retainedRuns = Math.Min(Math.Max(0, data.machineLearningPrestigeMemoryRuns), limit);
-            if (retainedRuns <= 0)
+            long retainedFrames = Math.Min(Math.Max(0, data.machineLearningPrestigeMemoryFrames), allowance);
+            if (retainedFrames <= 0)
             {
                 return;
             }
 
             StackMergePpoTrainingData snapshot = StackMergePpoAgent.CloneData(data.machineLearningPrestigeMemoryPolicy);
-            snapshot.episodes = Math.Min(Math.Max(0, snapshot.episodes), retainedRuns);
+            snapshot.steps = (int)Math.Min(Math.Max(0, snapshot.steps), retainedFrames);
             machineLearningAgent.LoadSnapshot(snapshot);
             data.machineLearningPolicy = machineLearningAgent.Data;
             data.machineLearningRuns = Math.Max(data.machineLearningRuns, snapshot.episodes);
@@ -3043,8 +3039,8 @@ namespace StackMerge
             data.machineLearningNormalBestScore = Math.Max(0, data.machineLearningNormalBestScore);
             data.machineLearningNormalBestHigh = Math.Max(0, data.machineLearningNormalBestHigh);
             data.machineLearningNormalFrames = Math.Max(0, data.machineLearningNormalFrames);
-            data.machineLearningPrestigeMemoryRuns = Math.Max(0, data.machineLearningPrestigeMemoryRuns);
-            if (data.machineLearningPrestigeMemoryRuns <= 0)
+            data.machineLearningPrestigeMemoryFrames = Math.Max(0, data.machineLearningPrestigeMemoryFrames);
+            if (data.machineLearningPrestigeMemoryFrames <= 0)
             {
                 data.machineLearningPrestigeMemoryPolicy = null;
             }

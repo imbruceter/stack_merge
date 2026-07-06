@@ -39396,7 +39396,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 10, y: -40}
-  m_SizeDelta: {x: 144.66, y: 60}
+  m_SizeDelta: {x: 0, y: 60}
   m_Pivot: {x: 0, y: 0.5}
 --- !u!114 &928112969
 MonoBehaviour:
@@ -73720,6 +73720,12 @@ MonoBehaviour:
   agentsMenuUnlockButton: {fileID: 409327129}
   prestigeSummaryText: {fileID: 1809991099}
   prestigeButton: {fileID: 1493640283}
+  prestigeResetModal: {fileID: 1364026815}
+  prestigeResetBackButton: {fileID: 1335318214}
+  prestigeResetTrainingText: {fileID: 0}
+  prestigeResetSlider: {fileID: 0}
+  prestigeResetAmountText: {fileID: 0}
+  prestigeResetBuyButton: {fileID: 0}
   researchButtons:
   - {fileID: 1869902356}
   - {fileID: 602085601}
@@ -74454,7 +74460,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 67.375, y: -40}
-  m_SizeDelta: {x: 114.75, y: 60}
+  m_SizeDelta: {x: 0, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1783912568
 MonoBehaviour:

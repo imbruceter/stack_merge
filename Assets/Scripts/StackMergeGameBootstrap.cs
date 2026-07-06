@@ -179,6 +179,15 @@ namespace StackMerge
         [SerializeField] private Button agentsMenuUnlockButton;
         [SerializeField] private TMP_Text prestigeSummaryText;
         [SerializeField] private Button prestigeButton;
+        [Tooltip("Optional hand-built Prestige Reset Modal root. Auto-found by name ('Prestige Reset Modal') when left empty; without it the Prestige button falls back to resetting immediately.")]
+        [SerializeField] private GameObject prestigeResetModal;
+        [SerializeField] private Button prestigeResetBackButton;
+        [Tooltip("Text under 'PPO Training Progress' showing frames done / required.")]
+        [SerializeField] private TMP_Text prestigeResetTrainingText;
+        [SerializeField] private Slider prestigeResetSlider;
+        [Tooltip("Shows 'Reset for <insight> N'.")]
+        [SerializeField] private TMP_Text prestigeResetAmountText;
+        [SerializeField] private Button prestigeResetBuyButton;
         // Legacy pre-redesign tree (dynamic node buttons + drawn connector arrows) — no longer
         // used now that the tree is a static grid of StackMergeResearchCard nodes.
         [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
@@ -390,6 +399,7 @@ namespace StackMerge
             ApplyPlayerSettings();
             HideTemplate();
             EnsurePpoSceneUiReferences();
+            EnsurePrestigeResetModalReferences();
             HidePpoModeModal();
             SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
             SetActive(gameOverAutoRestartSlider != null ? gameOverAutoRestartSlider.gameObject : null, false);
@@ -1721,7 +1731,7 @@ namespace StackMerge
             if (prestigeButton != null)
             {
                 prestigeButton.onClick.RemoveAllListeners();
-                prestigeButton.onClick.AddListener(ExecutePrestige);
+                prestigeButton.onClick.AddListener(OpenPrestigeResetModal);
             }
 
             // The hand-built Research grid uses StackMergeResearchCard.button references wired in
@@ -2197,6 +2207,8 @@ namespace StackMerge
                 || text == researchDetailInfoText
                 || text == researchDetailStatusText
                 || text == prestigeSummaryText
+                || text == prestigeResetTrainingText
+                || text == prestigeResetAmountText
                 || text == historySummaryText
                 || text == historyInsightText
                 || text == achievementStatsText
@@ -3649,6 +3661,130 @@ namespace StackMerge
             }
 
             EnsureTrainingOverlay();
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Prestige Reset Modal — a hand-built scene object (see the Inspector fields). The
+        // Prestige button opens it; it shows PPO Training progress, the exact Insight payout of a
+        // reset right now, and the Buy button performs the actual prestige. References are found
+        // by name so nothing needs manual dragging, but the serialized fields win when assigned.
+        // ------------------------------------------------------------------------------------
+        private void EnsurePrestigeResetModalReferences()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            if (prestigeResetModal == null)
+            {
+                Transform modal = FindNamedDescendant(canvas.transform, "Prestige Reset Modal");
+                prestigeResetModal = modal != null ? modal.gameObject : null;
+            }
+
+            if (prestigeResetModal == null)
+            {
+                return;
+            }
+
+            Transform root = prestigeResetModal.transform;
+            if (prestigeResetTrainingText == null)
+            {
+                Transform progress = FindNamedDescendant(root, "PPO Training Progress");
+                prestigeResetTrainingText = progress != null ? FindNamedDescendant(progress, "Text")?.GetComponent<TMP_Text>() : null;
+            }
+
+            if (prestigeResetSlider == null)
+            {
+                prestigeResetSlider = prestigeResetModal.GetComponentInChildren<Slider>(true);
+            }
+
+            if (prestigeResetAmountText == null)
+            {
+                prestigeResetAmountText = FindNamedDescendant(root, "AmountText")?.GetComponent<TMP_Text>();
+            }
+
+            if (prestigeResetBackButton == null)
+            {
+                Transform header = FindNamedDescendant(root, "Header");
+                Transform back = header != null ? FindNamedDescendant(header, "Back") : null;
+                back ??= FindNamedDescendant(root, "Back");
+                prestigeResetBackButton = back != null ? back.GetComponent<Button>() : null;
+            }
+
+            if (prestigeResetBuyButton == null)
+            {
+                prestigeResetBuyButton = FindNamedDescendant(root, "Buy")?.GetComponent<Button>();
+            }
+
+            if (prestigeResetBackButton != null)
+            {
+                prestigeResetBackButton.onClick.RemoveAllListeners();
+                prestigeResetBackButton.onClick.AddListener(ClosePrestigeResetModal);
+            }
+
+            if (prestigeResetBuyButton != null)
+            {
+                prestigeResetBuyButton.onClick.RemoveAllListeners();
+                prestigeResetBuyButton.onClick.AddListener(ConfirmPrestigeReset);
+            }
+
+            SetActive(prestigeResetModal, false);
+        }
+
+        private void OpenPrestigeResetModal()
+        {
+            EnsurePrestigeResetModalReferences();
+            if (prestigeResetModal == null)
+            {
+                // No modal in the scene — keep the old immediate-prestige behaviour working.
+                ExecutePrestige();
+                return;
+            }
+
+            SetActive(prestigeResetModal, true);
+            RefreshPrestigeResetModal();
+        }
+
+        private void ClosePrestigeResetModal()
+        {
+            SetActive(prestigeResetModal, false);
+        }
+
+        private void ConfirmPrestigeReset()
+        {
+            ClosePrestigeResetModal();
+            ExecutePrestige();
+        }
+
+        private void RefreshPrestigeResetModal()
+        {
+            if (progression == null || prestigeResetModal == null || !prestigeResetModal.activeSelf)
+            {
+                return;
+            }
+
+            long frames = progression.MachineLearningFrames;
+            long required = Math.Max(1, progression.MachineLearningPlayingModeFrameRequirement);
+            bool trained = progression.MachineLearningPlayingModeUnlocked;
+            long gain = progression.PreviewPrestigeInsightGain();
+
+            SetText(prestigeResetTrainingText, trained
+                ? "PPO Training complete — prestige reset unlocked."
+                : $"You have to finish PPO Training to unlock prestige.\n<b>{frames:N0} / {required:N0} frames</b>");
+
+            if (prestigeResetSlider != null)
+            {
+                prestigeResetSlider.minValue = 0f;
+                prestigeResetSlider.maxValue = 1f;
+                prestigeResetSlider.SetValueWithoutNotify(trained ? 1f : Mathf.Clamp01(frames / (float)required));
+            }
+
+            SetText(prestigeResetAmountText, $"Reset for <sprite name=\"insight\"> {FormatNumber(gain)}");
+            if (prestigeResetBuyButton != null)
+            {
+                prestigeResetBuyButton.interactable = gain > 0;
+            }
         }
 
         private static Button FindPpoModeButton(Button[] buttons, params string[] names)
@@ -6104,16 +6240,20 @@ namespace StackMerge
                 if (gain > 0)
                 {
                     SetButtonText(prestigeButton, $"Prestige\n+{FormatNumber(gain)} Insight");
-                    prestigeButton.interactable = true;
                     SetButtonColor(prestigeButton, HexColor("#7C3AED"));
                 }
                 else
                 {
                     SetButtonText(prestigeButton, progression.PrestigeAvailable ? "Prestige\nRun Normal PPO" : "Prestige\nNeeds Training");
-                    prestigeButton.interactable = false;
                     SetButtonColor(prestigeButton, HexColor("#334155"));
                 }
+
+                // Always clickable: the button opens the Prestige Reset Modal, which shows training
+                // progress and the exact payout — only the modal's Buy button gates the reset.
+                prestigeButton.interactable = true;
             }
+
+            RefreshPrestigeResetModal();
 
             for (int i = 0; i < researchButtons.Length && i < StackMergeProgression.Research.Length; i++)
             {

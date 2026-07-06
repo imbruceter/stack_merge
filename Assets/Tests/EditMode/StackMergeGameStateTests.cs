@@ -775,9 +775,11 @@ namespace StackMerge.Tests
 
             long gained = progression.ExecutePrestige();
 
+            // PPO Memory is frames-based: L1 banks 50k training frames, so after the reset the
+            // network warm-starts with exactly that much credited progress (not the full 500k).
             Assert.That(gained, Is.GreaterThan(0));
-            Assert.That(progression.MachineLearningMemoryRuns, Is.EqualTo(500));
-            Assert.That(progression.MachineLearningFrames, Is.EqualTo(500_000));
+            Assert.That(progression.MachineLearningMemoryFrames, Is.EqualTo(50_000));
+            Assert.That(progression.MachineLearningFrames, Is.EqualTo(50_000));
             Assert.That(progression.MachineLearningRuns, Is.EqualTo(500));
             Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
         }
