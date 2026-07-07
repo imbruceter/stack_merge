@@ -188,6 +188,14 @@ namespace StackMerge
         [Tooltip("Shows 'Reset for <insight> N'.")]
         [SerializeField] private TMP_Text prestigeResetAmountText;
         [SerializeField] private Button prestigeResetBuyButton;
+        [Tooltip("Optional hand-built Offline Progress Overlay root. Auto-found by name ('Offline Progress Overlay') when left empty. Shown on startup once Offline Engine research is bought and offline time accrued.")]
+        [SerializeField] private GameObject offlineProgressOverlay;
+        [SerializeField] private TMP_Text offlineGainText;
+        [Tooltip("Text under 'Offline Time' showing rewarded time vs the cap.")]
+        [SerializeField] private TMP_Text offlineTimeText;
+        [SerializeField] private Slider offlineProgressSlider;
+        [SerializeField] private Button offlineBackButton;
+        [SerializeField] private Button offlineCollectButton;
         // Legacy pre-redesign tree (dynamic node buttons + drawn connector arrows) — no longer
         // used now that the tree is a static grid of StackMergeResearchCard nodes.
         [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
@@ -400,6 +408,7 @@ namespace StackMerge
             HideTemplate();
             EnsurePpoSceneUiReferences();
             EnsurePrestigeResetModalReferences();
+            EnsureOfflineProgressOverlayReferences();
             HidePpoModeModal();
             SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
             SetActive(gameOverAutoRestartSlider != null ? gameOverAutoRestartSlider.gameObject : null, false);
@@ -432,6 +441,8 @@ namespace StackMerge
             {
                 SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} chips, +{FormatNumber(progression.LastOfflineInsight)} Insight");
             }
+
+            ShowOfflineProgressOverlayIfEarned();
         }
 
         /// <summary>
@@ -565,7 +576,9 @@ namespace StackMerge
             blockDropTimer = Mathf.Max(0f, blockDropTimer - Time.deltaTime);
             mergePulseTimer = Mathf.Max(0f, mergePulseTimer - Time.deltaTime);
 
-            if (gameState != null && !gameState.IsGameOver && selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
+            // Deliberately no IsGameOver gate: the run-ending block still needs its drop animation
+            // to play out (the Game Over overlay waits for it via StartGameOverOverlayDelay).
+            if (gameState != null && selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
             {
                 RefreshColumns();
             }
@@ -1233,7 +1246,56 @@ namespace StackMerge
 
         private void PrepareGlobalUiLayering()
         {
+            // Full-screen overlays are reparented under the Canvas root so they always draw above
+            // the bottom bar / status bar, no matter which panel they were authored under. The Game
+            // Over overlay intentionally stays where it is: during game over the bottom bar must
+            // remain usable (menu browsing, auto-restart UI).
             ReparentOverlayToCanvas(gameplayInfoOverlay);
+            ReparentOverlayToCanvas(solverInfoOverlay);
+            ReparentOverlayToCanvas(researchDetailModal);
+            ReparentOverlayToCanvas(ppoModeOverlay);
+            ReparentOverlayToCanvas(prestigeResetModal);
+            ReparentOverlayToCanvas(offlineProgressOverlay);
+
+            // Clicking the dimmed backdrop closes these. The Offline Progress and Game Over
+            // overlays deliberately get NO backdrop close; the PPO mode overlay and the research
+            // popup already ship their own backdrop buttons.
+            AddOverlayBackdropClose(gameplayInfoOverlay, CloseGameplayInfo);
+            AddOverlayBackdropClose(solverInfoOverlay, HideSolverInfoModal);
+            AddOverlayBackdropClose(prestigeResetModal, ClosePrestigeResetModal);
+        }
+
+        // Adds (or rewires) a full-stretch invisible button as the FIRST child of the overlay, so
+        // clicks on the dimmed area close it while clicks on the content card (a later sibling with
+        // its own raycast target) never reach it.
+        private static void AddOverlayBackdropClose(GameObject overlayRoot, UnityEngine.Events.UnityAction close)
+        {
+            if (overlayRoot == null)
+            {
+                return;
+            }
+
+            Transform existing = overlayRoot.transform.Find("Runtime Backdrop Close");
+            GameObject backdropObject = existing != null ? existing.gameObject : null;
+            if (backdropObject == null)
+            {
+                backdropObject = new GameObject("Runtime Backdrop Close", typeof(RectTransform), typeof(Image), typeof(Button));
+                var rect = backdropObject.GetComponent<RectTransform>();
+                rect.SetParent(overlayRoot.transform, false);
+                rect.SetAsFirstSibling();
+                rect.anchorMin = Vector2.zero;
+                rect.anchorMax = Vector2.one;
+                rect.offsetMin = Vector2.zero;
+                rect.offsetMax = Vector2.zero;
+
+                Image image = backdropObject.GetComponent<Image>();
+                image.color = Color.clear; // Invisible but still a raycast target.
+                backdropObject.GetComponent<Button>().transition = Selectable.Transition.None;
+            }
+
+            Button button = backdropObject.GetComponent<Button>();
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(close);
         }
 
         private void ReparentOverlayToCanvas(GameObject overlay)
@@ -1244,10 +1306,17 @@ namespace StackMerge
             }
 
             RectTransform rect = overlay.transform as RectTransform;
-            overlay.transform.SetParent(canvas.transform, false);
-            if (rect != null)
+            // Full-stretch roots (dim + card containers) become full-screen under the canvas; a
+            // fixed-size root keeps its on-screen placement instead of being blown up.
+            bool fullStretch = rect != null && rect.anchorMin == Vector2.zero && rect.anchorMax == Vector2.one;
+            if (fullStretch)
             {
+                overlay.transform.SetParent(canvas.transform, false);
                 Stretch(rect);
+            }
+            else
+            {
+                overlay.transform.SetParent(canvas.transform, true);
             }
         }
 
@@ -2209,6 +2278,8 @@ namespace StackMerge
                 || text == prestigeSummaryText
                 || text == prestigeResetTrainingText
                 || text == prestigeResetAmountText
+                || text == offlineGainText
+                || text == offlineTimeText
                 || text == historySummaryText
                 || text == historyInsightText
                 || text == achievementStatsText
@@ -2386,6 +2457,11 @@ namespace StackMerge
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
             SetActive(researchDetailModal, false);
+            // These overlays live at canvas level (PrepareGlobalUiLayering), so panel switches no
+            // longer hide them implicitly — close them explicitly.
+            SetActive(solverInfoOverlay, false);
+            ClosePrestigeResetModal();
+            HidePpoModeModal();
             RefreshTabButtons();
 
             // Update the board / training-overlay visibility immediately on tab change so the
@@ -2416,6 +2492,9 @@ namespace StackMerge
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
             SetActive(researchDetailModal, false);
+            SetActive(solverInfoOverlay, false);
+            ClosePrestigeResetModal();
+            HidePpoModeModal();
             RefreshHistory();
             RefreshTabButtons();
             RefreshGameView();
@@ -3732,6 +3811,141 @@ namespace StackMerge
             SetActive(prestigeResetModal, false);
         }
 
+        // ------------------------------------------------------------------------------------
+        // Offline Progress Overlay — hand-built scene object. Shown on startup once Offline
+        // Engine research is bought and a rewarded offline period was just credited. Deliberately
+        // NOT closable by clicking the backdrop; only Back/Collect dismiss it (the reward itself
+        // is already banked by ApplyOfflineProgress at load, Collect is an acknowledgement).
+        // ------------------------------------------------------------------------------------
+        private void EnsureOfflineProgressOverlayReferences()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            if (offlineProgressOverlay == null)
+            {
+                Transform overlay = FindNamedDescendant(canvas.transform, "Offline Progress Overlay");
+                offlineProgressOverlay = overlay != null ? overlay.gameObject : null;
+            }
+
+            if (offlineProgressOverlay == null)
+            {
+                return;
+            }
+
+            Transform root = offlineProgressOverlay.transform;
+            if (offlineGainText == null)
+            {
+                offlineGainText = FindNamedDescendant(root, "GainText")?.GetComponent<TMP_Text>();
+            }
+
+            if (offlineTimeText == null)
+            {
+                Transform time = FindNamedDescendant(root, "Offline Time");
+                Transform timeText = time != null ? FindNamedDescendant(time, "TimeText") : null;
+                timeText ??= FindNamedDescendant(root, "TimeText");
+                offlineTimeText = timeText != null ? timeText.GetComponent<TMP_Text>() : null;
+            }
+
+            if (offlineProgressSlider == null)
+            {
+                offlineProgressSlider = offlineProgressOverlay.GetComponentInChildren<Slider>(true);
+            }
+
+            if (offlineBackButton == null)
+            {
+                Transform header = FindNamedDescendant(root, "Header");
+                Transform back = header != null ? FindNamedDescendant(header, "Back") : null;
+                back ??= FindNamedDescendant(root, "Back");
+                offlineBackButton = back != null ? back.GetComponent<Button>() : null;
+            }
+
+            if (offlineCollectButton == null)
+            {
+                offlineCollectButton = FindNamedDescendant(root, "CollectButton")?.GetComponent<Button>();
+            }
+
+            if (offlineBackButton != null)
+            {
+                offlineBackButton.onClick.RemoveAllListeners();
+                offlineBackButton.onClick.AddListener(CloseOfflineProgressOverlay);
+            }
+
+            if (offlineCollectButton != null)
+            {
+                offlineCollectButton.onClick.RemoveAllListeners();
+                offlineCollectButton.onClick.AddListener(CloseOfflineProgressOverlay);
+            }
+
+            SetActive(offlineProgressOverlay, false);
+        }
+
+        private void ShowOfflineProgressOverlayIfEarned()
+        {
+            EnsureOfflineProgressOverlayReferences();
+            if (offlineProgressOverlay == null || progression == null)
+            {
+                return;
+            }
+
+            // Only once the research exists AND a measurable offline period was rewarded — an
+            // empty "You made 0 chips in 0 min" popup on quick restarts would just look broken.
+            if (progression.GetResearchLevel(ResearchId.OfflineEfficiency) < 1 || progression.LastOfflineHours <= 0.0)
+            {
+                return;
+            }
+
+            RefreshOfflineProgressOverlay();
+            SetActive(offlineProgressOverlay, true);
+            offlineProgressOverlay.transform.SetAsLastSibling();
+        }
+
+        private void CloseOfflineProgressOverlay()
+        {
+            SetActive(offlineProgressOverlay, false);
+        }
+
+        private void RefreshOfflineProgressOverlay()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            SetText(offlineGainText, $"You made <sprite name=\"chips\"> {FormatNumber(progression.LastOfflineChips)} and <sprite name=\"insight\"> {FormatNumber(progression.LastOfflineInsight)} while you were offline.");
+
+            double hours = progression.LastOfflineHours;
+            double cap = Math.Max(0.01, progression.OfflineHourCap);
+            SetText(offlineTimeText, $"Offline reward time:\n<b>{FormatHoursShort(hours)} / {FormatHoursShort(cap)}</b>");
+
+            if (offlineProgressSlider != null)
+            {
+                offlineProgressSlider.minValue = 0f;
+                offlineProgressSlider.maxValue = 1f;
+                offlineProgressSlider.SetValueWithoutNotify(Mathf.Clamp01((float)(hours / cap)));
+            }
+        }
+
+        private static string FormatHoursShort(double hours)
+        {
+            int wholeHours = (int)hours;
+            int minutes = (int)Math.Round((hours - wholeHours) * 60.0);
+            if (minutes >= 60)
+            {
+                wholeHours++;
+                minutes = 0;
+            }
+
+            if (wholeHours <= 0)
+            {
+                return $"{minutes} min";
+            }
+
+            return minutes > 0 ? $"{wholeHours}h {minutes} min" : $"{wholeHours}h";
+        }
+
         private void OpenPrestigeResetModal()
         {
             EnsurePrestigeResetModalReferences();
@@ -3743,6 +3957,7 @@ namespace StackMerge
             }
 
             SetActive(prestigeResetModal, true);
+            prestigeResetModal.transform.SetAsLastSibling();
             RefreshPrestigeResetModal();
         }
 
@@ -4152,6 +4367,7 @@ namespace StackMerge
 
             SelectResearchUpgrade(researchId);
             SetActive(researchDetailModal, true);
+            researchDetailModal?.transform.SetAsLastSibling();
 
             // The modal uses a Vertical Layout Group + Content Size Fitter, which can render at
             // zero size on the very first frame a GameObject is activated (same class of issue as
@@ -6121,7 +6337,11 @@ namespace StackMerge
             {
                 int level = progression.ScalingFrequencyLevel;
                 int maxLevel = progression.MaxScalingFrequencyLevel;
-                if (progression.IsMaxScalingFrequency)
+                if (!progression.ScalingFrequencyPurchasable)
+                {
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", "Needs Difficulty L1", false);
+                }
+                else if (progression.IsMaxScalingFrequency)
                 {
                     SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level):0}% high odds ({level}/{maxLevel})", "Maxed", false);
                 }
@@ -6172,7 +6392,12 @@ namespace StackMerge
             {
                 int level = progression.PassiveTickRateLevel;
                 int maxLevel = progression.MaxPassiveTickRateLevel;
-                if (progression.IsMaxPassiveTickRate)
+                if (!progression.PassiveSupportUpgradesUnlocked)
+                {
+                    float nextInterval = StackMergeProgression.GetPassiveTickInterval(level + 1);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", "Needs Passive Yield L1", false);
+                }
+                else if (progression.IsMaxPassiveTickRate)
                 {
                     float interval = StackMergeProgression.GetPassiveTickInterval(level);
                     SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {interval:0.#}s ({level}/{maxLevel})", "Maxed", false);
@@ -6191,7 +6416,11 @@ namespace StackMerge
             {
                 int level = progression.ActiveMultiplierLevel;
                 int maxLevel = progression.MaxActiveMultiplierLevel;
-                if (progression.IsMaxActiveMultiplier)
+                if (!progression.PassiveSupportUpgradesUnlocked)
+                {
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", "Needs Passive Yield L1", false);
+                }
+                else if (progression.IsMaxActiveMultiplier)
                 {
                     SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level):0}% while active ({level}/{maxLevel})", "Maxed", false);
                 }
@@ -6863,6 +7092,7 @@ namespace StackMerge
             DrawLineChart(solverInfoChartRoot, values, HexColor("#34D399"), "No score history for this solver yet");
 
             SetActive(solverInfoOverlay, true);
+            solverInfoOverlay.transform.SetAsLastSibling();
         }
 
         private string BuildTuningSummary(SolverId solverId)

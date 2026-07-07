@@ -534,6 +534,12 @@ namespace StackMerge
 
         public long LastOfflineInsight => Math.Max(0, data.lastOfflineInsight);
 
+        /// <summary>Hours of the last load's rewarded offline period (already capped). Runtime-only.</summary>
+        public double LastOfflineHours { get; private set; }
+
+        /// <summary>Current offline reward cap in hours (0 while Offline Engine is unresearched).</summary>
+        public double OfflineHourCap => GetOfflineHourCap();
+
         public bool MachineLearningTrainingMode
         {
             get => data.machineLearningTrainingMode;
@@ -704,6 +710,12 @@ namespace StackMerge
         public bool IsMaxProfitableEnding => data.profitableEndingLevel >= ProfitableEndingUpgradeCosts.Length;
 
         public bool IsMaxPassiveYield => data.passiveYieldLevel >= PassiveYieldUpgradeCosts.Length;
+
+        /// <summary>Passive Tick Rate and Active Multiplier only make sense once Passive Yield produces anything.</summary>
+        public bool PassiveSupportUpgradesUnlocked => data.passiveYieldLevel >= 1;
+
+        /// <summary>Scaling Frequency modifies the difficulty scaling curve, so it needs Difficulty L1 first.</summary>
+        public bool ScalingFrequencyPurchasable => data.difficultyLevel >= 1;
 
         public bool IsMaxPassiveTickRate => data.passiveTickRateLevel >= PassiveTickRateUpgradeCosts.Length;
 
@@ -1419,7 +1431,7 @@ namespace StackMerge
 
         public bool BuyScalingFrequencyUpgrade()
         {
-            if (IsMaxScalingFrequency || !Spend(GetScalingFrequencyUpgradeCost()))
+            if (!ScalingFrequencyPurchasable || IsMaxScalingFrequency || !Spend(GetScalingFrequencyUpgradeCost()))
             {
                 return false;
             }
@@ -1482,7 +1494,7 @@ namespace StackMerge
 
         public bool BuyPassiveTickRateUpgrade()
         {
-            if (IsMaxPassiveTickRate || !Spend(GetPassiveTickRateUpgradeCost()))
+            if (!PassiveSupportUpgradesUnlocked || IsMaxPassiveTickRate || !Spend(GetPassiveTickRateUpgradeCost()))
             {
                 return false;
             }
@@ -1498,7 +1510,7 @@ namespace StackMerge
 
         public bool BuyActiveMultiplierUpgrade()
         {
-            if (IsMaxActiveMultiplier || !Spend(GetActiveMultiplierUpgradeCost()))
+            if (!PassiveSupportUpgradesUnlocked || IsMaxActiveMultiplier || !Spend(GetActiveMultiplierUpgradeCost()))
             {
                 return false;
             }
@@ -2726,6 +2738,7 @@ namespace StackMerge
                 return;
             }
 
+            LastOfflineHours = cappedHours;
             long offlineChips = ComputeOfflineChips(cappedHours, efficiency);
             long offlineInsight = ComputeOfflineInsight(cappedHours, efficiency);
             if (offlineChips > 0)

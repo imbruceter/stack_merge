@@ -650,7 +650,7 @@ namespace StackMerge
                 list.Add(new Candidate($"Difficulty L{p.DifficultyLevel + 1}", p.GetDifficultyUpgradeCost(), p.BuyDifficultyUpgrade));
             }
 
-            if (!p.IsMaxScalingFrequency)
+            if (!p.IsMaxScalingFrequency && p.ScalingFrequencyPurchasable)
             {
                 list.Add(new Candidate($"Scaling Frequency L{p.ScalingFrequencyLevel + 1}", p.GetScalingFrequencyUpgradeCost(), p.BuyScalingFrequencyUpgrade));
             }
@@ -665,12 +665,12 @@ namespace StackMerge
                 list.Add(new Candidate($"Passive Yield L{p.PassiveYieldLevel + 1}", p.GetPassiveYieldUpgradeCost(), p.BuyPassiveYieldUpgrade));
             }
 
-            if (!p.IsMaxPassiveTickRate)
+            if (!p.IsMaxPassiveTickRate && p.PassiveSupportUpgradesUnlocked)
             {
                 list.Add(new Candidate($"Passive Tick Rate L{p.PassiveTickRateLevel + 1}", p.GetPassiveTickRateUpgradeCost(), p.BuyPassiveTickRateUpgrade));
             }
 
-            if (!p.IsMaxActiveMultiplier)
+            if (!p.IsMaxActiveMultiplier && p.PassiveSupportUpgradesUnlocked)
             {
                 list.Add(new Candidate($"Active Multiplier L{p.ActiveMultiplierLevel + 1}", p.GetActiveMultiplierUpgradeCost(), p.BuyActiveMultiplierUpgrade));
             }
