@@ -8,7 +8,7 @@ namespace StackMerge
     {
         [Range(0f, 1f)]
         [SerializeField]
-        private float leftRatio = 0.75f;
+        private float leftRatio = 0.72f;
 
         public override void SetLayoutHorizontal()
         {

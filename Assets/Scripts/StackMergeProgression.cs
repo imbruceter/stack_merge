@@ -85,6 +85,15 @@ namespace StackMerge
         public long lastSaveUnixSeconds;
         public long lastOfflineChips;
         public long lastOfflineInsight;
+        // Datacenter layer (unlocks at prestige 5; persists across prestiges like research).
+        public int[] datacenterRackCounts;
+        public int[] datacenterFacilityLevels;
+        public float[] datacenterAllocation;
+        // Auto Buy (reward of the "First Prestige" goal; persists across prestiges).
+        public bool autoBuyAlgorithms;
+        public bool autoBuyUpgrades;
+        public bool autoBuyAgents;
+        public bool autoBuyModifiers;
     }
 
     [Serializable]
@@ -97,6 +106,86 @@ namespace StackMerge
         public int merges;
         public int highestMergedBlock;
         public int difficultyLevel;
+    }
+
+    public enum AutoBuyCategory
+    {
+        Algorithms = 0,
+        Upgrades = 1,
+        Agents = 2,
+        Modifiers = 3
+    }
+
+    public enum DatacenterRackId
+    {
+        CpuRack = 0,
+        GpuRack = 1,
+        TpuPod = 2,
+        NeuralFabric = 3
+    }
+
+    public enum DatacenterFacilityId
+    {
+        PowerGrid = 0,
+        CoolingLoop = 1,
+        FabricInterconnect = 2
+    }
+
+    public enum DatacenterAllocationId
+    {
+        TrainingCluster = 0,
+        AnalysisNode = 1,
+        MarketBots = 2
+    }
+
+    public readonly struct DatacenterRackDefinition
+    {
+        public DatacenterRackDefinition(DatacenterRackId id, string displayName, string description, long baseCost, double costGrowth, double baseGigaflops)
+        {
+            Id = id;
+            DisplayName = displayName;
+            Description = description;
+            BaseCost = baseCost;
+            CostGrowth = costGrowth;
+            BaseGigaflops = baseGigaflops;
+        }
+
+        public DatacenterRackId Id { get; }
+
+        public string DisplayName { get; }
+
+        public string Description { get; }
+
+        public long BaseCost { get; }
+
+        public double CostGrowth { get; }
+
+        public double BaseGigaflops { get; }
+    }
+
+    public readonly struct DatacenterFacilityDefinition
+    {
+        public DatacenterFacilityDefinition(DatacenterFacilityId id, string displayName, string description, int maxLevel, long baseCost, double costGrowth)
+        {
+            Id = id;
+            DisplayName = displayName;
+            Description = description;
+            MaxLevel = maxLevel;
+            BaseCost = baseCost;
+            CostGrowth = costGrowth;
+        }
+
+        public DatacenterFacilityId Id { get; }
+
+        public string DisplayName { get; }
+
+        public string Description { get; }
+
+        public int MaxLevel { get; }
+
+        public long BaseCost { get; }
+
+        public double CostGrowth { get; }
     }
 
     public enum AgentId
@@ -339,6 +428,40 @@ namespace StackMerge
             new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "MOCA, MOCA+, and MCTS run permanently about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 6000000)
         };
 
+        // ------------------------------------------------------------------------------------
+        // Datacenter layer. Unlocks at prestige 5 and PERSISTS across prestiges — it is the
+        // meta-progression the cycles fund: racks are an endless late-game chip sink, and the
+        // produced compute is split between background PPO training, passive Insight and a chip
+        // income multiplier. All rates are per-second of active play (ticked from the bootstrap).
+        // ------------------------------------------------------------------------------------
+        public const int DatacenterUnlockPrestigeCount = 5;
+
+        // Idle-producer style growth (~1.12-1.18/unit): the first simulator pass used 1.30-1.50,
+        // which capped the whole farm at ~13 units over 25 prestiges — far too steep for a layer
+        // meant to absorb chips forever.
+        public static readonly DatacenterRackDefinition[] DatacenterRacks =
+        {
+            new(DatacenterRackId.CpuRack, "CPU Rack", "Commodity silicon. Cheap, dependable, slow.", 250_000, 1.12, 1.0),
+            new(DatacenterRackId.GpuRack, "GPU Rack", "Parallel throughput for tensor math.", 3_000_000, 1.14, 6.0),
+            new(DatacenterRackId.TpuPod, "TPU Pod", "Purpose-built matrix engines.", 25_000_000, 1.16, 40.0),
+            new(DatacenterRackId.NeuralFabric, "Neural Fabric", "Experimental wafer-scale compute.", 200_000_000, 1.18, 300.0)
+        };
+
+        public static readonly DatacenterFacilityDefinition[] DatacenterFacilities =
+        {
+            new(DatacenterFacilityId.PowerGrid, "Power Grid", "Dedicated feeders and battery buffer.", 10, 2_000_000, 1.8),
+            new(DatacenterFacilityId.CoolingLoop, "Cooling Loop", "Immersion + rear-door heat exchangers.", 10, 8_000_000, 1.8),
+            new(DatacenterFacilityId.FabricInterconnect, "Fabric Interconnect", "Low-latency mesh between pods.", 10, 60_000_000, 2.0)
+        };
+
+        private const double PowerGridFlopsBonusPerLevel = 0.06;          // +6% total rack FLOPS / level
+        private const double CoolingLoopFlopsBonusPerLevel = 0.04;        // +4% total rack FLOPS / level
+        private const double FabricInterconnectBonusPerLevel = 0.05;      // +5% TPU Pod + Neural Fabric output / level
+        private const double DatacenterPrestigeBonusPerPrestige = 0.05;   // +5% compute per prestige — prestiging feeds the layer
+        private const double DatacenterFramesPerSecondPerGigaflop = 0.50; // Training Cluster: PPO frames/sec per allocated GF/s
+        private const double DatacenterInsightPerSecondPerGigaflop = 0.002; // Analysis Node: Insight/sec per allocated GF/s, pre-softcap
+        private const double DatacenterMarketLogFactor = 0.25;            // Market Bots: ×(1 + 0.25·log10(1 + allocated GF/s))
+
         public static readonly AchievementDefinition[] Achievements =
         {
             new(0, "Chip Bank", "Earn 10000 <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 10_000),
@@ -404,6 +527,9 @@ namespace StackMerge
         // fraction of a tick across a save/quit is inconsequential, and offline accrual is handled
         // separately by the Offline Engine/Buffer research).
         private float passiveProductionTimer;
+        // Runtime-only fractional accumulators for the Datacenter's per-second production.
+        private double datacenterFrameCarry;
+        private double datacenterInsightCarry;
 
         public StackMergeProgression(StackMergeProgressionData data)
         {
@@ -1553,6 +1679,331 @@ namespace StackMerge
             Save();
 
             return gained;
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Auto Buy — reward of the "First Prestige" goal. Four independent per-menu toggles;
+        // the bootstrap's ticker does the actual purchasing while a toggle is on.
+        // ------------------------------------------------------------------------------------
+
+        public bool AutoBuyUnlocked => PrestigeCount >= 1;
+
+        public bool GetAutoBuyEnabled(AutoBuyCategory category)
+        {
+            return category switch
+            {
+                AutoBuyCategory.Algorithms => data.autoBuyAlgorithms,
+                AutoBuyCategory.Upgrades => data.autoBuyUpgrades,
+                AutoBuyCategory.Agents => data.autoBuyAgents,
+                AutoBuyCategory.Modifiers => data.autoBuyModifiers,
+                _ => false
+            };
+        }
+
+        public void SetAutoBuyEnabled(AutoBuyCategory category, bool enabled)
+        {
+            if (!AutoBuyUnlocked)
+            {
+                return;
+            }
+
+            switch (category)
+            {
+                case AutoBuyCategory.Algorithms:
+                    data.autoBuyAlgorithms = enabled;
+                    break;
+                case AutoBuyCategory.Upgrades:
+                    data.autoBuyUpgrades = enabled;
+                    break;
+                case AutoBuyCategory.Agents:
+                    data.autoBuyAgents = enabled;
+                    break;
+                case AutoBuyCategory.Modifiers:
+                    data.autoBuyModifiers = enabled;
+                    break;
+            }
+
+            Save();
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Datacenter layer
+        // ------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Testing override — the bootstrap sets this from its Inspector toggle (Editor only) so
+        /// the Datacenter can be exercised without grinding five prestiges.
+        /// </summary>
+        public static bool DebugUnlockDatacenter;
+
+        public bool DatacenterUnlocked => DebugUnlockDatacenter || PrestigeCount >= DatacenterUnlockPrestigeCount;
+
+        public int GetDatacenterRackCount(DatacenterRackId rackId)
+        {
+            int index = (int)rackId;
+            return index >= 0 && index < data.datacenterRackCounts.Length ? Math.Max(0, data.datacenterRackCounts[index]) : 0;
+        }
+
+        public int TotalDatacenterRackUnits
+        {
+            get
+            {
+                int total = 0;
+                foreach (DatacenterRackDefinition rack in DatacenterRacks)
+                {
+                    total += GetDatacenterRackCount(rack.Id);
+                }
+
+                return total;
+            }
+        }
+
+        public long GetDatacenterRackCost(DatacenterRackId rackId)
+        {
+            DatacenterRackDefinition definition = DatacenterRacks[(int)rackId];
+            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterRackCount(rackId));
+            // No Bulk Discount here: racks are the endless late-game chip sink and must stay one.
+            return cost >= long.MaxValue / 4d ? long.MaxValue / 4 : (long)Math.Round(cost);
+        }
+
+        public bool BuyDatacenterRack(DatacenterRackId rackId)
+        {
+            int index = (int)rackId;
+            if (!DatacenterUnlocked || index < 0 || index >= data.datacenterRackCounts.Length)
+            {
+                return false;
+            }
+
+            if (!Spend(GetDatacenterRackCost(rackId)))
+            {
+                return false;
+            }
+
+            data.datacenterRackCounts[index]++;
+            return true;
+        }
+
+        public int GetDatacenterFacilityLevel(DatacenterFacilityId facilityId)
+        {
+            int index = (int)facilityId;
+            return index >= 0 && index < data.datacenterFacilityLevels.Length ? Math.Max(0, data.datacenterFacilityLevels[index]) : 0;
+        }
+
+        public bool IsDatacenterFacilityMaxed(DatacenterFacilityId facilityId)
+        {
+            return GetDatacenterFacilityLevel(facilityId) >= DatacenterFacilities[(int)facilityId].MaxLevel;
+        }
+
+        public long GetDatacenterFacilityCost(DatacenterFacilityId facilityId)
+        {
+            if (IsDatacenterFacilityMaxed(facilityId))
+            {
+                return 0;
+            }
+
+            DatacenterFacilityDefinition definition = DatacenterFacilities[(int)facilityId];
+            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterFacilityLevel(facilityId));
+            return cost >= long.MaxValue / 4d ? long.MaxValue / 4 : (long)Math.Round(cost);
+        }
+
+        public bool BuyDatacenterFacility(DatacenterFacilityId facilityId)
+        {
+            int index = (int)facilityId;
+            if (!DatacenterUnlocked || index < 0 || index >= data.datacenterFacilityLevels.Length || IsDatacenterFacilityMaxed(facilityId))
+            {
+                return false;
+            }
+
+            if (!Spend(GetDatacenterFacilityCost(facilityId)))
+            {
+                return false;
+            }
+
+            data.datacenterFacilityLevels[index]++;
+            return true;
+        }
+
+        /// <summary>Effective GF/s of one unit of a rack, with facility and prestige bonuses applied.</summary>
+        public double GetDatacenterRackUnitGigaflops(DatacenterRackId rackId)
+        {
+            DatacenterRackDefinition definition = DatacenterRacks[(int)rackId];
+            double facilityBonus = 1.0
+                + GetDatacenterFacilityLevel(DatacenterFacilityId.PowerGrid) * PowerGridFlopsBonusPerLevel
+                + GetDatacenterFacilityLevel(DatacenterFacilityId.CoolingLoop) * CoolingLoopFlopsBonusPerLevel;
+            double interconnect = rackId == DatacenterRackId.TpuPod || rackId == DatacenterRackId.NeuralFabric
+                ? 1.0 + GetDatacenterFacilityLevel(DatacenterFacilityId.FabricInterconnect) * FabricInterconnectBonusPerLevel
+                : 1.0;
+            double prestigeBonus = 1.0 + Math.Max(0, PrestigeCount) * DatacenterPrestigeBonusPerPrestige;
+            return definition.BaseGigaflops * facilityBonus * interconnect * prestigeBonus;
+        }
+
+        /// <summary>Total datacenter output in GF/s.</summary>
+        public double DatacenterTotalGigaflops
+        {
+            get
+            {
+                double total = 0;
+                foreach (DatacenterRackDefinition rack in DatacenterRacks)
+                {
+                    total += GetDatacenterRackCount(rack.Id) * GetDatacenterRackUnitGigaflops(rack.Id);
+                }
+
+                return total;
+            }
+        }
+
+        public float GetDatacenterAllocation(DatacenterAllocationId allocationId)
+        {
+            int index = (int)allocationId;
+            return index >= 0 && index < data.datacenterAllocation.Length ? Mathf.Clamp01(data.datacenterAllocation[index]) : 0f;
+        }
+
+        public float DatacenterAllocatedFraction =>
+            Mathf.Clamp01(GetDatacenterAllocation(DatacenterAllocationId.TrainingCluster)
+                + GetDatacenterAllocation(DatacenterAllocationId.AnalysisNode)
+                + GetDatacenterAllocation(DatacenterAllocationId.MarketBots));
+
+        /// <summary>
+        /// Sets one allocation share (0..1). The share is clamped so the three together never
+        /// exceed 100% — the caller's slider snaps back to the granted value on refresh.
+        /// </summary>
+        public void SetDatacenterAllocation(DatacenterAllocationId allocationId, float fraction)
+        {
+            int index = (int)allocationId;
+            if (index < 0 || index >= data.datacenterAllocation.Length)
+            {
+                return;
+            }
+
+            float othersTotal = 0f;
+            for (int i = 0; i < data.datacenterAllocation.Length; i++)
+            {
+                if (i != index)
+                {
+                    othersTotal += Mathf.Clamp01(data.datacenterAllocation[i]);
+                }
+            }
+
+            data.datacenterAllocation[index] = Mathf.Clamp(fraction, 0f, Mathf.Max(0f, 1f - othersTotal));
+            Save();
+        }
+
+        /// <summary>
+        /// True while background training frames have somewhere to go this cycle. Deliberately does
+        /// NOT require PPO to be bought yet: the datacenter pre-trains the network for the whole
+        /// cycle, so by the time PPO is purchased a chunk of the Training requirement is done.
+        /// Without this the accrual window was only the short stretch between buying PPO and
+        /// finishing Training, which made the Training Cluster nearly worthless.
+        /// </summary>
+        public bool DatacenterTrainingHasTarget => !MachineLearningPlayingModeUnlocked;
+
+        public double DatacenterTrainingFramesPerSecond =>
+            DatacenterTotalGigaflops * GetDatacenterAllocation(DatacenterAllocationId.TrainingCluster) * DatacenterFramesPerSecondPerGigaflop;
+
+        /// <summary>Insight/sec of the Analysis Node AFTER the per-prestige softcap fatigue.</summary>
+        public double DatacenterInsightPerSecond
+        {
+            get
+            {
+                if (data.prestigeCount <= 0)
+                {
+                    return 0.0;
+                }
+
+                double raw = DatacenterTotalGigaflops * GetDatacenterAllocation(DatacenterAllocationId.AnalysisNode) * DatacenterInsightPerSecondPerGigaflop;
+                if (raw <= 0.0)
+                {
+                    return 0.0;
+                }
+
+                // Same fatigue curve as Passive Insight, so a huge farm can't out-earn prestiging.
+                double fatigue = 1.0 / Math.Sqrt(1.0 + Math.Max(0.0, data.researchInsightEarnedThisPrestige) / GetInsightCycleSoftCap());
+                return raw * fatigue;
+            }
+        }
+
+        public double DatacenterMarketMultiplier
+        {
+            get
+            {
+                if (!DatacenterUnlocked)
+                {
+                    return 1.0;
+                }
+
+                double allocated = DatacenterTotalGigaflops * GetDatacenterAllocation(DatacenterAllocationId.MarketBots);
+                return allocated <= 0.0 ? 1.0 : 1.0 + DatacenterMarketLogFactor * Math.Log10(1.0 + allocated);
+            }
+        }
+
+        /// <summary>
+        /// Advances datacenter production by `deltaSeconds`. Training frames only accrue while PPO
+        /// is owned this cycle and Training is still incomplete; Analysis Insight accrues whenever
+        /// the layer is unlocked. Fractions carry over between calls.
+        /// </summary>
+        public void TickDatacenter(float deltaSeconds)
+        {
+            if (!DatacenterUnlocked || deltaSeconds <= 0f)
+            {
+                return;
+            }
+
+            bool granted = false;
+            if (DatacenterTrainingHasTarget)
+            {
+                datacenterFrameCarry += DatacenterTrainingFramesPerSecond * deltaSeconds;
+                int wholeFrames = (int)Math.Min(int.MaxValue / 2d, Math.Floor(datacenterFrameCarry));
+                if (wholeFrames > 0)
+                {
+                    datacenterFrameCarry -= wholeFrames;
+                    ApplyBackgroundTrainingFrames(wholeFrames);
+                    granted = true;
+                }
+            }
+            else
+            {
+                datacenterFrameCarry = 0.0;
+            }
+
+            double insightPerSecond = DatacenterInsightPerSecond;
+            if (insightPerSecond > 0.0)
+            {
+                datacenterInsightCarry += insightPerSecond * deltaSeconds;
+                long wholeInsight = (long)Math.Floor(datacenterInsightCarry);
+                if (wholeInsight > 0)
+                {
+                    datacenterInsightCarry -= wholeInsight;
+                    AddResearchInsight(wholeInsight, true);
+                    granted = true;
+                }
+            }
+
+            if (granted)
+            {
+                Save();
+            }
+        }
+
+        // Background frames are an abstraction: the policy's step counter advances (unlocking
+        // Normal mode / feeding PPO Memory) without literally replaying moves, exactly like the
+        // editor simulator's injected progress.
+        private void ApplyBackgroundTrainingFrames(int frames)
+        {
+            if (frames <= 0 || machineLearningAgent == null)
+            {
+                return;
+            }
+
+            StackMergePpoTrainingData policy = machineLearningAgent.Data;
+            if (policy == null)
+            {
+                return;
+            }
+
+            policy.steps = (int)Math.Min(int.MaxValue - 1L, Math.Max(0, policy.steps) + (long)frames);
+            data.machineLearningExperience = Math.Max(data.machineLearningExperience, policy.steps);
+            data.machineLearningPolicy = policy;
+            CaptureMachineLearningMemoryIfEligible();
         }
 
         public long GetAgentsMenuUnlockCost()
@@ -2817,7 +3268,7 @@ namespace StackMerge
 
         private long ApplyIncomeMultiplier(long amount)
         {
-            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35) * GetResearchIncomeMultiplier()));
+            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35) * GetResearchIncomeMultiplier() * DatacenterMarketMultiplier));
         }
 
         private void AwardMergeTokens(int mergeCount)
@@ -3052,6 +3503,64 @@ namespace StackMerge
             data.machineLearningNormalBestScore = Math.Max(0, data.machineLearningNormalBestScore);
             data.machineLearningNormalBestHigh = Math.Max(0, data.machineLearningNormalBestHigh);
             data.machineLearningNormalFrames = Math.Max(0, data.machineLearningNormalFrames);
+            if (data.datacenterRackCounts == null || data.datacenterRackCounts.Length != DatacenterRacks.Length)
+            {
+                int[] rackCounts = new int[DatacenterRacks.Length];
+                for (int i = 0; data.datacenterRackCounts != null && i < data.datacenterRackCounts.Length && i < rackCounts.Length; i++)
+                {
+                    rackCounts[i] = data.datacenterRackCounts[i];
+                }
+
+                data.datacenterRackCounts = rackCounts;
+            }
+
+            for (int i = 0; i < data.datacenterRackCounts.Length; i++)
+            {
+                data.datacenterRackCounts[i] = Math.Max(0, data.datacenterRackCounts[i]);
+            }
+
+            if (data.datacenterFacilityLevels == null || data.datacenterFacilityLevels.Length != DatacenterFacilities.Length)
+            {
+                int[] facilityLevels = new int[DatacenterFacilities.Length];
+                for (int i = 0; data.datacenterFacilityLevels != null && i < data.datacenterFacilityLevels.Length && i < facilityLevels.Length; i++)
+                {
+                    facilityLevels[i] = data.datacenterFacilityLevels[i];
+                }
+
+                data.datacenterFacilityLevels = facilityLevels;
+            }
+
+            for (int i = 0; i < data.datacenterFacilityLevels.Length; i++)
+            {
+                data.datacenterFacilityLevels[i] = Mathf.Clamp(data.datacenterFacilityLevels[i], 0, DatacenterFacilities[i].MaxLevel);
+            }
+
+            if (data.datacenterAllocation == null || data.datacenterAllocation.Length != 3)
+            {
+                float[] allocation = new float[3];
+                for (int i = 0; data.datacenterAllocation != null && i < data.datacenterAllocation.Length && i < allocation.Length; i++)
+                {
+                    allocation[i] = data.datacenterAllocation[i];
+                }
+
+                data.datacenterAllocation = allocation;
+            }
+
+            float allocationTotal = 0f;
+            for (int i = 0; i < data.datacenterAllocation.Length; i++)
+            {
+                data.datacenterAllocation[i] = Mathf.Clamp01(data.datacenterAllocation[i]);
+                allocationTotal += data.datacenterAllocation[i];
+            }
+
+            if (allocationTotal > 1f)
+            {
+                for (int i = 0; i < data.datacenterAllocation.Length; i++)
+                {
+                    data.datacenterAllocation[i] /= allocationTotal;
+                }
+            }
+
             data.machineLearningPrestigeMemoryFrames = Math.Max(0, data.machineLearningPrestigeMemoryFrames);
             if (data.machineLearningPrestigeMemoryFrames <= 0)
             {

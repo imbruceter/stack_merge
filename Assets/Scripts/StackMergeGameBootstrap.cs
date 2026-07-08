@@ -196,6 +196,51 @@ namespace StackMerge
         [SerializeField] private Slider offlineProgressSlider;
         [SerializeField] private Button offlineBackButton;
         [SerializeField] private Button offlineCollectButton;
+        [Tooltip("Optional hand-built Datacenter Panel (tab content, shown by the Datacenter bottom-bar tab at index 7). Auto-found by name ('Datacenter Panel').")]
+        [SerializeField] private GameObject datacenterPanel;
+        [Tooltip("Testing: treat the Datacenter as unlocked in the Editor regardless of prestige count. Has no effect in builds.")]
+        [SerializeField] private bool unlockDatacenterInEditor;
+        [Tooltip("Shows 'Total compute: 412.6 GF/s'.")]
+        [SerializeField] private TMP_Text datacenterComputeText;
+        [Tooltip("Shows 'NN% allocated' in the Compute Allocation title.")]
+        [SerializeField] private TMP_Text datacenterAllocationTotalText;
+        [Tooltip("Read-only bar showing the total allocated fraction.")]
+        [SerializeField] private Slider datacenterAllocationTotalSlider;
+        [Tooltip("Training Cluster / Analysis Node / Market Bots rows, in this order.")]
+        [SerializeField] private DatacenterAllocationRow[] datacenterAllocationRows = { new(), new(), new() };
+        [Tooltip("Shows 'NN units' in the Server Racks title.")]
+        [SerializeField] private TMP_Text datacenterRackUnitsText;
+        [Tooltip("CPU Rack / GPU Rack / TPU Pod / Neural Fabric rows, in this order.")]
+        [SerializeField] private DatacenterItemRow[] datacenterRackRows = { new(), new(), new(), new() };
+        [Tooltip("Power Grid / Cooling Loop / Fabric Interconnect rows, in this order.")]
+        [SerializeField] private DatacenterItemRow[] datacenterFacilityRows = { new(), new(), new() };
+
+        [Serializable]
+        private sealed class DatacenterAllocationRow
+        {
+            public TMP_Text percentText;
+            public TMP_Text prodText;
+            public Slider slider;
+        }
+
+        // Runtime-built stacked bar inside the AllocatedSlider node: three colored segments whose
+        // widths show the Training/Analysis/Market split on a 0-100% scale.
+        private Image[] datacenterAllocationSegments;
+
+        private static readonly Color[] DatacenterAllocationFallbackColors =
+        {
+            new(0.486f, 0.227f, 0.929f), // Training Cluster — purple (#7C3AED)
+            new(0.133f, 0.827f, 0.933f), // Analysis Node — cyan (#22D3EE)
+            new(0.961f, 0.620f, 0.043f)  // Market Bots — amber (#F59E0B)
+        };
+
+        [Serializable]
+        private sealed class DatacenterItemRow
+        {
+            public TMP_Text prodText;
+            public TMP_Text unitsText;
+            public Button buyButton;
+        }
         // Legacy pre-redesign tree (dynamic node buttons + drawn connector arrows) — no longer
         // used now that the tree is a static grid of StackMergeResearchCard nodes.
         [SerializeField] private Button[] researchButtons = Array.Empty<Button>();
@@ -273,7 +318,11 @@ namespace StackMerge
         [Header("Achievement Notification")]
         [SerializeField] private GameObject achievementNotificationPanel;
         [SerializeField] private TMP_Text achievementNotificationGoalText;
+        [Tooltip("Optional. Shows the completed goal's unlock reward; stays hidden for goals without one. Auto-found by name ('RewardText').")]
+        [SerializeField] private TMP_Text achievementNotificationRewardText;
         [SerializeField] private Button achievementNotificationCloseButton;
+        [Tooltip("Auto Buy toggle buttons in the Algorithms / Upgrades / Agents / Modifiers menus, in this order. Auto-found by name ('AutoBuyButton') under each panel. Hidden until the First Prestige goal is completed.")]
+        [SerializeField] private Button[] autoBuyButtons = new Button[4];
         [SerializeField] private float achievementNotificationVisibleSeconds = 10f;
         [SerializeField] private float achievementNotificationSlideSeconds = 0.28f;
 
@@ -298,6 +347,8 @@ namespace StackMerge
         private float saveFlushTimer;
         private const float SaveFlushInterval = 4f;
         private float trainingEvalTimer;
+        private float datacenterUiRefreshTimer;
+        private float autoBuyTimer;
         // Captured once from the panel's own designed height, then reused every reposition so the
         // panel doesn't grow/shrink as it gets moved around.
         private float runInfoDesignHeight = -1f;
@@ -357,7 +408,7 @@ namespace StackMerge
         private Coroutine gameplayLayoutWarmupCoroutine;
         private float gameOverOverlayTimer;
         private readonly HashSet<int> completedAchievementIds = new();
-        private readonly Queue<string> achievementNotificationQueue = new();
+        private readonly Queue<(string Description, string Reward)> achievementNotificationQueue = new();
         private bool achievementCompletionStateInitialized;
         private RectTransform achievementNotificationRect;
         private Vector2 achievementNotificationHomePosition;
@@ -396,6 +447,7 @@ namespace StackMerge
 
         private void Awake()
         {
+            StackMergeProgression.DebugUnlockDatacenter = unlockDatacenterInEditor && Application.isEditor;
             ConfigureCamera();
             EnsureEventSystem();
             EnsureOptionalUpgradeButtonReferences();
@@ -409,6 +461,8 @@ namespace StackMerge
             EnsurePpoSceneUiReferences();
             EnsurePrestigeResetModalReferences();
             EnsureOfflineProgressOverlayReferences();
+            EnsureDatacenterReferences();
+            EnsureAutoBuyButtons();
             HidePpoModeModal();
             SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
             SetActive(gameOverAutoRestartSlider != null ? gameOverAutoRestartSlider.gameObject : null, false);
@@ -524,6 +578,8 @@ namespace StackMerge
             TickLanguageDropdownSelection();
             TickFpsDisplay();
             TickPassiveProduction();
+            TickDatacenterProduction();
+            TickAutoBuy();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -777,6 +833,12 @@ namespace StackMerge
                 return;
             }
 
+            if (achievementNotificationRewardText == null)
+            {
+                Transform rewardText = FindNamedDescendant(achievementNotificationPanel.transform, "RewardText");
+                achievementNotificationRewardText = rewardText != null ? rewardText.GetComponent<TMP_Text>() : null;
+            }
+
             if (achievementNotificationGoalText == null)
             {
                 Transform goalText = FindNamedDescendant(achievementNotificationPanel.transform, "GoalText");
@@ -836,6 +898,21 @@ namespace StackMerge
             achievementNotificationCloseButton.onClick.AddListener(DismissAchievementNotification);
         }
 
+        /// <summary>
+        /// Unlock rewards tied to specific goals. Shown on the goal row's RewardText and in the
+        /// completion notification; the unlocks themselves are gated by the same conditions the
+        /// goals measure (Auto Buy → PrestigeCount >= 1, Datacenter → PrestigeCount >= 5).
+        /// </summary>
+        private static string GetAchievementRewardText(int achievementId)
+        {
+            return achievementId switch
+            {
+                23 => "Unlocks Auto Buy for Algos, Upgrades, Agents and Mods", // "First Prestige"
+                24 => "Unlocks Datacenter",                                    // "Prestige Loop" (5×)
+                _ => null
+            };
+        }
+
         private void SyncCompletedAchievements()
         {
             completedAchievementIds.Clear();
@@ -874,7 +951,7 @@ namespace StackMerge
                 if (!completedAchievementIds.Contains(achievement.Id) && progression.IsAchievementComplete(achievement))
                 {
                     completedAchievementIds.Add(achievement.Id);
-                    achievementNotificationQueue.Enqueue(achievement.Description);
+                    achievementNotificationQueue.Enqueue((achievement.Description, GetAchievementRewardText(achievement.Id)));
                 }
             }
 
@@ -901,7 +978,18 @@ namespace StackMerge
                 return;
             }
 
-            SetText(achievementNotificationGoalText, achievementNotificationQueue.Dequeue());
+            (string description, string reward) = achievementNotificationQueue.Dequeue();
+            SetText(achievementNotificationGoalText, description);
+            if (achievementNotificationRewardText != null)
+            {
+                bool hasReward = !string.IsNullOrEmpty(reward);
+                SetActive(achievementNotificationRewardText.gameObject, hasReward);
+                if (hasReward)
+                {
+                    SetText(achievementNotificationRewardText, reward);
+                }
+            }
+
             SetActive(achievementNotificationPanel, true);
             achievementNotificationPanel.transform.SetAsLastSibling();
 
@@ -2415,7 +2503,7 @@ namespace StackMerge
             achievementsOpen = false;
             solverTuneOpen = false;
             gameplayInfoOpen = false;
-            int requestedTab = Mathf.Clamp(tabIndex, 0, 6);
+            int requestedTab = Mathf.Clamp(tabIndex, 0, 7);
             if (requestedTab == 3 && progression != null && !progression.AgentsMenuUnlocked)
             {
                 SetText(feedbackText, "Unlock Agents in Upgrades first");
@@ -2431,6 +2519,12 @@ namespace StackMerge
             if (requestedTab == 5 && progression != null && !IsResearchMenuUnlocked())
             {
                 SetText(feedbackText, progression.IsSolverUnlocked(SolverId.MachineLearning) ? "Finish PPO Training first" : "Unlock PPO to open Research");
+                requestedTab = selectedTabIndex;
+            }
+
+            if (requestedTab == 7 && progression != null && !progression.DatacenterUnlocked)
+            {
+                SetText(feedbackText, $"Prestige {StackMergeProgression.DatacenterUnlockPrestigeCount} times to unlock the Datacenter");
                 requestedTab = selectedTabIndex;
             }
 
@@ -2454,6 +2548,11 @@ namespace StackMerge
             SetActive(achievementsPanel, false);
             SetActive(researchPanel, selectedTabIndex == 5);
             SetActive(settingsPanel, selectedTabIndex == 6);
+            SetActive(datacenterPanel, selectedTabIndex == 7);
+            if (selectedTabIndex == 7)
+            {
+                RefreshDatacenterPanel();
+            }
             SetActive(solverTunePanel, false);
             SetActive(gameplayInfoOverlay, false);
             SetActive(researchDetailModal, false);
@@ -2487,6 +2586,7 @@ namespace StackMerge
             SetActive(achievementsPanel, false);
             SetActive(agentsPanel, false);
             SetActive(researchPanel, false);
+            SetActive(datacenterPanel, false);
             SetActive(settingsPanel, false);
             SetActive(historyPanel, true);
             SetActive(solverTunePanel, false);
@@ -2518,6 +2618,7 @@ namespace StackMerge
             SetActive(modifiersPanel, false);
             SetActive(agentsPanel, false);
             SetActive(researchPanel, false);
+            SetActive(datacenterPanel, false);
             SetActive(settingsPanel, false);
             SetActive(achievementsPanel, true);
             SetActive(solverTunePanel, false);
@@ -2608,8 +2709,8 @@ namespace StackMerge
                 }
 
                 // Settings is no longer a bottom-bar tab — it opens from the Gameplay footer.
-                // Hide any leftover 7th (or later) tab button so it doesn't show on the bar.
-                if (i >= 6)
+                // Index 7 is the Datacenter tab; anything past that is a leftover and stays hidden.
+                if (i == 6 || i > 7)
                 {
                     SetActive(button.gameObject, false);
                     continue;
@@ -2723,7 +2824,9 @@ namespace StackMerge
 
         private int GetBottomMenuActiveTabIndex()
         {
-            if (historyOpen || achievementsOpen || selectedTabIndex < 0 || selectedTabIndex >= 6)
+            // Settings (6) opens from the Gameplay footer, so it has no bar highlight; the
+            // Datacenter tab (7) is a regular bar tab.
+            if (historyOpen || achievementsOpen || selectedTabIndex < 0 || selectedTabIndex == 6 || selectedTabIndex >= tabButtons.Length)
             {
                 return -1;
             }
@@ -2754,12 +2857,13 @@ namespace StackMerge
         {
             return (tabIndex == 3 && progression != null && !progression.AgentsMenuUnlocked)
                 || (tabIndex == 4 && progression != null && !progression.ModifiersMenuUnlocked)
-                || (tabIndex == 5 && progression != null && !IsResearchMenuUnlocked());
+                || (tabIndex == 5 && progression != null && !IsResearchMenuUnlocked())
+                || (tabIndex == 7 && progression != null && !progression.DatacenterUnlocked);
         }
 
         private static string GetDefaultBottomTabLabel(int tabIndex)
         {
-            string[] labels = { "Game", "Algos", "Upgrades", "Agents", "Modifiers", "Research" };
+            string[] labels = { "Game", "Algos", "Upgrades", "Agents", "Mods", "Research", string.Empty, "DC" };
             return tabIndex >= 0 && tabIndex < labels.Length ? labels[tabIndex] : string.Empty;
         }
 
@@ -2898,8 +3002,13 @@ namespace StackMerge
         private void RefreshBottomMenuIconStates()
         {
             int activeIndex = GetBottomMenuActiveTabIndex();
-            for (int i = 0; i < tabButtons.Length && i < 6; i++)
+            for (int i = 0; i < tabButtons.Length && i <= 7; i++)
             {
+                if (i == 6)
+                {
+                    continue; // Settings is not on the bar.
+                }
+
                 BottomTabVisual visual = i < bottomTabVisuals.Length ? bottomTabVisuals[i] : null;
                 ApplyBottomTabVisual(visual, IsBottomTabLocked(i), i == activeIndex && i != bottomMenuHighlightPendingIconIndex);
             }
@@ -3812,6 +3921,645 @@ namespace StackMerge
         }
 
         // ------------------------------------------------------------------------------------
+        // Auto Buy — reward of the "First Prestige" goal. One toggle button per menu (Algorithms,
+        // Upgrades, Agents, Modifiers); while a toggle is on, this ticker buys everything in that
+        // menu the moment it becomes affordable. PPO is deliberately excluded: buying it flips the
+        // game into the training flow and must stay a conscious player decision.
+        // ------------------------------------------------------------------------------------
+        private void EnsureAutoBuyButtons()
+        {
+            GameObject[] panels = { algorithmsPanel, upgradesPanel, agentsPanel, modifiersPanel };
+            for (int i = 0; i < autoBuyButtons.Length && i < panels.Length; i++)
+            {
+                if (autoBuyButtons[i] == null && panels[i] != null)
+                {
+                    autoBuyButtons[i] = FindNamedDescendant(panels[i].transform, "AutoBuyButton")?.GetComponent<Button>();
+                }
+
+                if (autoBuyButtons[i] == null)
+                {
+                    continue;
+                }
+
+                var category = (AutoBuyCategory)i;
+                autoBuyButtons[i].onClick.RemoveAllListeners();
+                autoBuyButtons[i].onClick.AddListener(() => ToggleAutoBuy(category));
+            }
+        }
+
+        private void ToggleAutoBuy(AutoBuyCategory category)
+        {
+            if (progression == null || !progression.AutoBuyUnlocked)
+            {
+                return;
+            }
+
+            progression.SetAutoBuyEnabled(category, !progression.GetAutoBuyEnabled(category));
+            RefreshAutoBuyButtons();
+        }
+
+        private void RefreshAutoBuyButtons()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool unlocked = progression.AutoBuyUnlocked;
+            for (int i = 0; i < autoBuyButtons.Length; i++)
+            {
+                Button button = autoBuyButtons[i];
+                if (button == null)
+                {
+                    continue;
+                }
+
+                SetActive(button.gameObject, unlocked);
+                if (unlocked)
+                {
+                    bool enabled = progression.GetAutoBuyEnabled((AutoBuyCategory)i);
+                    SetButtonText(button, $"<b>Auto Buy</b>\n{(enabled ? "Enabled" : "Disabled")}");
+                }
+            }
+        }
+
+        private void TickAutoBuy()
+        {
+            if (progression == null || !progression.AutoBuyUnlocked)
+            {
+                return;
+            }
+
+            autoBuyTimer += Time.deltaTime;
+            if (autoBuyTimer < 0.75f)
+            {
+                return;
+            }
+
+            autoBuyTimer = 0f;
+            bool boughtAny = false;
+            if (progression.GetAutoBuyEnabled(AutoBuyCategory.Algorithms))
+            {
+                boughtAny |= AutoBuySolversTick();
+            }
+
+            if (progression.GetAutoBuyEnabled(AutoBuyCategory.Upgrades))
+            {
+                boughtAny |= AutoBuyUpgradesTick();
+            }
+
+            if (progression.GetAutoBuyEnabled(AutoBuyCategory.Agents))
+            {
+                boughtAny |= AutoBuyAgentsTick();
+            }
+
+            if (progression.GetAutoBuyEnabled(AutoBuyCategory.Modifiers))
+            {
+                boughtAny |= AutoBuyModifiersTick();
+            }
+
+            if (boughtAny)
+            {
+                // Buying a solver also selects it (same as the manual buy path) — mirror that into
+                // the bootstrap's local selection state before the UI refresh.
+                selectedSolverId = progression.SelectedSolver;
+                solverDeselected = progression.SolverDeselected;
+                progression.Save();
+                QueueAchievementNotificationsForNewCompletions();
+                RefreshEverything();
+            }
+        }
+
+        private bool AutoBuySolversTick()
+        {
+            // Buying a solver selects it — never yank the board out of a running PPO session.
+            if (progression.SelectedSolver == SolverId.MachineLearning && progression.IsSolverUnlocked(SolverId.MachineLearning))
+            {
+                return false;
+            }
+
+            bool bought = false;
+            foreach (SolverDefinition definition in StackMergeSolverCatalog.Definitions)
+            {
+                if (definition.Id == SolverId.MachineLearning || progression.IsSolverUnlocked(definition.Id))
+                {
+                    continue;
+                }
+
+                if (progression.Chips >= progression.GetSolverUnlockCost(definition.Id) && progression.SelectOrUnlockSolver(definition.Id))
+                {
+                    bought = true;
+                }
+            }
+
+            return bought;
+        }
+
+        private bool AutoBuyUpgradesTick()
+        {
+            bool TryBuy(bool available, long cost, Func<bool> buy)
+            {
+                return available && cost > 0 && progression.Chips >= cost && buy();
+            }
+
+            bool boughtAny = false;
+            bool boughtThisPass = true;
+            int guard = 0;
+            while (boughtThisPass && guard++ < 50)
+            {
+                boughtThisPass = false;
+                boughtThisPass |= TryBuy(!progression.AutoSolveUnlocked && progression.HasPurchasedSolver, progression.GetAutoSolveCost(), progression.ToggleOrBuyAutoSolve);
+                boughtThisPass |= TryBuy(!progression.AutoRestartUnlocked && progression.HasPurchasedSolver, progression.GetAutoRestartCost(), progression.ToggleOrBuyAutoRestart);
+                boughtThisPass |= TryBuy(!progression.SolverTuningUnlocked, progression.GetSolverTuningUnlockCost(), progression.BuySolverTuningUnlock);
+                boughtThisPass |= TryBuy(!progression.AgentsMenuUnlocked, progression.GetAgentsMenuUnlockCost(), progression.BuyAgentsMenuUnlock);
+                boughtThisPass |= TryBuy(progression.AgentsMenuUnlocked && !progression.ExtraAgentSlotUnlocked, progression.GetExtraAgentSlotUpgradeCost(), progression.BuyExtraAgentSlotUpgrade);
+                boughtThisPass |= TryBuy(progression.CanUnlockModifiersMenu && !progression.ModifiersMenuUnlocked, progression.GetModifiersMenuUnlockCost(), progression.BuyModifiersMenuUnlock);
+                boughtThisPass |= TryBuy(!progression.IsMaxSpeed, progression.GetSpeedUpgradeCost(), progression.BuySpeedUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxComputeSpeed, progression.GetComputeSpeedUpgradeCost(), progression.BuyComputeSpeedUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxStackCapacity, progression.GetStackCapacityUpgradeCost(), progression.BuyStackCapacityUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxQueuePreview, progression.GetQueuePreviewUpgradeCost(), progression.BuyQueuePreviewUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxIncome, progression.GetIncomeUpgradeCost(), progression.BuyIncomeUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxDifficulty, progression.GetDifficultyUpgradeCost(), progression.BuyDifficultyUpgrade);
+                boughtThisPass |= TryBuy(progression.ScalingFrequencyPurchasable && !progression.IsMaxScalingFrequency, progression.GetScalingFrequencyUpgradeCost(), progression.BuyScalingFrequencyUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxProfitableEnding, progression.GetProfitableEndingUpgradeCost(), progression.BuyProfitableEndingUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxPassiveYield, progression.GetPassiveYieldUpgradeCost(), progression.BuyPassiveYieldUpgrade);
+                boughtThisPass |= TryBuy(progression.PassiveSupportUpgradesUnlocked && !progression.IsMaxPassiveTickRate, progression.GetPassiveTickRateUpgradeCost(), progression.BuyPassiveTickRateUpgrade);
+                boughtThisPass |= TryBuy(progression.PassiveSupportUpgradesUnlocked && !progression.IsMaxActiveMultiplier, progression.GetActiveMultiplierUpgradeCost(), progression.BuyActiveMultiplierUpgrade);
+                boughtAny |= boughtThisPass;
+            }
+
+            return boughtAny;
+        }
+
+        private bool AutoBuyAgentsTick()
+        {
+            if (!progression.AgentsMenuUnlocked)
+            {
+                return false;
+            }
+
+            bool bought = false;
+            foreach (AgentDefinition agent in StackMergeProgression.Agents)
+            {
+                if (progression.IsAgentUnlocked(agent.Id))
+                {
+                    continue;
+                }
+
+                if (progression.Chips >= progression.GetAgentCost(agent.Id) && progression.BuyOrToggleAgent(agent.Id))
+                {
+                    bought = true;
+                }
+            }
+
+            return bought;
+        }
+
+        private bool AutoBuyModifiersTick()
+        {
+            if (!progression.ModifiersMenuUnlocked)
+            {
+                return false;
+            }
+
+            bool boughtAny = false;
+            bool boughtThisPass = true;
+            int guard = 0;
+            while (boughtThisPass && guard++ < 40)
+            {
+                boughtThisPass = false;
+                foreach (ModifierDefinition modifier in StackMergeProgression.Modifiers)
+                {
+                    if (progression.IsModifierMaxed(modifier.Id))
+                    {
+                        continue;
+                    }
+
+                    if (progression.Chips >= progression.GetModifierUpgradeCost(modifier.Id) && progression.BuyModifierUpgrade(modifier.Id))
+                    {
+                        boughtThisPass = true;
+                        boughtAny = true;
+                    }
+                }
+            }
+
+            return boughtAny;
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Datacenter layer UI — hand-built "Datacenter Panel" in the scene. References are found
+        // by row-root names (CPU Rack, Training Cluster, Power Grid, ...) so nothing needs manual
+        // dragging, but every serialized field wins when assigned in the Inspector. The panel also
+        // hosts the Research tree and the Prestige Console; those keep their own existing wiring
+        // (researchCards / prestigeSummaryText / prestigeButton fields).
+        // ------------------------------------------------------------------------------------
+        private static readonly string[] DatacenterAllocationRowNames = { "Training Cluster", "Analysis Node", "Market Bots" };
+        private static readonly string[] DatacenterRackRowNames = { "CPU Rack", "GPU Rack", "TPU Pod", "Neural Fabric" };
+        private static readonly string[] DatacenterFacilityRowNames = { "Power Grid", "Cooling Loop", "Fabric Interconnect" };
+
+        private void EnsureDatacenterReferences()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            if (datacenterPanel == null)
+            {
+                Transform panel = FindNamedDescendant(canvas.transform, "Datacenter Panel");
+                datacenterPanel = panel != null ? panel.gameObject : null;
+            }
+
+            if (datacenterPanel == null)
+            {
+                return;
+            }
+
+            Transform root = datacenterPanel.transform;
+            if (datacenterComputeText == null)
+            {
+                datacenterComputeText = FindNamedDescendant(root, "ComputeAmountText")?.GetComponent<TMP_Text>();
+            }
+
+            Transform allocationSection = FindNamedDescendant(root, "Compute Allocation");
+            if (allocationSection != null)
+            {
+                if (datacenterAllocationTotalText == null)
+                {
+                    Transform title = FindNamedDescendant(allocationSection, "Title");
+                    datacenterAllocationTotalText = title != null ? FindNamedDescendant(title, "%Text")?.GetComponent<TMP_Text>() : null;
+                }
+
+                if (datacenterAllocationTotalSlider == null)
+                {
+                    Transform totalSlider = FindNamedDescendant(allocationSection, "AllocatedSlider");
+                    datacenterAllocationTotalSlider = totalSlider != null ? totalSlider.GetComponentInChildren<Slider>(true) : null;
+                }
+
+                for (int i = 0; i < datacenterAllocationRows.Length && i < DatacenterAllocationRowNames.Length; i++)
+                {
+                    datacenterAllocationRows[i] ??= new DatacenterAllocationRow();
+                    Transform row = FindNamedDescendant(allocationSection, DatacenterAllocationRowNames[i]);
+                    if (row == null)
+                    {
+                        continue;
+                    }
+
+                    datacenterAllocationRows[i].percentText ??= FindNamedDescendant(row, "%Text")?.GetComponent<TMP_Text>();
+                    datacenterAllocationRows[i].prodText ??= FindNamedDescendant(row, "ProdText")?.GetComponent<TMP_Text>();
+                    if (datacenterAllocationRows[i].slider == null)
+                    {
+                        datacenterAllocationRows[i].slider = row.GetComponentInChildren<Slider>(true);
+                    }
+                }
+            }
+
+            Transform rackSection = FindNamedDescendant(root, "Server Racks");
+            if (rackSection != null && datacenterRackUnitsText == null)
+            {
+                Transform title = FindNamedDescendant(rackSection, "Title");
+                datacenterRackUnitsText = title != null ? FindNamedDescendant(title, "UnitText")?.GetComponent<TMP_Text>() : null;
+            }
+
+            EnsureDatacenterItemRows(rackSection ?? root, datacenterRackRows, DatacenterRackRowNames);
+            Transform facilitySection = FindNamedDescendant(root, "Facility Upgrades");
+            EnsureDatacenterItemRows(facilitySection ?? root, datacenterFacilityRows, DatacenterFacilityRowNames);
+
+            WireDatacenterControls();
+        }
+
+        private static void EnsureDatacenterItemRows(Transform sectionRoot, DatacenterItemRow[] rows, string[] rowNames)
+        {
+            if (sectionRoot == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < rows.Length && i < rowNames.Length; i++)
+            {
+                rows[i] ??= new DatacenterItemRow();
+                Transform row = FindNamedDescendant(sectionRoot, rowNames[i]);
+                if (row == null)
+                {
+                    continue;
+                }
+
+                rows[i].prodText ??= FindNamedDescendant(row, "ProdText")?.GetComponent<TMP_Text>();
+                rows[i].unitsText ??= FindNamedDescendant(row, "UnitsText")?.GetComponent<TMP_Text>();
+                rows[i].buyButton ??= FindNamedDescendant(row, "Buy")?.GetComponent<Button>();
+            }
+        }
+
+        private void WireDatacenterControls()
+        {
+            for (int i = 0; i < datacenterAllocationRows.Length; i++)
+            {
+                Slider slider = datacenterAllocationRows[i]?.slider;
+                if (slider == null)
+                {
+                    continue;
+                }
+
+                var allocationId = (DatacenterAllocationId)i;
+                slider.minValue = 0f;
+                slider.maxValue = 100f;
+                slider.onValueChanged.RemoveAllListeners();
+                slider.onValueChanged.AddListener(value => OnDatacenterAllocationChanged(allocationId, value));
+            }
+
+            EnsureDatacenterAllocationBar();
+
+            for (int i = 0; i < datacenterRackRows.Length; i++)
+            {
+                Button buy = datacenterRackRows[i]?.buyButton;
+                if (buy == null)
+                {
+                    continue;
+                }
+
+                var rackId = (DatacenterRackId)i;
+                buy.onClick.RemoveAllListeners();
+                buy.onClick.AddListener(() => BuyDatacenterRack(rackId));
+            }
+
+            for (int i = 0; i < datacenterFacilityRows.Length; i++)
+            {
+                Button buy = datacenterFacilityRows[i]?.buyButton;
+                if (buy == null)
+                {
+                    continue;
+                }
+
+                var facilityId = (DatacenterFacilityId)i;
+                buy.onClick.RemoveAllListeners();
+                buy.onClick.AddListener(() => BuyDatacenterFacility(facilityId));
+            }
+        }
+
+        // Converts the AllocatedSlider node into a three-segment stacked bar: the Slider component
+        // is disabled (its plain fill hidden) and three colored Images are created inside its Fill
+        // Area (which already has a RectMask2D, so segments clip to the bar's rounded shape). The
+        // segment colors are taken from each allocation row's own slider fill, so recoloring the
+        // rows in the scene recolors the bar too.
+        private void EnsureDatacenterAllocationBar()
+        {
+            if (datacenterAllocationTotalSlider == null)
+            {
+                return;
+            }
+
+            Transform fillArea = FindNamedDescendant(datacenterAllocationTotalSlider.transform, "Fill Area");
+            RectTransform container = fillArea as RectTransform ?? datacenterAllocationTotalSlider.transform as RectTransform;
+            if (container == null)
+            {
+                return;
+            }
+
+            datacenterAllocationTotalSlider.interactable = false;
+            datacenterAllocationTotalSlider.enabled = false;
+            if (datacenterAllocationTotalSlider.fillRect != null)
+            {
+                SetActive(datacenterAllocationTotalSlider.fillRect.gameObject, false);
+            }
+
+            datacenterAllocationSegments = new Image[DatacenterAllocationRowNames.Length];
+            for (int i = 0; i < datacenterAllocationSegments.Length; i++)
+            {
+                string segmentName = $"Allocation Segment {i}";
+                Transform existing = container.Find(segmentName);
+                GameObject segmentObject = existing != null ? existing.gameObject : new GameObject(segmentName, typeof(RectTransform), typeof(Image));
+                RectTransform rect = segmentObject.GetComponent<RectTransform>();
+                if (existing == null)
+                {
+                    rect.SetParent(container, false);
+                }
+
+                Image image = segmentObject.GetComponent<Image>();
+                image.raycastTarget = false;
+                image.color = GetDatacenterAllocationColor(i);
+                datacenterAllocationSegments[i] = image;
+            }
+        }
+
+        private Color GetDatacenterAllocationColor(int index)
+        {
+            Slider rowSlider = index >= 0 && index < datacenterAllocationRows.Length ? datacenterAllocationRows[index]?.slider : null;
+            Image fill = rowSlider != null && rowSlider.fillRect != null ? rowSlider.fillRect.GetComponent<Image>() : null;
+            return fill != null ? fill.color : DatacenterAllocationFallbackColors[Mathf.Clamp(index, 0, DatacenterAllocationFallbackColors.Length - 1)];
+        }
+
+        private void OnDatacenterAllocationChanged(DatacenterAllocationId allocationId, float sliderValue)
+        {
+            if (progression == null || !progression.DatacenterUnlocked)
+            {
+                RefreshDatacenterPanel();
+                return;
+            }
+
+            progression.SetDatacenterAllocation(allocationId, sliderValue / 100f);
+            // Refresh snaps the slider back if the requested share was clamped by the 100% budget.
+            RefreshDatacenterPanel();
+        }
+
+        private void BuyDatacenterRack(DatacenterRackId rackId)
+        {
+            if (progression == null || !progression.BuyDatacenterRack(rackId))
+            {
+                return;
+            }
+
+            progression.Save();
+            RefreshDatacenterPanel();
+            RefreshProgressionUi();
+        }
+
+        private void BuyDatacenterFacility(DatacenterFacilityId facilityId)
+        {
+            if (progression == null || !progression.BuyDatacenterFacility(facilityId))
+            {
+                return;
+            }
+
+            progression.Save();
+            RefreshDatacenterPanel();
+            RefreshProgressionUi();
+        }
+
+        private void TickDatacenterProduction()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            progression.TickDatacenter(Time.deltaTime);
+
+            bool panelVisible = datacenterPanel != null ? datacenterPanel.activeInHierarchy : selectedTabIndex == 7;
+            if (!panelVisible)
+            {
+                return;
+            }
+
+            datacenterUiRefreshTimer += Time.deltaTime;
+            if (datacenterUiRefreshTimer >= 0.5f)
+            {
+                datacenterUiRefreshTimer = 0f;
+                RefreshDatacenterPanel();
+            }
+        }
+
+        private void RefreshDatacenterPanel()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool unlocked = progression.DatacenterUnlocked;
+            double totalGigaflops = progression.DatacenterTotalGigaflops;
+
+            SetText(datacenterComputeText, unlocked
+                ? $"Total compute: {FormatFlops(totalGigaflops)}"
+                : $"Locked — reach Prestige {StackMergeProgression.DatacenterUnlockPrestigeCount} ({progression.PrestigeCount}/{StackMergeProgression.DatacenterUnlockPrestigeCount})");
+
+            // --- Allocation ---
+            float allocatedTotal = progression.DatacenterAllocatedFraction;
+            SetText(datacenterAllocationTotalText, $"{Mathf.RoundToInt(allocatedTotal * 100f)}% allocated");
+            if (datacenterAllocationSegments != null)
+            {
+                // Stacked bar: each segment spans its share of the 0..1 anchor range; whatever is
+                // unallocated stays background on the right.
+                float segmentStart = 0f;
+                for (int i = 0; i < datacenterAllocationSegments.Length; i++)
+                {
+                    Image segment = datacenterAllocationSegments[i];
+                    if (segment == null)
+                    {
+                        continue;
+                    }
+
+                    float share = progression.GetDatacenterAllocation((DatacenterAllocationId)i);
+                    RectTransform rect = segment.rectTransform;
+                    rect.anchorMin = new Vector2(segmentStart, 0f);
+                    rect.anchorMax = new Vector2(Mathf.Clamp01(segmentStart + share), 1f);
+                    rect.offsetMin = Vector2.zero;
+                    rect.offsetMax = Vector2.zero;
+                    segment.color = GetDatacenterAllocationColor(i);
+                    segmentStart = Mathf.Clamp01(segmentStart + share);
+                }
+            }
+            else if (datacenterAllocationTotalSlider != null)
+            {
+                datacenterAllocationTotalSlider.SetValueWithoutNotify(allocatedTotal * 100f);
+            }
+
+            for (int i = 0; i < datacenterAllocationRows.Length; i++)
+            {
+                DatacenterAllocationRow row = datacenterAllocationRows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                var allocationId = (DatacenterAllocationId)i;
+                float share = progression.GetDatacenterAllocation(allocationId);
+                SetText(row.percentText, $"{Mathf.RoundToInt(share * 100f)}%");
+                if (row.slider != null)
+                {
+                    row.slider.SetValueWithoutNotify(share * 100f);
+                    row.slider.interactable = unlocked;
+                }
+
+                switch (allocationId)
+                {
+                    case DatacenterAllocationId.TrainingCluster:
+                        double framesPerSecond = progression.DatacenterTrainingFramesPerSecond;
+                        SetText(row.prodText, progression.DatacenterTrainingHasTarget || framesPerSecond <= 0
+                            ? $"{framesPerSecond:N0} fr/s"
+                            : $"{framesPerSecond:N0} fr/s (idle)");
+                        break;
+                    case DatacenterAllocationId.AnalysisNode:
+                        SetText(row.prodText, $"{progression.DatacenterInsightPerSecond:0.00} ips");
+                        break;
+                    case DatacenterAllocationId.MarketBots:
+                        SetText(row.prodText, $"×{progression.DatacenterMarketMultiplier:0.00}");
+                        break;
+                }
+            }
+
+            // --- Racks ---
+            SetText(datacenterRackUnitsText, $"{progression.TotalDatacenterRackUnits} units");
+            for (int i = 0; i < datacenterRackRows.Length; i++)
+            {
+                DatacenterItemRow row = datacenterRackRows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                var rackId = (DatacenterRackId)i;
+                int count = progression.GetDatacenterRackCount(rackId);
+                double unitFlops = progression.GetDatacenterRackUnitGigaflops(rackId);
+                long cost = progression.GetDatacenterRackCost(rackId);
+                SetText(row.prodText, $"unit: {FormatFlops(unitFlops)} - total: {FormatFlops(count * unitFlops)}");
+                SetText(row.unitsText, $"x{count}");
+                if (row.buyButton != null)
+                {
+                    SetButtonText(row.buyButton, unlocked ? $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}" : "Locked");
+                    row.buyButton.interactable = unlocked && progression.Chips >= cost;
+                }
+            }
+
+            // --- Facilities ---
+            for (int i = 0; i < datacenterFacilityRows.Length; i++)
+            {
+                DatacenterItemRow row = datacenterFacilityRows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                var facilityId = (DatacenterFacilityId)i;
+                int level = progression.GetDatacenterFacilityLevel(facilityId);
+                int maxLevel = StackMergeProgression.DatacenterFacilities[i].MaxLevel;
+                bool maxed = progression.IsDatacenterFacilityMaxed(facilityId);
+                SetText(row.prodText, facilityId switch
+                {
+                    DatacenterFacilityId.PowerGrid => $"+{level * 6}% rack FLOPS",
+                    DatacenterFacilityId.CoolingLoop => $"+{level * 4}% rack FLOPS",
+                    _ => $"×{1.0 + level * 0.05:0.00} TPU / Fabric output"
+                });
+                SetText(row.unitsText, $"{level}/{maxLevel}");
+                if (row.buyButton != null)
+                {
+                    long cost = progression.GetDatacenterFacilityCost(facilityId);
+                    SetButtonText(row.buyButton, !unlocked ? "Locked" : maxed ? "Maxed" : $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}");
+                    row.buyButton.interactable = unlocked && !maxed && progression.Chips >= cost;
+                }
+            }
+        }
+
+        private static string FormatFlops(double gigaflops)
+        {
+            if (gigaflops >= 1_000_000_000d)
+            {
+                return $"{gigaflops / 1_000_000_000d:0.#} EF/s";
+            }
+
+            if (gigaflops >= 1_000_000d)
+            {
+                return $"{gigaflops / 1_000_000d:0.#} PF/s";
+            }
+
+            if (gigaflops >= 1_000d)
+            {
+                return $"{gigaflops / 1_000d:0.#} TF/s";
+            }
+
+            return $"{gigaflops:0.#} GF/s";
+        }
+
+        // ------------------------------------------------------------------------------------
         // Offline Progress Overlay — hand-built scene object. Shown on startup once Offline
         // Engine research is bought and a rewarded offline period was just credited. Deliberately
         // NOT closable by clicking the backdrop; only Back/Collect dismiss it (the reward itself
@@ -3914,7 +4662,7 @@ namespace StackMerge
                 return;
             }
 
-            SetText(offlineGainText, $"You made <sprite name=\"chips\"> {FormatNumber(progression.LastOfflineChips)} and <sprite name=\"insight\"> {FormatNumber(progression.LastOfflineInsight)} while you were offline.");
+            SetText(offlineGainText, $"You made <sprite name=\"chips\" tint=1> {FormatNumber(progression.LastOfflineChips)} and <sprite name=\"insight\" tint=1> {FormatNumber(progression.LastOfflineInsight)} while you were offline.");
 
             double hours = progression.LastOfflineHours;
             double cap = Math.Max(0.01, progression.OfflineHourCap);
@@ -3995,7 +4743,7 @@ namespace StackMerge
                 prestigeResetSlider.SetValueWithoutNotify(trained ? 1f : Mathf.Clamp01(frames / (float)required));
             }
 
-            SetText(prestigeResetAmountText, $"Reset for <sprite name=\"insight\"> {FormatNumber(gain)}");
+            SetText(prestigeResetAmountText, $"Reset for <sprite name=\"insight\" tint=1> {FormatNumber(gain)}");
             if (prestigeResetBuyButton != null)
             {
                 prestigeResetBuyButton.interactable = gain > 0;
@@ -5046,9 +5794,9 @@ namespace StackMerge
             }
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
-            SetText(chipsTexts, $"<sprite name=\"chips\"> {FormatNumber(progression.Chips)}");
-            SetText(insightsTexts, $"<sprite name=\"insight\"> {FormatNumber(progression.ResearchInsight)}");
-            SetText(tokensText, $"<sprite name=\"token\"> {FormatNumber(progression.Tokens)}");
+            SetText(chipsTexts, $"<sprite name=\"chips\" tint=1> {FormatNumber(progression.Chips)}");
+            SetText(insightsTexts, $"<sprite name=\"insight\" tint=1> {FormatNumber(progression.ResearchInsight)}");
+            SetText(tokensText, $"<sprite name=\"token\" tint=1> {FormatNumber(progression.Tokens)}");
 
             // TMP reports a stale preferred width on the first frame (its mesh isn't generated yet),
             // so ContentSizeFitter + Horizontal Layout Group pills mis-size until something forces a
@@ -5152,6 +5900,7 @@ namespace StackMerge
             RefreshModifierDetails();
             RefreshModifierCards();
             RefreshUpgradeButtons();
+            RefreshAutoBuyButtons();
             RefreshResearchMenu();
             RefreshHistory();
             RefreshAchievements();
@@ -5191,7 +5940,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    label += $"\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}";
+                    label += $"\n<sprite name=\"chips\" tint=1> {FormatNumber(definition.Cost)}";
                 }
 
                 SetButtonText(button, label);
@@ -5212,7 +5961,7 @@ namespace StackMerge
 
             SetText(solverDetailNameText, definition.DisplayName);
             string lockedInfo = isMachineLearning
-                ? $"{progression.GetMachineLearningGateStatus()}\n<sprite name=\"chips\"> {FormatNumber(definition.Cost)}"
+                ? $"{progression.GetMachineLearningGateStatus()}\n<sprite name=\"chips\" tint=1> {FormatNumber(definition.Cost)}"
                 : $"Unlock this algorithm to reveal details.";
             // PPO runtime statistics are intentionally not shown here — they live in the History menu.
             SetText(solverDetailInfoText, unlocked ? definition.Description : lockedInfo);
@@ -5226,7 +5975,7 @@ namespace StackMerge
             if (!unlocked)
             {
                 SetText(solverDetailStatusText, isMachineLearning && !machineLearningGateReady ? "Stage locked" : "Locked");
-                SetButtonText(solverDetailActionButton, isMachineLearning && !machineLearningGateReady ? "Needs all\nModifiers" : $"Unlock\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                SetButtonText(solverDetailActionButton, isMachineLearning && !machineLearningGateReady ? "Needs all\nModifiers" : $"Unlock\n<sprite name=\"chips\" tint=1> {FormatNumber(definition.Cost)}");
                 if (solverDetailActionButton != null)
                 {
                     solverDetailActionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
@@ -5282,7 +6031,7 @@ namespace StackMerge
                 {
                     SetButtonText(card.actionButton, isMachineLearning && !machineLearningGateReady
                         ? "Needs all\nModifiers"
-                        : $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(definition.Cost)}");
+                        : $"Buy\n<sprite name=\"chips\" tint=1> {FormatNumber(definition.Cost)}");
                     if (card.actionButton != null)
                     {
                         card.actionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
@@ -5760,7 +6509,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    label += $"\n<sprite name=\"chips_white\"> {FormatNumber(progression.GetAgentCost(definition.Id))}";
+                    label += $"\n<sprite name=\"chips\" tint=1> {FormatNumber(progression.GetAgentCost(definition.Id))}";
                 }
 
                 SetButtonText(button, label);
@@ -5833,7 +6582,7 @@ namespace StackMerge
             {
                 long agentCost = progression.GetAgentCost(selectedAgentId);
                 SetText(agentDetailStatusText, "Locked");
-                SetButtonText(agentDetailActionButton, $"Buy\n<sprite name=\"chips_white\"> {FormatNumber(agentCost)}");
+                SetButtonText(agentDetailActionButton, $"Buy\n<sprite name=\"chips\" tint=1> {FormatNumber(agentCost)}");
                 if (agentDetailActionButton != null)
                 {
                     agentDetailActionButton.interactable = progression.Chips >= agentCost;
@@ -5892,7 +6641,7 @@ namespace StackMerge
                 if (!unlocked)
                 {
                     long cardCost = progression.GetAgentCost(card.agentId);
-                    SetButtonText(card.button, $"<sprite name=\"chips_white\"> {FormatNumber(cardCost)}");
+                    SetButtonText(card.button, $"<sprite name=\"chips\" tint=1> {FormatNumber(cardCost)}");
                     if (card.button != null) card.button.interactable = progression.Chips >= cardCost;
                     continue;
                 }
@@ -6081,7 +6830,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetModifierUpgradeCost(card.modifierId);
-                    SetButtonText(card.button, $"<sprite name=\"chips\"> {FormatNumber(cost)}");
+                    SetButtonText(card.button, $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}");
                     if (card.button != null) card.button.interactable = progression.Chips >= cost;
                 }
             }
@@ -6118,7 +6867,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         modifiersMenuUnlockButton,
                         "Modifier Lab",
-                        gateReady ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Stage locked",
+                        gateReady ? $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}" : "Stage locked",
                         gateReady && progression.Chips >= cost);
                 }
             }
@@ -6139,7 +6888,7 @@ namespace StackMerge
                 {
                     float nextPercent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level + 1);
                     long cost = progression.GetSpeedUpgradeCost();
-                    SetUpgradeButtonLabels(speedUpgradeButton, $"{nextPercent:0}% faster ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(speedUpgradeButton, $"{nextPercent:0}% faster ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6159,7 +6908,7 @@ namespace StackMerge
                 {
                     float nextPercent = StackMergeProgression.GetComputeSpeedEffectPercent(level + 1);
                     long cost = progression.GetComputeSpeedUpgradeCost();
-                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{nextPercent:0}% delay ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{nextPercent:0}% delay ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6175,7 +6924,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         autoSolveButton,
                         "Auto solve",
-                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Needs algorithm",
+                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}" : "Needs algorithm",
                         progression.HasPurchasedSolver && progression.Chips >= cost);
                 }
             }
@@ -6193,7 +6942,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         autoRestartButton,
                         "Auto restart",
-                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\"> {FormatNumber(cost)}" : "Needs algorithm",
+                        progression.HasPurchasedSolver ? $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}" : "Needs algorithm",
                         progression.HasPurchasedSolver && progression.Chips >= cost);
                 }
             }
@@ -6201,7 +6950,7 @@ namespace StackMerge
             if (tokenPackButton != null)
             {
                 long cost = progression.GetTokenPackCost();
-                SetUpgradeButtonLabels(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                SetUpgradeButtonLabels(tokenPackButton, $"+{progression.GetTokenPackSize()} tokens", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
             }
 
             if (solverTuningUnlockButton != null)
@@ -6213,7 +6962,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetSolverTuningUnlockCost();
-                    SetUpgradeButtonLabels(solverTuningUnlockButton, "Solver tuning", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(solverTuningUnlockButton, "Solver tuning", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6230,7 +6979,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetExtraAgentSlotUpgradeCost();
-                    SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(extraAgentSlotUpgradeButton, "+1 Agent slot", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6251,7 +7000,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         agentsMenuUnlockButton,
                         "Agents",
-                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
                         progression.Chips >= cost,
                         "They give you extra bonuses when you unlock them.");
                 }
@@ -6280,7 +7029,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         stackCapacityUpgradeButton,
                         $"{nextCapacity} row ({level}/{maxLevel})",
-                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
                         progression.Chips >= cost,
                         "Increases the capacity of each stack by 1 per level.");
                 }
@@ -6307,7 +7056,7 @@ namespace StackMerge
                     SetUpgradeButtonLabels(
                         queuePreviewUpgradeButton,
                         $"+{level + 1} block ({level}/{maxLevel})",
-                        $"<sprite name=\"chips\"> {FormatNumber(cost)}",
+                        $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
                         progression.Chips >= cost,
                         "Shows 1 more upcoming block per level.");
                 }
@@ -6329,7 +7078,7 @@ namespace StackMerge
                 {
                     string name = $"+{StackMergeProgression.GetDifficultyMaxTierBonus(level + 1):0.0} max tier ({level}/{maxLevel})";
                     long cost = progression.GetDifficultyUpgradeCost();
-                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6348,7 +7097,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetScalingFrequencyUpgradeCost();
-                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6363,7 +7112,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetProfitableEndingUpgradeCost();
-                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level + 1):0}% ending ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level + 1):0}% ending ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6376,13 +7125,13 @@ namespace StackMerge
                 if (progression.IsMaxPassiveYield)
                 {
                     long perTick = StackMergeProgression.GetPassiveYieldPerTick(level);
-                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{perTick} <sprite name=\"chips\">/tick ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{perTick} <sprite name=\"chips\" tint=1> / tick ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
                     long nextPerTick = StackMergeProgression.GetPassiveYieldPerTick(level + 1);
                     long cost = progression.GetPassiveYieldUpgradeCost();
-                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{nextPerTick} <sprite name=\"chips\">/tick ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{nextPerTick} <sprite name=\"chips\" tint=1> / tick ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6406,7 +7155,7 @@ namespace StackMerge
                 {
                     float nextInterval = StackMergeProgression.GetPassiveTickInterval(level + 1);
                     long cost = progression.GetPassiveTickRateUpgradeCost();
-                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6427,7 +7176,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetActiveMultiplierUpgradeCost();
-                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
 
@@ -6446,7 +7195,7 @@ namespace StackMerge
                 else
                 {
                     long cost = progression.GetIncomeUpgradeCost();
-                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * 35}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\"> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * 35}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
         }
@@ -6518,6 +7267,7 @@ namespace StackMerge
             RefreshResearchConnectors();
             RefreshResearchCards();
             RefreshSelectedResearchDetails();
+            RefreshDatacenterPanel();
         }
 
         // Drives every static Research tree node (Name/Level/Cost-InfoText) straight from
@@ -6563,7 +7313,7 @@ namespace StackMerge
                     else
                     {
                         long cost = progression.GetResearchCost(card.researchId);
-                        SetText(card.costText, $"<sprite name=\"insight\"> {FormatNumber(cost)}");
+                        SetText(card.costText, $"<sprite name=\"insight\" tint=1> {FormatNumber(cost)}");
                     }
                 }
 
@@ -6880,6 +7630,22 @@ namespace StackMerge
                 SetText(row.progressText, complete
                     ? "Completed"
                     : $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}");
+
+                // Reward line: only goals with an unlock reward show it (RewardText is disabled in
+                // the prefab by default).
+                TMP_Text rewardLabel = row.rewardText != null
+                    ? row.rewardText
+                    : FindNamedDescendant(row.transform, "RewardText")?.GetComponent<TMP_Text>();
+                if (rewardLabel != null)
+                {
+                    string reward = GetAchievementRewardText(achievement.Id);
+                    bool hasReward = !string.IsNullOrEmpty(reward);
+                    SetActive(rewardLabel.gameObject, hasReward);
+                    if (hasReward)
+                    {
+                        SetText(rewardLabel, reward);
+                    }
+                }
 
                 y += rowHeight + 4f;
             }
@@ -7898,7 +8664,7 @@ namespace StackMerge
                 $"Moves: {FormatNumber(gameState.BlocksDropped)}\n" +
                 $"Merges: {FormatNumber(gameState.TotalMerges)}\n" +
                 $"Highest block: {FormatNumber(gameState.HighestMergedBlock)}\n" +
-                $"+{FormatNumber(currentRunChipsEarned)} <sprite name=\"chips\"> earned");
+                $"+{FormatNumber(currentRunChipsEarned)} <sprite name=\"chips\" tint=1> earned");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
                 : "Run ended");
@@ -8403,7 +9169,7 @@ namespace StackMerge
 
             if (lookup.Contains("profitableending") || lookup.Contains("ending"))
             {
-                return "Boosts the <sprite name=\"chips\"> bonus at the end of the runs.";
+                return "Boosts the <sprite name=\"chips\" tint=1> bonus at the end of the runs.";
             }
 
             // Must be checked before the generic "yield" match below (Chip Yield), since
@@ -8425,7 +9191,7 @@ namespace StackMerge
 
             if (lookup.Contains("chipyield") || lookup.Contains("income") || lookup.Contains("yield"))
             {
-                return "Boosts the <sprite name=\"chips\"> earned during merges and runs.";
+                return "Boosts the <sprite name=\"chips\" tint=1> earned during merges and runs.";
             }
 
             return null;

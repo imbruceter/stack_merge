@@ -128,6 +128,8 @@ namespace StackMerge
 
         private void Run()
         {
+            // A Play-mode "unlock Datacenter in Editor" test toggle must never leak into sims.
+            StackMergeProgression.DebugUnlockDatacenter = false;
             var progression = new StackMergeProgression(new StackMergeProgressionData());
             IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
             var rng = new System.Random(seed);
@@ -144,6 +146,7 @@ namespace StackMerge
             while (run < maxRuns && !(stopAtPpo && ppoUnlocked) && !ResearchTargetReached(progression))
             {
                 run++;
+                double clockBefore = sim.Clock;
                 bool researchLayer = simulateResearch && !stopAtPpo && progression.IsSolverUnlocked(SolverId.MachineLearning);
                 long gross = 0;
                 string activity;
@@ -191,7 +194,21 @@ namespace StackMerge
                     activity = string.Empty;
                 }
 
+                // Datacenter: pick an allocation for the current phase, then advance its production
+                // by exactly the simulated seconds this iteration consumed.
+                if (progression.DatacenterUnlocked)
+                {
+                    ApplyDatacenterPolicy(progression);
+                    progression.TickDatacenter((float)(sim.Clock - clockBefore));
+                }
+
                 string bought = AutoBuy(progression, sim, run);
+                string datacenterBought = AutoBuyDatacenter(progression, sim, run);
+                if (!string.IsNullOrEmpty(datacenterBought))
+                {
+                    bought = string.IsNullOrEmpty(bought) ? datacenterBought : $"{bought}, {datacenterBought}";
+                }
+
                 if (!string.IsNullOrEmpty(activity))
                 {
                     bought = string.IsNullOrEmpty(bought) ? activity : $"{bought}, {activity}";
@@ -497,6 +514,89 @@ namespace StackMerge
             }
         }
 
+        /// <summary>
+        /// Allocation strategy of the simulated player: while PPO Training still needs frames,
+        /// route most compute at it; otherwise split between Insight and chip income.
+        /// </summary>
+        private static void ApplyDatacenterPolicy(StackMergeProgression p)
+        {
+            if (p.DatacenterTrainingHasTarget)
+            {
+                p.SetDatacenterAllocation(DatacenterAllocationId.TrainingCluster, 0f);
+                p.SetDatacenterAllocation(DatacenterAllocationId.AnalysisNode, 0.15f);
+                p.SetDatacenterAllocation(DatacenterAllocationId.MarketBots, 0.15f);
+                p.SetDatacenterAllocation(DatacenterAllocationId.TrainingCluster, 0.70f);
+            }
+            else
+            {
+                p.SetDatacenterAllocation(DatacenterAllocationId.TrainingCluster, 0f);
+                p.SetDatacenterAllocation(DatacenterAllocationId.AnalysisNode, 0.50f);
+                p.SetDatacenterAllocation(DatacenterAllocationId.MarketBots, 0.50f);
+            }
+        }
+
+        /// <summary>
+        /// Invests in the datacenter continuously: buys the cheapest rack/facility whenever it
+        /// costs at most a third of the current chips, leaving the rest for cycle progression.
+        /// (The first pass reserved 2× the cheapest pending progression purchase instead — but the
+        /// cycle spends chips the moment they appear, so that reserve was almost never met and the
+        /// farm stayed at ~13 units over 25 prestiges.)
+        /// </summary>
+        private string AutoBuyDatacenter(StackMergeProgression p, SimState sim, int run)
+        {
+            if (!p.DatacenterUnlocked)
+            {
+                return string.Empty;
+            }
+
+            var boughtThisRun = new List<string>();
+            int guard = 0;
+            while (guard++ < 40)
+            {
+                string bestLabel = null;
+                long bestCost = 0;
+                Func<bool> bestBuy = null;
+                foreach (DatacenterRackDefinition rack in StackMergeProgression.DatacenterRacks)
+                {
+                    DatacenterRackId rackId = rack.Id;
+                    long cost = p.GetDatacenterRackCost(rackId);
+                    if (bestBuy == null || cost < bestCost)
+                    {
+                        bestLabel = $"Rack {rack.DisplayName} #{p.GetDatacenterRackCount(rackId) + 1}";
+                        bestCost = cost;
+                        bestBuy = () => p.BuyDatacenterRack(rackId);
+                    }
+                }
+
+                foreach (DatacenterFacilityDefinition facility in StackMergeProgression.DatacenterFacilities)
+                {
+                    DatacenterFacilityId facilityId = facility.Id;
+                    if (p.IsDatacenterFacilityMaxed(facilityId))
+                    {
+                        continue;
+                    }
+
+                    long cost = p.GetDatacenterFacilityCost(facilityId);
+                    if (bestBuy == null || cost < bestCost)
+                    {
+                        bestLabel = $"Facility {facility.DisplayName} L{p.GetDatacenterFacilityLevel(facilityId) + 1}";
+                        bestCost = cost;
+                        bestBuy = () => p.BuyDatacenterFacility(facilityId);
+                    }
+                }
+
+                if (bestBuy == null || p.Chips < bestCost * 3 || !bestBuy())
+                {
+                    break;
+                }
+
+                sim.Purchases.Add(new PurchaseRecord(run, sim.Clock, bestLabel, bestCost, p.Chips, p.TotalChipsEarned));
+                boughtThisRun.Add(bestLabel);
+            }
+
+            return string.Join(", ", boughtThisRun);
+        }
+
         private bool ResearchTargetReached(StackMergeProgression progression)
         {
             return simulateResearch
@@ -724,6 +824,7 @@ namespace StackMerge
             Check("All agents hired", StackMergeProgression.Agents.All(agent => p.IsAgentUnlocked(agent.Id)));
             Check("Modifiers Menu", p.ModifiersMenuUnlocked);
             Check("All modifiers maxed (PPO gate)", p.CanUnlockMachineLearning);
+            Check("Datacenter unlocked", p.DatacenterUnlocked);
             Check("PPO bought", p.IsSolverUnlocked(SolverId.MachineLearning));
             Check("PPO Normal mode", p.IsSolverUnlocked(SolverId.MachineLearning) && p.MachineLearningPlayingModeUnlocked);
             Check("All chip upgrades maxed",
@@ -787,6 +888,11 @@ namespace StackMerge
             PurchaseRecord? firstPpo = FindFirst(purchases, "Solver PPO");
             sb.AppendLine($"PPO first unlocked: {(firstPpo.HasValue ? $"run {firstPpo.Value.Run} ({FormatTime(firstPpo.Value.SimSeconds)})" : "never")}");
             sb.AppendLine($"Highest block ever: {progression.HighestBlockEver}  |  best run score: {progression.BestRunScore:N0}");
+            if (progression.DatacenterUnlocked)
+            {
+                sb.AppendLine($"Datacenter: {progression.TotalDatacenterRackUnits} rack units  |  {progression.DatacenterTotalGigaflops:N1} GF/s  |  market x{progression.DatacenterMarketMultiplier:0.00}");
+            }
+
             sb.AppendLine();
 
             sb.AppendLine("=== Prestige cycles (real-time length of each playthrough) ===");

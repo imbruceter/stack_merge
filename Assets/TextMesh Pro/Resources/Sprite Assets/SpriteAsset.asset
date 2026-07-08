@@ -47,72 +47,57 @@ MonoBehaviour:
     m_Unicode: 65534
     m_GlyphIndex: 1
     m_Scale: 1
-    m_Name: chips_white
+    m_Name: insight
   - m_ElementType: 2
     m_Unicode: 65534
     m_GlyphIndex: 2
     m_Scale: 1
-    m_Name: insight
-  - m_ElementType: 2
-    m_Unicode: 65534
-    m_GlyphIndex: 3
-    m_Scale: 1
-    m_Name: insight_white
-  - m_ElementType: 2
-    m_Unicode: 65534
-    m_GlyphIndex: 4
-    m_Scale: 1
     m_Name: token
-  - m_ElementType: 2
-    m_Unicode: 65534
-    m_GlyphIndex: 6
-    m_Scale: 1
-    m_Name: token_white
   m_GlyphTable:
   - m_Index: 0
     m_Metrics:
-      m_Width: 128
-      m_Height: 128
+      m_Width: 120
+      m_Height: 120
       m_HorizontalBearingX: 0
-      m_HorizontalBearingY: 110
-      m_HorizontalAdvance: 128
+      m_HorizontalBearingY: 105
+      m_HorizontalAdvance: 110
     m_GlyphRect:
       m_X: 0
       m_Y: 0
-      m_Width: 85
-      m_Height: 85
+      m_Width: 128
+      m_Height: 128
     m_Scale: 1
     m_AtlasIndex: 0
     m_ClassDefinitionType: 0
     sprite: {fileID: 6623405797272469650, guid: 3e94e1965237b704b811e4329cc08584, type: 3}
   - m_Index: 1
     m_Metrics:
+      m_Width: 120
+      m_Height: 120
+      m_HorizontalBearingX: 0
+      m_HorizontalBearingY: 105
+      m_HorizontalAdvance: 110
+    m_GlyphRect:
+      m_X: 128
+      m_Y: 0
       m_Width: 128
       m_Height: 128
-      m_HorizontalBearingX: 0
-      m_HorizontalBearingY: 110
-      m_HorizontalAdvance: 128
-    m_GlyphRect:
-      m_X: 85
-      m_Y: 0
-      m_Width: 85
-      m_Height: 85
     m_Scale: 1
     m_AtlasIndex: 0
     m_ClassDefinitionType: 0
     sprite: {fileID: -7422012, guid: 3e94e1965237b704b811e4329cc08584, type: 3}
   - m_Index: 2
     m_Metrics:
+      m_Width: 120
+      m_Height: 120
+      m_HorizontalBearingX: 0
+      m_HorizontalBearingY: 105
+      m_HorizontalAdvance: 110
+    m_GlyphRect:
+      m_X: 256
+      m_Y: 0
       m_Width: 128
       m_Height: 128
-      m_HorizontalBearingX: 0
-      m_HorizontalBearingY: 110
-      m_HorizontalAdvance: 128
-    m_GlyphRect:
-      m_X: 170
-      m_Y: 0
-      m_Width: 85
-      m_Height: 85
     m_Scale: 1
     m_AtlasIndex: 0
     m_ClassDefinitionType: 0

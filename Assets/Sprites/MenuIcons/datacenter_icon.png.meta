@@ -1,10 +1,16 @@
 fileFormatVersion: 2
-guid: 3e94e1965237b704b811e4329cc08584
+guid: 3934be31be574f84fb5a06ac59c75b48
 TextureImporter:
   internalIDToNameTable:
   - first:
-      213: 6623405797272469650
-    second: sprite_asset_icons_0
+      213: -8229012139469579607
+    second: datacenter_icon_0
+  - first:
+      213: -6080770007917774924
+    second: datacenter_icon_1
+  - first:
+      213: -4677993775999324752
+    second: datacenter_icon_2
   externalObjects: {}
   serializedVersion: 13
   mipmaps:
@@ -46,7 +52,7 @@ TextureImporter:
   nPOTScale: 0
   lightmap: 0
   compressionQuality: 50
-  spriteMode: 2
+  spriteMode: 1
   spriteExtrude: 1
   spriteMeshType: 1
   alignment: 0
@@ -72,7 +78,7 @@ TextureImporter:
   platformSettings:
   - serializedVersion: 4
     buildTarget: DefaultTexturePlatform
-    maxTextureSize: 512
+    maxTextureSize: 256
     resizeAlgorithm: 0
     textureFormat: -1
     textureCompression: 0
@@ -113,67 +119,67 @@ TextureImporter:
     serializedVersion: 2
     sprites:
     - serializedVersion: 2
-      name: sprite_asset_icons_0
+      name: datacenter_icon_0
       rect:
         serializedVersion: 2
         x: 0
-        y: 0
+        y: 95
         width: 128
-        height: 128
+        height: 33
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
       tessellationDetail: -1
       bones: []
-      spriteID: 29040b5fa701beb50800000000000000
-      internalID: 6623405797272469650
+      spriteID: 9aad98eee0daccd80800000000000000
+      internalID: -8229012139469579607
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: sprite_asset_icons_1
+      name: datacenter_icon_1
       rect:
         serializedVersion: 2
-        x: 128
-        y: 0
+        x: 0
+        y: 47
         width: 128
-        height: 128
+        height: 34
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
-      tessellationDetail: 0
+      tessellationDetail: -1
       bones: []
-      spriteID: cf2a6686cacbe2c4da2775fedae5720f
-      internalID: -7422012
+      spriteID: 4b7363525e3cc9ba0800000000000000
+      internalID: -6080770007917774924
       vertices: []
       indices: 
       edges: []
       weights: []
     - serializedVersion: 2
-      name: sprite_asset_icons_2
+      name: datacenter_icon_2
       rect:
         serializedVersion: 2
-        x: 256
+        x: 0
         y: 0
         width: 128
-        height: 128
+        height: 33
       alignment: 0
-      pivot: {x: 0.5, y: 0.5}
+      pivot: {x: 0, y: 0}
       border: {x: 0, y: 0, z: 0, w: 0}
       customData: 
       outline: []
       physicsShape: []
-      tessellationDetail: 0
+      tessellationDetail: -1
       bones: []
-      spriteID: d0977011a28e2f045b4c7362e3e47ade
-      internalID: -1364331820
+      spriteID: 0bd6210227d641fb0800000000000000
+      internalID: -4677993775999324752
       vertices: []
       indices: 
       edges: []
@@ -182,7 +188,7 @@ TextureImporter:
     customData: 
     physicsShape: []
     bones: []
-    spriteID: 12992b88102002642b43f645f24f10b3
+    spriteID: 5e97eb03825dee720800000000000000
     internalID: 0
     vertices: []
     indices: 
@@ -190,13 +196,11 @@ TextureImporter:
     weights: []
     secondaryTextures: []
     spriteCustomMetadata:
-      entries:
-      - key: SpriteEditor.SliceSettings
-        value: '{"sliceOnImport":false,"gridCellCount":{"x":1.0,"y":1.0},"gridSpriteSize":{"x":128.0,"y":128.0},"gridSpriteOffset":{"x":0.0,"y":0.0},"gridSpritePadding":{"x":0.0,"y":0.0},"pivot":{"x":0.5,"y":0.5},"pivotPixels":{"x":0.0,"y":0.0},"autoSlicingMethod":0,"spriteAlignment":0,"pivotUnitMode":0,"slicingType":1,"keepEmptyRects":false,"isAlternate":false}'
+      entries: []
     nameFileIdTable:
-      sprite_asset_icons_0: 6623405797272469650
-      sprite_asset_icons_1: -7422012
-      sprite_asset_icons_2: -1364331820
+      datacenter_icon_0: -8229012139469579607
+      datacenter_icon_1: -6080770007917774924
+      datacenter_icon_2: -4677993775999324752
   mipmapLimitGroupName: 
   pSDRemoveMatte: 0
   userData: 
