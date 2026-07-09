@@ -108,6 +108,20 @@ namespace StackMerge
         public int difficultyLevel;
     }
 
+    /// <summary>
+    /// Cosmetic numeral skins for block faces (and the PPO training matrix). Order matches the
+    /// Settings dropdown. All non-Standard styles are goal rewards.
+    /// </summary>
+    public enum BlockNumeralStyle
+    {
+        Standard = 0,
+        Byte = 1,
+        Hexadecimal = 2,
+        Power = 3,
+        Roman = 4,
+        Scientific = 5
+    }
+
     public enum AutoBuyCategory
     {
         Algorithms = 0,
@@ -239,7 +253,9 @@ namespace StackMerge
         LifetimeUnstableSaves,
         LifetimeJokerMerges,
         PrestigeCount,
-        MaxedResearchCount
+        MaxedResearchCount,
+        DatacenterRackTypesOwned,
+        DatacenterGigaflops
     }
 
     public enum ModifierId
@@ -406,21 +422,21 @@ namespace StackMerge
 
         public static readonly AgentDefinition[] Agents =
         {
-            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% <sprite name=\"chips\"> from merge rewards."),
-            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% <sprite name=\"chips\"> from new highest-block rewards."),
-            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into <sprite name=\"chips\">.", "+60% <sprite name=\"chips\"> from end-of-run score bonus."),
+            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% <sprite name=\"chips\" tint=1> from merge rewards."),
+            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% <sprite name=\"chips\" tint=1> from new highest-block rewards."),
+            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into <sprite name=\"chips\" tint=1>.", "+60% <sprite name=\"chips\" tint=1> from end-of-run score bonus."),
             new(AgentId.Overclocker, "Overclocker", 400000, "Runs the solver faster.", "Solver move interval is 25% shorter."),
-            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 <sprite name=\"chips\"> on every successful placement."),
+            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 <sprite name=\"chips\" tint=1> on every successful placement."),
             new(AgentId.RestartSponsor, "Restart Sponsor", 1000000, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
             new(AgentId.TokenProspector, "Token Prospector", 1500000, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
-            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run <sprite name=\"chips\"> gain a bonus from total moves completed."),
-            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run <sprite name=\"chips\"> gain a throughput bonus from moves per second.")
+            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run <sprite name=\"chips\" tint=1> gain a bonus from total moves completed."),
+            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run <sprite name=\"chips\" tint=1> gain a throughput bonus from moves per second.")
         };
 
         public static readonly ModifierDefinition[] Modifiers =
         {
             new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run. If a full stack receives a non-merge block, its bottom block is removed without reducing score.", 800000, 1600000, 3200000, 6400000, 12800000),
-            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more <sprite name=\"chips\">.", "Merge rewards are permanently doubled on every run after purchase.", 3000000),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more <sprite name=\"chips\" tint=1>.", "Merge rewards are permanently doubled on every run after purchase.", 3000000),
             new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge. If the top and bottom block of a stack match, they merge through the stack.", 3000000),
             new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 4500000),
             new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one pickaxe use per run. The solver may delete any block in any stack.", 2000000, 4000000, 8000000, 16000000, 32000000),
@@ -464,12 +480,12 @@ namespace StackMerge
 
         public static readonly AchievementDefinition[] Achievements =
         {
-            new(0, "Chip Bank", "Earn 10000 <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 10_000),
-            new(1, "Chip Million", "Earn 1 M <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000),
-            new(2, "Chip Billion", "Earn 1 B <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000_000),
-            new(3, "First Budget", "Spend 10000 <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 10_000),
-            new(4, "Serious Budget", "Spend 100 K <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 100_000),
-            new(5, "Mega Budget", "Spend 100 M <sprite name=\"chips\"> in total", AchievementMetric.LifetimeChipsSpent, 100_000_000),
+            new(0, "Chip Bank", "Earn 10000 <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsEarned, 10_000),
+            new(1, "Chip Million", "Earn 1 M <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000),
+            new(2, "Chip Billion", "Earn 1 B <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsEarned, 1_000_000_000),
+            new(3, "First Budget", "Spend 10000 <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsSpent, 10_000),
+            new(4, "Serious Budget", "Spend 100 K <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsSpent, 100_000),
+            new(5, "Mega Budget", "Spend 100 M <sprite name=\"chips\" tint=1> in total", AchievementMetric.LifetimeChipsSpent, 100_000_000),
             new(6, "Manual Finish", "Complete 10 runs while Auto Solver is turned off", AchievementMetric.LifetimeManualRunsCompleted, 10),
             new(7, "Solver Loyalty", "Complete 1000 runs with a solver", AchievementMetric.MaxSolverLifetimeRuns, 1000),
             new(8, "Move Habit", "Move a total of 10000 times", AchievementMetric.LifetimeMoves, 10_000),
@@ -489,7 +505,9 @@ namespace StackMerge
             new(22, "Joker Merges", "Merge with a Joker for a total of 100 times", AchievementMetric.LifetimeJokerMerges, 100),
             new(23, "First Prestige", "Prestige reset for the first time", AchievementMetric.PrestigeCount, 1),
             new(24, "Prestige Loop", "Prestige reset for a total of 5 times", AchievementMetric.PrestigeCount, 5),
-            new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 16)
+            new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 16),
+            new(26, "Rack Collector", "Have at least 1 unit in each Server Rack", AchievementMetric.DatacenterRackTypesOwned, 4),
+            new(27, "Gigaflop Farm", "Go above 1000 GF/s total compute", AchievementMetric.DatacenterGigaflops, 1000)
         };
 
         // Array index MUST equal the ResearchId enum value (GetResearchDefinition indexes by id).
@@ -1120,7 +1138,7 @@ namespace StackMerge
                 return $"Finish PPO Training first.\n<b>{MachineLearningFrames:N0} / {MachineLearningPlayingModeFrameRequirement:N0} frames</b>.";
             }
 
-            return $"PPO is trained, prestige reset unlocked.\n<b>Gain: <sprite name=\"insight\"> {PreviewPrestigeInsightGain():N0}</b>.";
+            return $"PPO is trained, prestige reset unlocked.\n<b>Gain: <sprite name=\"insight\" tint=1> {PreviewPrestigeInsightGain():N0}</b>.";
         }
 
         public long ExecutePrestige()
@@ -1679,6 +1697,38 @@ namespace StackMerge
             Save();
 
             return gained;
+        }
+
+        private long GetOwnedDatacenterRackTypeCount()
+        {
+            int owned = 0;
+            foreach (DatacenterRackDefinition rack in DatacenterRacks)
+            {
+                if (GetDatacenterRackCount(rack.Id) >= 1)
+                {
+                    owned++;
+                }
+            }
+
+            return owned;
+        }
+
+        /// <summary>
+        /// Cosmetic block-numeral skins are goal rewards. The conditions mirror the goals exactly
+        /// (lifetime metrics, so they never re-lock after a prestige).
+        /// </summary>
+        public bool IsBlockNumeralUnlocked(BlockNumeralStyle style)
+        {
+            return style switch
+            {
+                BlockNumeralStyle.Standard => true,
+                BlockNumeralStyle.Byte => LifetimeChipsEarned >= 1_000_000_000,          // "Chip Billion"
+                BlockNumeralStyle.Power => LifetimeChipsSpent >= 100_000_000,            // "Mega Budget"
+                BlockNumeralStyle.Roman => LifetimeMoves >= 1_000_000,                   // "Move Singularity"
+                BlockNumeralStyle.Hexadecimal => LifetimeMerges >= 1_000_000,            // "Merge Singularity"
+                BlockNumeralStyle.Scientific => LifetimeHighestBlockEver >= 32768,       // "High 32768"
+                _ => false
+            };
         }
 
         // ------------------------------------------------------------------------------------
@@ -2544,6 +2594,8 @@ namespace StackMerge
                 AchievementMetric.LifetimeJokerMerges => LifetimeJokerMerges,
                 AchievementMetric.PrestigeCount => PrestigeCount,
                 AchievementMetric.MaxedResearchCount => GetMaxedResearchCount(),
+                AchievementMetric.DatacenterRackTypesOwned => GetOwnedDatacenterRackTypeCount(),
+                AchievementMetric.DatacenterGigaflops => (long)DatacenterTotalGigaflops,
                 _ => 0
             };
         }

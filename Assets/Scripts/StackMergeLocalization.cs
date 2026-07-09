@@ -14,6 +14,8 @@ namespace StackMerge
     {
         public static StackMergeLanguage CurrentLanguage { get; set; } = StackMergeLanguage.English;
 
+        private static readonly Dictionary<StackMergeLanguage, Dictionary<string, string>> RegisteredTranslations = new();
+
         private static readonly Dictionary<string, string> Hungarian = new(StringComparer.Ordinal)
         {
             ["Play"] = "Játék",
@@ -42,7 +44,7 @@ namespace StackMerge
             ["Auto restart needs token"] = "Az auto újraindításhoz token kell",
             ["The run hasn't started yet."] = "A run még nem indult el.",
             ["No moves left — run over"] = "Nincs több lépés - a run véget ért",
-            ["Not enough <sprite name=\"chips\">"] = "Nincs elég <sprite name=\"chips\">",
+            ["Not enough <sprite name=\"chips\" tint=1>"] = "Nincs elég <sprite name=\"chips\" tint=1>",
             ["Buy an algorithm first"] = "Előbb vegyél egy algoritmust",
             ["Speed upgrade unavailable"] = "A sebesség fejlesztés nem elérhető",
             ["Stack upgrade unavailable"] = "A stack fejlesztés nem elérhető",
@@ -100,12 +102,12 @@ namespace StackMerge
             ["Shows 1 more upcoming block per level."] = "Szintenként 1-gyel több következő blokkot mutat.",
             ["Increases the chance of spawning higher blocks."] = "Növeli a nagyobb blokkok megjelenésének esélyét.",
             ["Slightly increases how often higher blocks appear."] = "Óvatosan növeli a magasabb blokkok gyakoriságát.",
-            ["Boosts the <sprite name=\"chips\"> bonus at the end of the runs."] = "Növeli a run befejezésekor járó <sprite name=\"chips\"> bónuszt.",
-            ["Boosts the <sprite name=\"chips\"> earned during merges and runs."] = "Növeli a merge-ekből és runokból szerzett <sprite name=\"chips\">-eket.",
+            ["Boosts the <sprite name=\"chips\" tint=1> bonus at the end of the runs."] = "Növeli a run befejezésekor járó <sprite name=\"chips\" tint=1> bónuszt.",
+            ["Boosts the <sprite name=\"chips\" tint=1> earned during merges and runs."] = "Növeli a merge-ekből és runokból szerzett <sprite name=\"chips\" tint=1>-eket.",
             ["Shrinks the delay of Planning and Monte Carlo solvers."] = "Csökkenti a Planning és Monte Carlo solverek késleltetését.",
-            ["Chips trickle in on a timer, on top of your normal play."] = "A normál játék mellett időzítve is termelődik <sprite name=\"chips\">.",
-            ["Passive Production ticks more often."] = "Gyakrabban termelődik a <sprite name=\"chips\">/tick.",
-            ["Boosts Passive Production while you're actively playing."] = "Növeli a <sprite name=\"chips\">/tick-et a runok alatt.",
+            ["Chips trickle in on a timer, on top of your normal play."] = "A normál játék mellett időzítve is termelődik <sprite name=\"chips\" tint=1>.",
+            ["Passive Production ticks more often."] = "Gyakrabban termelődik a <sprite name=\"chips\" tint=1>/tick.",
+            ["Boosts Passive Production while you're actively playing."] = "Növeli a <sprite name=\"chips\" tint=1>/tick-et a runok alatt.",
             ["Passive yield upgrade unavailable"] = "A Passzív Termelés fejlesztés nem elérhető",
             ["Passive tick rate upgrade unavailable"] = "A Passzív Termelés gyakoriság fejlesztés nem elérhető",
             ["Active multiplier upgrade unavailable"] = "Az Aktív Szorzó fejlesztés nem elérhető",
@@ -244,12 +246,12 @@ namespace StackMerge
             ["No completed runs yet. Let a run end to start collecting solver stats."] = "Még nincs befejezett run. Egy run vége után kezdődnek a solver statisztikák.",
             ["Tip: use the editor benchmark window for large balance samples without touching player progression."] = "Tipp: nagy balance mintákhoz használd az editor benchmark ablakot, a játékos mentésének módosítása nélkül.",
 
-            ["Earn 10000 <sprite name=\"chips\"> in total"] = "Szerezz összesen 10000 <sprite name=\"chips\">-et",
-            ["Earn 1 M <sprite name=\"chips\"> in total"] = "Szerezz összesen 1 M <sprite name=\"chips\">-et",
-            ["Earn 1 B <sprite name=\"chips\"> in total"] = "Szerezz összesen 1 B <sprite name=\"chips\">-et",
-            ["Spend 10000 <sprite name=\"chips\"> in total"] = "Költs el összesen 10000 <sprite name=\"chips\">-et",
-            ["Spend 100 K <sprite name=\"chips\"> in total"] = "Költs el összesen 100 K <sprite name=\"chips\">-et",
-            ["Spend 100 M <sprite name=\"chips\"> in total"] = "Költs el összesen 100 M <sprite name=\"chips\">-et",
+            ["Earn 10000 <sprite name=\"chips\" tint=1> in total"] = "Szerezz összesen 10000 <sprite name=\"chips\" tint=1>-et",
+            ["Earn 1 M <sprite name=\"chips\" tint=1> in total"] = "Szerezz összesen 1 M <sprite name=\"chips\" tint=1>-et",
+            ["Earn 1 B <sprite name=\"chips\" tint=1> in total"] = "Szerezz összesen 1 B <sprite name=\"chips\" tint=1>-et",
+            ["Spend 10000 <sprite name=\"chips\" tint=1> in total"] = "Költs el összesen 10000 <sprite name=\"chips\" tint=1>-et",
+            ["Spend 100 K <sprite name=\"chips\" tint=1> in total"] = "Költs el összesen 100 K <sprite name=\"chips\" tint=1>-et",
+            ["Spend 100 M <sprite name=\"chips\" tint=1> in total"] = "Költs el összesen 100 M <sprite name=\"chips\" tint=1>-et",
             ["Complete 10 runs while Auto Solver is turned off"] = "Fejezz be 10 runt kikapcsolt Auto Solverrel",
             ["Complete 1000 runs with a solver"] = "Fejezz be 1000 runt egy solverrel",
             ["Move a total of 10000 times"] = "Lépj összesen 10000 alkalommal",
@@ -270,6 +272,23 @@ namespace StackMerge
             ["Prestige reset for the first time"] = "Prestige resetelj először",
             ["Prestige reset for a total of 5 times"] = "Prestige resetelj összesen 5 alkalommal",
             ["Buy all the researches"] = "Vedd meg az összes kutatást",
+            ["Have at least 1 unit in each Server Rack"] = "Legyen legalább 1 egység minden Server Rackben",
+            ["Go above 1000 GF/s total compute"] = "Lépd át az 1000 GF/s össz-számítási teljesítményt",
+
+            ["Unlocks Auto Buy for Algos, Upgrades, Agents and Mods"] = "Feloldja az Auto Buy-t az Algókhoz, Fejlesztésekhez, Ügynökökhöz és Modokhoz",
+            ["Unlocks Datacenter"] = "Feloldja a Datacentert",
+            ["Unlocks Byte numeral for blocks"] = "Feloldja a Bájt számformátumot a blokkokon",
+            ["Unlocks Power numeral for blocks"] = "Feloldja a Hatvány számformátumot a blokkokon",
+            ["Unlocks Roman numeral for blocks"] = "Feloldja a Római számformátumot a blokkokon",
+            ["Unlocks Hexadecimal numeral for blocks"] = "Feloldja a Hexadecimális számformátumot a blokkokon",
+            ["Unlocks Scientific numeral for blocks"] = "Feloldja a Tudományos számformátumot a blokkokon",
+            ["Complete its goal to unlock this numeral"] = "Teljesítsd a hozzá tartozó célt a feloldásához",
+            ["Standard"] = "Normál",
+            ["Byte"] = "Bájt",
+            ["Hexadecimal"] = "Hexadecimális",
+            ["Power"] = "Hatvány",
+            ["Roman"] = "Római",
+            ["Scientific"] = "Tudományos",
 
             ["Merge Broker"] = "Merge Bróker",
             ["Highwater Analyst"] = "Dagály Elemző",
@@ -290,7 +309,7 @@ namespace StackMerge
 
             ["Boosts merge income."] = "Növeli a merge bevételt.",
             ["Rewards new highs."] = "Jutalmazza az új rekord blokkokat.",
-            ["Turns score into <sprite name=\"chips\">."] = "A pontszámot <sprite name=\"chips\"> bevétellé alakítja.",
+            ["Turns score into <sprite name=\"chips\" tint=1>."] = "A pontszámot <sprite name=\"chips\" tint=1> bevétellé alakítja.",
             ["Runs the solver faster."] = "Gyorsabban futtatja a solvert.",
             ["Improves baseline income."] = "Javítja az alap bevételt.",
             ["Keeps restarts funded."] = "Fenntartja az újraindítások tokenköltségét.",
@@ -298,7 +317,7 @@ namespace StackMerge
             ["Rewards long, stable runs."] = "Jutalmazza a hosszú, stabil runokat.",
             ["Rewards fast solvers."] = "Jutalmazza a gyors solvereket.",
             ["Deletes bottom blocks when a full stack would fail."] = "Teli stack hibájánál töröl alsó blokkokat.",
-            ["Converts merges into more <sprite name=\"chips\">."] = "A merge-ekből több <sprite name=\"chips\"> lesz.",
+            ["Converts merges into more <sprite name=\"chips\" tint=1>."] = "A merge-ekből több <sprite name=\"chips\" tint=1> lesz.",
             ["Lets stack ends interact."] = "Engedi, hogy a stack két vége hasson egymásra.",
             ["Adds wild blocks to the queue."] = "Wild blokkokat ad a queue-hoz.",
             ["Lets solvers remove blocks from the board."] = "Engedi, hogy a solver blokkokat töröljön a tábláról.",
@@ -347,15 +366,15 @@ namespace StackMerge
             ["Endgame learner. Requires every Modifier to be fully purchased."] = "Endgame tanuló. Minden módosítót teljesen meg kell venni hozzá.",
             ["Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration."] = "A Proximal Policy Optimization egy könnyű actor-critic neurális háló. Run trajektóriákból, korlátozott policy frissítésekből, értékbecslésekből és entrópia-alapú felfedezésből tanul.",
 
-            ["+75% <sprite name=\"chips\"> from merge rewards."] = "+75% <sprite name=\"chips\"> a merge jutalmakból.",
-            ["+140% <sprite name=\"chips\"> from new highest-block rewards."] = "+140% <sprite name=\"chips\"> az új highest-blokk jutalmakból.",
-            ["+60% <sprite name=\"chips\"> from end-of-run score bonus."] = "+60% <sprite name=\"chips\"> a run végi pontszám bónuszból.",
+            ["+75% <sprite name=\"chips\" tint=1> from merge rewards."] = "+75% <sprite name=\"chips\" tint=1> a merge jutalmakból.",
+            ["+140% <sprite name=\"chips\" tint=1> from new highest-block rewards."] = "+140% <sprite name=\"chips\" tint=1> az új highest-blokk jutalmakból.",
+            ["+60% <sprite name=\"chips\" tint=1> from end-of-run score bonus."] = "+60% <sprite name=\"chips\" tint=1> a run végi pontszám bónuszból.",
             ["Solver move interval is 25% shorter."] = "A solver lépésköze 25%-kal rövidebb.",
-            ["+4 <sprite name=\"chips\"> on every successful placement."] = "+4 <sprite name=\"chips\"> minden sikeres lerakás után.",
+            ["+4 <sprite name=\"chips\" tint=1> on every successful placement."] = "+4 <sprite name=\"chips\" tint=1> minden sikeres lerakás után.",
             ["Auto Restart consumes no tokens while this agent is active."] = "Az Auto Restart nem fogyaszt tokent, amíg ez az ügynök aktív.",
             ["+1 token for every 8 merges while active."] = "+1 token minden 8 merge után, amíg aktív.",
-            ["End-of-run <sprite name=\"chips\"> gain a bonus from total moves completed."] = "A run végi <sprite name=\"chips\"> bevétel bónuszt kap az összes megtett lépés alapján.",
-            ["End-of-run <sprite name=\"chips\"> gain a throughput bonus from moves per second."] = "A run végi <sprite name=\"chips\"> bevétel áteresztési bónuszt kap a másodpercenkénti lépések alapján.",
+            ["End-of-run <sprite name=\"chips\" tint=1> gain a bonus from total moves completed."] = "A run végi <sprite name=\"chips\" tint=1> bevétel bónuszt kap az összes megtett lépés alapján.",
+            ["End-of-run <sprite name=\"chips\" tint=1> gain a throughput bonus from moves per second."] = "A run végi <sprite name=\"chips\" tint=1> bevétel áteresztési bónuszt kap a másodpercenkénti lépések alapján.",
 
             ["Each level gives one rescue per run. If a full stack receives a non-merge block, its bottom block is removed without reducing score."] = "Minden szint egy mentést ad runonként. Ha egy teli stack nem merge-elő blokkot kap, az alsó block törlődik pontvesztés nélkül.",
             ["Merge rewards are permanently doubled on every run after purchase."] = "Vásárlás után minden runban véglegesen megduplázza a merge jutalmakat.",
@@ -366,51 +385,219 @@ namespace StackMerge
             ["MOCA, MOCA+, and MCTS run permanently about twice as fast. Negative speed tuning on those solvers is also twice as effective."] = "A MOCA, MOCA+ és MCTS tartósan kb. kétszer gyorsabb. Ezeknél a solvereknél a negatív hangolás is kétszer hatékonyabb.",
 
             ["+35% Insight from every future prestige. This is the root research: every branch starts here."] = "+35% Insight minden későbbi prestige-ből. Ez a gyökérkutatás: minden ág innen indul.",
-            ["Start each prestige with <sprite name=\"chips\"> already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself."] = "Minden prestige elején kezdőtőkét kapsz. Lerövidíti a reset utáni lassú első perceket anélkül, hogy önmagában teljes szakaszokat átugrana.",
+            ["+35% Insight from every future prestige per level."] = "+35% Insight minden későbbi prestige-ből szintenként.",
+            ["Start each prestige with <sprite name=\"chips\" tint=1> already banked. It shortens the first slow minutes after a reset without skipping entire stages by itself."] = "Minden prestige elején kezdőtőkét kapsz. Lerövidíti a reset utáni lassú első perceket anélkül, hogy önmagában teljes szakaszokat átugrana.",
+            ["Start each prestige with chips already banked. This is the root research: every branch starts here — L1 costs exactly the 1 Insight the first prestige grants."] = "Minden prestige elején kezdőtőkét kapsz. Ez a gyökérkutatás: minden ág innen indul, az 1. szint pontosan az első prestige 1 Insight jutalmába kerül.",
             ["Permanently remembers automation milestones after prestige: Auto Solve, Auto Restart tokens, then Solver Tuning."] = "Prestige után tartósan megőrzi az automatizációs mérföldköveket: Auto Solve, Auto Restart tokenek, majd Solver Tuning.",
             ["Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR."] = "A későbbi prestige-eket korai algoritmusokkal kezded: RAND, MERG, BAL, majd HEUR.",
-            ["+18% <sprite name=\"chips\"> from every reward per level. It stacks with Chip Yield and stage multipliers."] = "+18% <sprite name=\"chips\"> minden jutalomból szintenként. Stackelődik a Chip Yielddel és a szakasz szorzókkal.",
+            ["+18% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers."] = "+18% <sprite name=\"chips\" tint=1> minden jutalomból szintenként. Stackelődik a Chip Yielddel és a szakasz szorzókkal.",
+            ["+30% chips from every chip reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster."] = "+30% chip minden chip jutalomból szintenként. Stackelődik a Chip Yielddel és a szakasz szorzókkal, így minden későbbi végigjátszás érezhetően gyorsabb lesz.",
             ["PPO still resets every prestige, but each level lowers the trained-frame requirement for Normal mode by 8%."] = "A PPO továbbra is resetelődik minden prestige-nél, de minden szint 8%-kal csökkenti a Normal módhoz szükséges betanított frame-ek számát.",
             ["Prestige keeps a pre-trained PPO snapshot. L1 remembers roughly the first 500 PPO runs; higher levels retain deeper warm starts."] = "A Prestige megtart egy előre betanított PPO snapshotot. L1 nagyjából az első 500 PPO runt őrzi meg; magasabb szintek mélyebb warm startot adnak.",
+            ["Prestige banks 50,000 PPO training frames per level. The next playthrough's PPO Training starts from that saved progress — with the knowledge already learned — instead of zero."] = "A Prestige szintenként 50 000 PPO tréning frame-et őriz meg. A következő végigjátszás PPO tréningje nulláról indulás helyett ebből a mentett tudásból folytatódik.",
             ["Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger tiles instead of only safer runs."] = "Növeli a PPO jutalomjelét új highest blokkok létrehozásakor. Ez nagyobb tile-ok felé tereli a tanulót, nem csak biztonságosabb runok felé.",
             ["Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early."] = "Javítja a PPO túlélési shapingjét és veszélybüntetéseit, így a high-focus policyk kevésbé omlanak össze korán.",
             ["+20% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node."] = "+20% prestige Insight a PPO Normal mód teljesítményéből szintenként. Ez a késői neurális megtérülési node.",
+            ["+50% prestige Insight from PPO Normal-mode performance per level. This is the late neural payoff node."] = "+50% prestige Insight a PPO Normal mód teljesítményéből szintenként. Ez a késői neurális megtérülési node.",
             ["Boosts Insight earned directly from PPO Normal-mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable."] = "Növeli a PPO Normal mód runokból közvetlenül szerzett Insightot. A tréning mód ezt nem táplálja, a hosszú ciklusok pedig softcapet kapnak, hogy a prestige értékes maradjon.",
-            ["While the game is closed, <sprite name=\"chips\"> and Passive Insight continue at a reduced rate based on your current prestige strength."] = "Amíg a játék zárva van, a <sprite name=\"chips\"> és a Passive Insight csökkentett ütemben tovább termelődnek az aktuális prestige erő alapján.",
-            ["Extends how many closed-game hours can be converted into offline <sprite name=\"chips\"> and <sprite name=\"insight\">."] = "Megnöveli, hány zárt játékban töltött óra alakítható offline <sprite name=\"chips\">-ekké és <sprite name=\"insight\">-tá.",
+            ["While the game is closed, <sprite name=\"chips\" tint=1> and Passive Insight continue at a reduced rate based on your current prestige strength."] = "Amíg a játék zárva van, a <sprite name=\"chips\" tint=1> és a Passive Insight csökkentett ütemben tovább termelődnek az aktuális prestige erő alapján.",
+            ["While the game is closed, chips and Passive Insight continue at a reduced rate based on your current prestige strength."] = "Amíg a játék zárva van, a chipek és a Passive Insight csökkentett ütemben tovább termelődnek az aktuális prestige erő alapján.",
+            ["Extends how many closed-game hours can be converted into offline <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1>."] = "Megnöveli, hány zárt játékban töltött óra alakítható offline <sprite name=\"chips\" tint=1>-ekké és <sprite name=\"insight\" tint=1>-tá.",
+            ["Extends how many closed-game hours can be converted into offline chips and Insight."] = "Megnöveli, hány zárt játékban töltött óra alakítható offline chippé és Insighttá.",
+            ["Every hired Agent's bonus effect is 25% stronger per level. Agents become a core engine of faster replays."] = "Minden felbérelt Ügynök bónuszhatása szintenként 25%-kal erősebb. Az Ügynökök a gyorsabb újrajátszások egyik fő motorjává válnak.",
+            ["Upgrades, Agents and Modifiers cost 5% less per level — 25% cheaper at max. Cheaper shopping compounds with higher income to shorten every cycle."] = "A Fejlesztések, Ügynökök és Módosítók szintenként 5%-kal kevesebbe kerülnek, maxon 25%-kal olcsóbbak. Az olcsóbb vásárlás a magasabb bevétellel együtt minden ciklust lerövidít.",
+            ["Shortens the result-evaluation pause after every PPO Training run by 15% per level, so Training mode gets through its runs much faster."] = "Szintenként 15%-kal rövidíti a PPO tréning runok utáni kiértékelési szünetet, így a Tréning mód sokkal gyorsabban halad.",
             ["Unlock PPO to begin the prestige layer."] = "Oldd fel a PPO-t a prestige réteg megnyitásához.",
             ["Prestige for"] = "Prestige jutalom:",
-            ["You can keep playing PPO in Playing Mode to increase <sprite name=\"insight\">."] = "Tovább játszhatsz PPO Playing módban, hogy növeld az <sprite name=\"insight\">-ot.",
+            ["You can keep playing PPO in Playing Mode to increase <sprite name=\"insight\" tint=1>."] = "Tovább játszhatsz PPO Playing módban, hogy növeld az <sprite name=\"insight\" tint=1>-ot.",
             ["Current effect"] = "Jelenlegi hatás",
+            ["Game"] = "Játék",
+            ["Gameplay"] = "Játékmenet",
+            ["Selected"] = "Kiválasztva",
+            ["Deselected"] = "Mellőzve",
+            ["Needs modifiers"] = "Módosítók kellenek",
+            ["Needs all\nModifiers"] = "Minden\nMódosító kell",
+            ["Unlock\nUpgrades"] = "Feloldás\nFejlesztésekben",
+            ["Unlock this algorithm to reveal details."] = "Oldd fel ezt az algoritmust a részletek megjelenítéséhez.",
+            ["Agents\nLocked"] = "Ügynökök\nZárolva",
+            ["Unlock in\nUpgrades"] = "Fejlesztésekben\noldható fel",
+            ["Bonus slot\nNeeds upgrade"] = "Bónusz slot\nFejlesztés kell",
+            ["Agents Locked"] = "Ügynökök zárolva",
+            ["Unlock the Agents menu in Upgrades."] = "Oldd fel az Ügynökök menüt a Fejlesztésekben.",
+            ["Equipped"] = "Felszerelve",
+            ["No free slot"] = "Nincs szabad slot",
+            ["Unequip someone first"] = "Előbb vegyél le valakit",
+            ["Needs upgrade"] = "Fejlesztés kell",
+            ["Empty"] = "Üres",
+            ["Modifier Lab Locked"] = "Módosító labor zárolva",
+            ["Reach the stage goal in Upgrades to unlock board modifiers. They make runs richer, riskier, and much harder to play optimally by hand."] = "Érd el a szakaszcélt a Fejlesztésekben a táblamódosítók feloldásához. Gazdagabbá, kockázatosabbá és kézzel nehezebben optimalizálhatóvá teszik a runokat.",
+            ["Not active"] = "Nem aktív",
+            ["Activate"] = "Aktiválás",
+            ["Upgrade"] = "Fejlesztés",
+            ["Ready: every Modifier is fully purchased."] = "Kész: minden Módosító teljesen meg van vásárolva.",
+            ["PPO model is not initialized yet."] = "A PPO modell még nincs inicializálva.",
+            ["Prestige once to open Research."] = "Prestige-elj egyszer a Kutatás megnyitásához.",
+            ["Research maxed."] = "A kutatás maxolva.",
+            ["Not enough Insight."] = "Nincs elég Insight.",
+            ["Ready to buy."] = "Megvásárolható.",
+            ["Not enough chips"] = "Nincs elég chip",
+            ["PPO requires every Modifier maxed"] = "A PPO-hoz minden Módosítót maxolni kell",
+            ["Unlock Agents first"] = "Előbb oldd fel az Ügynököket",
+            ["Modifier Lab requirements not met"] = "A Módosító labor követelményei még nem teljesültek",
+            ["Run PPO in Normal mode first"] = "Előbb futtasd a PPO-t Normál módban",
+            ["Agents menu unlocked"] = "Ügynökök menü feloldva",
+            ["Agent unavailable"] = "Az Ügynök nem elérhető",
+            ["No free agent slot"] = "Nincs szabad Ügynök slot",
+            ["Speed level"] = "Sebesség szint",
+            ["Risk level"] = "Kockázat szint",
+            ["Chip yield level"] = "Chip hozam szint",
+            ["Next preview"] = "Next előnézet",
+            ["Scaling frequency upgrade unavailable"] = "A skálázási gyakoriság fejlesztés nem elérhető",
+            ["Profitable ending upgrade unavailable"] = "A nyereséges befejezés fejlesztés nem elérhető",
+            ["Modifier upgrade unavailable"] = "A Módosító fejlesztés nem elérhető",
+            ["<b>Auto Buy</b>"] = "<b>Auto vásárlás</b>",
+            ["Auto Buy"] = "Auto vásárlás",
+            ["Enabled"] = "Bekapcsolva",
+            ["Disabled"] = "Kikapcsolva",
+            ["FPS --"] = "FPS --",
+            ["Policy loss"] = "Policy veszteség",
+            ["Policy loss:"] = "Policy veszteség:",
+            ["Value loss"] = "Value veszteség",
+            ["Value loss:"] = "Value veszteség:",
+            ["Entropy"] = "Entrópia",
+            ["Entropy:"] = "Entrópia:",
+            ["Updates"] = "Frissítések",
+            ["Updates:"] = "Frissítések:",
+            ["PPO is trained, prestige reset unlocked."] = "A PPO be van tanítva, a prestige reset feloldva.",
+            ["Gain:"] = "Jutalom:",
+            ["You made"] = "Szereztél",
+            ["while you were offline."] = "amíg offline voltál.",
+            ["Offline reward time:"] = "Offline jutalom idő:",
+            ["You have to finish PPO Training to unlock prestige."] = "A prestige feloldásához be kell fejezned a PPO tréninget.",
+            ["Reset for"] = "Reset jutalom:",
+            ["Datacenter"] = "Adatközpont",
+            ["CPU Rack"] = "CPU Rack",
+            ["GPU Rack"] = "GPU Rack",
+            ["TPU Pod"] = "TPU Pod",
+            ["Neural Fabric"] = "Neurális Fabric",
+            ["Power Grid"] = "Energiaellátás",
+            ["Cooling Loop"] = "Hűtőkör",
+            ["Fabric Interconnect"] = "Fabric kapcsolat",
+            ["Commodity silicon. Cheap, dependable, slow."] = "Tömegpiaci szilícium. Olcsó, megbízható, lassú.",
+            ["Parallel throughput for tensor math."] = "Párhuzamos teljesítmény tenzorszámításhoz.",
+            ["Purpose-built matrix engines."] = "Célhardveres mátrixmotorok.",
+            ["Experimental wafer-scale compute."] = "Kísérleti wafer-szintű számítás.",
+            ["Dedicated feeders and battery buffer."] = "Dedikált betápok és akkumulátoros puffer.",
+            ["Immersion + rear-door heat exchangers."] = "Immerziós és hátsó ajtós hőcserélős hűtés.",
+            ["Low-latency mesh between pods."] = "Alacsony késleltetésű mesh a podok között.",
+            ["Total compute"] = "Teljes számítási kapacitás",
+            ["allocated"] = "allokálva",
+            ["units"] = "egység",
+            ["unit"] = "egység",
+            ["total"] = "összesen",
+            ["Training Cluster"] = "Tréning klaszter",
+            ["Analysis Node"] = "Elemző node",
+            ["Market Bots"] = "Piaci botok",
+            ["Requires every Modifier maxed"] = "Minden Módosítót maxolni kell",
+            ["Agent bonuses"] = "Ügynök bónuszok",
+            ["Shop prices"] = "Bolti árak",
+            ["Training eval pause"] = "Tréning kiértékelési szünet",
+            ["Prestige Insight"] = "Prestige Insight",
+            ["Start chips"] = "Kezdő chipek",
+            ["Chip rewards"] = "Chip jutalmak",
+            ["No automation is remembered yet."] = "Még nincs megőrzött automatizáció.",
+            ["Auto Solve unlock remembered."] = "Az Auto Solve feloldása megőrizve.",
+            ["Auto Restart unlock and 50 tokens remembered."] = "Az Auto Restart feloldása és 50 token megőrizve.",
+            ["Auto Solve, Auto Restart, tokens, and Solver Tuning remembered."] = "Az Auto Solve, Auto Restart, tokenek és Solver Tuning megőrizve.",
+            ["No algorithms remembered yet."] = "Még nincs megőrzött algoritmus.",
+            ["Start with RAND."] = "RAND-del kezdesz.",
+            ["Start with RAND and MERG."] = "RAND és MERG algoritmussal kezdesz.",
+            ["Start with RAND, MERG, and BAL."] = "RAND, MERG és BAL algoritmussal kezdesz.",
+            ["Start with RAND, MERG, BAL, and HEUR."] = "RAND, MERG, BAL és HEUR algoritmussal kezdesz.",
+            ["Insight Amplifier"] = "Insight erősítő",
+            ["Seed Capital"] = "Kezdőtőke",
+            ["Automation Memory"] = "Automatizációs memória",
+            ["Algorithm Archive"] = "Algoritmus archívum",
+            ["Yield Theory"] = "Hozamelmélet",
+            ["PPO Bootcamp"] = "PPO bootcamp",
+            ["PPO Memory"] = "PPO memória",
+            ["High Focus"] = "Magas fókusz",
+            ["Stability Model"] = "Stabilitási modell",
+            ["Insight Extractor"] = "Insight kinyerő",
+            ["Passive Insight"] = "Passzív Insight",
+            ["Offline Engine"] = "Offline motor",
+            ["Offline Buffer"] = "Offline puffer",
+            ["Agent Synergy"] = "Ügynök szinergia",
+            ["Bulk Discount"] = "Tömeges kedvezmény",
+            ["Evaluation Efficiency"] = "Kiértékelési hatékonyság",
             ["Insight"] = "Insight"
         };
 
+        public static void ClearRegisteredTranslations()
+        {
+            RegisteredTranslations.Clear();
+        }
+
+        public static void RegisterTranslations(StackMergeLanguage language, IReadOnlyDictionary<string, string> translations)
+        {
+            if (language == StackMergeLanguage.English || translations == null)
+            {
+                return;
+            }
+
+            if (!RegisteredTranslations.TryGetValue(language, out Dictionary<string, string> table))
+            {
+                table = new Dictionary<string, string>(StringComparer.Ordinal);
+                RegisteredTranslations[language] = table;
+            }
+
+            foreach (KeyValuePair<string, string> translation in translations)
+            {
+                if (string.IsNullOrEmpty(translation.Key))
+                {
+                    continue;
+                }
+
+                table[StackMergeSpriteTags.ApplyTint(translation.Key)] = StackMergeSpriteTags.ApplyTint(translation.Value ?? string.Empty);
+            }
+        }
+
         public static string Translate(string value)
         {
-            if (CurrentLanguage == StackMergeLanguage.English || string.IsNullOrEmpty(value))
+            if (string.IsNullOrEmpty(value))
             {
                 return value;
             }
 
-            return TranslateHungarian(value);
+            string translated = CurrentLanguage == StackMergeLanguage.English
+                ? value
+                : TranslateLanguage(CurrentLanguage, value);
+            return StackMergeSpriteTags.ApplyTint(translated);
         }
 
-        private static string TranslateHungarian(string value)
+        private static string TranslateLanguage(StackMergeLanguage language, string value)
         {
-            if (Hungarian.TryGetValue(value, out string exact))
+            if (TryGetTranslation(language, value, out string exact))
+            {
+                return exact;
+            }
+
+            string legacyValue = StackMergeSpriteTags.RemoveTint(value);
+            if (!string.Equals(legacyValue, value, StringComparison.Ordinal)
+                && TryGetTranslation(language, legacyValue, out exact))
             {
                 return exact;
             }
 
             if (value.IndexOf('\n') >= 0)
             {
-                return TranslateLines(value);
+                return TranslateLines(language, value);
             }
 
-            return TranslateHungarianLine(value);
+            return TranslateLine(language, value);
         }
 
-        private static string TranslateLines(string value)
+        private static string TranslateLines(StackMergeLanguage language, string value)
         {
             string[] lines = value.Split('\n');
             var builder = new StringBuilder(value.Length + 16);
@@ -421,25 +608,51 @@ namespace StackMerge
                     builder.Append('\n');
                 }
 
-                builder.Append(TranslateHungarianLine(lines[i]));
+                builder.Append(TranslateLine(language, lines[i]));
             }
 
             return builder.ToString();
         }
 
-        private static string TranslateHungarianLine(string line)
+        private static string TranslateLine(StackMergeLanguage language, string line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
                 return line;
             }
 
-            if (Hungarian.TryGetValue(line, out string exact))
+            if (TryGetTranslation(language, line, out string exact))
             {
                 return exact;
             }
 
-            return ReplaceKnownPrefixes(line);
+            string legacyLine = StackMergeSpriteTags.RemoveTint(line);
+            if (!string.Equals(legacyLine, line, StringComparison.Ordinal)
+                && TryGetTranslation(language, legacyLine, out exact))
+            {
+                return exact;
+            }
+
+            return language == StackMergeLanguage.Magyar
+                ? ReplaceKnownPrefixes(line)
+                : line;
+        }
+
+        private static bool TryGetTranslation(StackMergeLanguage language, string key, out string value)
+        {
+            if (RegisteredTranslations.TryGetValue(language, out Dictionary<string, string> registered)
+                && registered.TryGetValue(key, out value))
+            {
+                return true;
+            }
+
+            if (language == StackMergeLanguage.Magyar && Hungarian.TryGetValue(key, out value))
+            {
+                return true;
+            }
+
+            value = null;
+            return false;
         }
 
         private static string ReplaceKnownPrefixes(string line)
@@ -465,12 +678,22 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Special blocks:", "Speciális blokkok:");
             translated = ReplacePrefix(translated, "Score:", "Pontszám:");
             translated = ReplacePrefix(translated, "Highest block:", "Legmagasabb blokk:");
+            translated = ReplacePrefix(translated, "Speed level ", "Sebesség szint ");
+            translated = ReplacePrefix(translated, "Chip yield level ", "Chip hozam szint ");
+            translated = ReplacePrefix(translated, "Risk level ", "Kockázat szint ");
+            translated = ReplacePrefix(translated, "Next preview:", "Next előnézet:");
             translated = ReplacePrefix(translated, "Scaling frequency level ", "Skálázási gyakoriság szint ");
             translated = ReplacePrefix(translated, "Profitable ending level ", "Nyereséges befejezés szint ");
             translated = ReplacePrefix(translated, "Passive yield level ", "Passzív termelés szint ");
             translated = ReplacePrefix(translated, "Passive tick rate level ", "Passzív termelés gyakoriság szint ");
             translated = ReplacePrefix(translated, "Active multiplier level ", "Aktív szorzó szint ");
             translated = ReplacePrefix(translated, "Compute speed level ", "Számítási sebesség szint ");
+            translated = ReplacePrefix(translated, "Agent bought:", "Ügynök megvéve:");
+            translated = ReplacePrefix(translated, "Agent equipped:", "Ügynök felszerelve:");
+            translated = ReplacePrefix(translated, "Agent unequipped:", "Ügynök levéve:");
+            translated = ReplacePrefix(translated, "Modifier Lab online.", "Módosító labor online.");
+            translated = ReplacePrefix(translated, "Active families:", "Aktív családok:");
+            translated = ReplacePrefix(translated, "Total levels:", "Összes szint:");
             translated = ReplacePrefix(translated, "Level ", "Szint ");
             translated = ReplacePrefix(translated, "Slot ", "Slot ");
             translated = ReplacePrefix(translated, "Speed L", "Sebesség L");
@@ -489,18 +712,50 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Normal Insight x", "Normal Insight x");
             translated = ReplacePrefix(translated, "Offline efficiency ", "Offline hatékonyság ");
             translated = ReplacePrefix(translated, "Offline cap ", "Offline limit ");
+            translated = ReplacePrefix(translated, "Ready to buy for ", "Megvásárolható ennyiért: ");
+            translated = ReplacePrefix(translated, "Start chips:", "Kezdő chipek:");
+            translated = ReplacePrefix(translated, "Prestige Insight x", "Prestige Insight x");
+            translated = ReplacePrefix(translated, "Chip rewards x", "Chip jutalmak x");
+            translated = ReplacePrefix(translated, "Agent bonuses x", "Ügynök bónuszok x");
+            translated = ReplacePrefix(translated, "Shop prices x", "Bolti árak x");
+            translated = ReplacePrefix(translated, "Training eval pause ", "Tréning kiértékelési szünet ");
+            translated = ReplacePrefix(translated, "Policy loss:", "Policy veszteség:");
+            translated = ReplacePrefix(translated, "Value loss:", "Value veszteség:");
+            translated = ReplacePrefix(translated, "Entropy:", "Entrópia:");
+            translated = ReplacePrefix(translated, "Updates:", "Frissítések:");
+            translated = ReplacePrefix(translated, "Updates ", "Frissítések ");
+            translated = ReplacePrefix(translated, "Frames ", "Frame-ek ");
+            translated = ReplacePrefix(translated, "Total compute:", "Teljes számítási kapacitás:");
+            translated = ReplacePrefix(translated, "Locked — reach Prestige ", "Zárolva — szükséges Prestige ");
+            translated = ReplacePrefix(translated, "Locked â€” reach Prestige ", "Zárolva — szükséges Prestige ");
+            translated = ReplacePrefix(translated, "unit:", "egység:");
+            translated = ReplacePrefix(translated, "total:", "összesen:");
+            translated = ReplacePrefix(translated, "Completed goals:", "Teljesített célok:");
             translated = ReplacePrefix(translated, "Current effect:", "Jelenlegi hatás:");
             translated = ReplacePrefix(translated, "Insight:", "Insight:");
             translated = ReplacePrefix(translated, "Requires:", "Követelmény:");
+            translated = ReplacePrefix(translated, "Requires every Modifier maxed:", "Minden Módosítót maxolni kell:");
+            translated = ReplacePrefix(translated, "Reset for ", "Reset jutalom: ");
             translated = translated.Replace("Agents ", "Ügynökök ");
             translated = translated.Replace("Solvers ", "Solverek ");
             translated = translated.Replace("Runs ", "Runok ");
             translated = translated.Replace("Merges ", "Merge-ek ");
             translated = translated.Replace("Best ", "Legjobb ");
+            translated = translated.Replace(" manual", " manuális");
+            translated = translated.Replace(" allocated", " allokálva");
+            translated = translated.Replace(" units", " egység");
+            translated = translated.Replace("unit: ", "egység: ");
+            translated = translated.Replace(" - total: ", " - összesen: ");
+            translated = translated.Replace(" fr/s (idle)", " fr/s (üresjárat)");
+            translated = translated.Replace(" rack FLOPS", " rack FLOPS");
+            translated = translated.Replace(" TPU / Fabric output", " TPU / Fabric kimenet");
+            translated = translated.Replace("<b>Gain:", "<b>Jutalom:");
+            translated = translated.Replace("You made ", "Szereztél ");
+            translated = translated.Replace(" while you were offline.", " amíg offline voltál.");
             translated = translated.Replace(" yes", " igen");
             translated = translated.Replace(" no", " nem");
             translated = translated.Replace(" (Default)", " (Alap)");
-            translated = translated.Replace(" insights. You can keep playing PPO in Playing Mode to increase <sprite name=\"insight\">.", " Insight. Tovább játszhatsz PPO Playing módban, hogy növeld az <sprite name=\"insight\">-ot.");
+            translated = translated.Replace(" insights. You can keep playing PPO in Playing Mode to increase <sprite name=\"insight\" tint=1>.", " Insight. Tovább játszhatsz PPO Playing módban, hogy növeld az <sprite name=\"insight\" tint=1>-ot.");
             translated = translated.Replace(" trained frames.", " betanított frame.");
             translated = translated.Replace(" frames.", " frame.");
             translated = translated.Replace(" frames", " frame");

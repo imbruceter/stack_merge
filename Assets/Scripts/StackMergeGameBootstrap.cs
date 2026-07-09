@@ -31,6 +31,7 @@ namespace StackMerge
         private const string ShowFpsSettingKey = "StackMerge.Settings.ShowFps";
         private const string SuppressAchievementNotificationSettingKey = "StackMerge.Settings.SuppressAchievementNotification";
         private const string LanguageSettingKey = "StackMerge.Settings.Language";
+        private const string BlockNumeralSettingKey = "StackMerge.Settings.BlockNumerals";
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
@@ -91,6 +92,8 @@ namespace StackMerge
         [SerializeField] private TMP_Text fpsText;
         [SerializeField] private Toggle suppressAchievementNotificationToggle;
         [SerializeField] private TMP_Dropdown languageDropdown;
+        [Tooltip("Block numeral style dropdown in Settings. Auto-found by a name containing 'Numeral'. Locked styles show '(Locked)' and snap back to the previous choice.")]
+        [SerializeField] private TMP_Dropdown blockNumeralDropdown;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
         [Tooltip("Optional lock icon used by locked bottom-menu tabs. Drag your lock sprite here in the Inspector.")]
         [SerializeField] private Sprite lockedTabIcon;
@@ -349,6 +352,7 @@ namespace StackMerge
         private float trainingEvalTimer;
         private float datacenterUiRefreshTimer;
         private float autoBuyTimer;
+        private BlockNumeralStyle blockNumeralStyle = BlockNumeralStyle.Standard;
         // Captured once from the panel's own designed height, then reused every reposition so the
         // panel doesn't grow/shrink as it gets moved around.
         private float runInfoDesignHeight = -1f;
@@ -480,6 +484,11 @@ namespace StackMerge
             progression = StackMergeProgression.Load();
             selectedSolverId = progression.SelectedSolver;
             solverDeselected = progression.SolverDeselected;
+            // The numeral preference loads before the save exists — re-validate it against unlocks.
+            if (!progression.IsBlockNumeralUnlocked(blockNumeralStyle))
+            {
+                blockNumeralStyle = BlockNumeralStyle.Standard;
+            }
             ApplyModernTheme();
             EnsureResearchUi();
             WirePrestigeResearchButtons();
@@ -907,6 +916,11 @@ namespace StackMerge
         {
             return achievementId switch
             {
+                2 => "Unlocks Byte numeral for blocks",                        // "Chip Billion" (earn 1B)
+                5 => "Unlocks Power numeral for blocks",                       // "Mega Budget" (spend 100M)
+                10 => "Unlocks Roman numeral for blocks",                      // "Move Singularity" (1M moves)
+                13 => "Unlocks Hexadecimal numeral for blocks",                // "Merge Singularity" (1M merges)
+                16 => "Unlocks Scientific numeral for blocks",                 // "High 32768"
                 23 => "Unlocks Auto Buy for Algos, Upgrades, Agents and Mods", // "First Prestige"
                 24 => "Unlocks Datacenter",                                    // "Prestige Loop" (5×)
                 _ => null
@@ -2019,6 +2033,7 @@ namespace StackMerge
                 "HideAchievementPopup",
                 "DisableAchievementPopup");
             languageDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Language", "LanguageDropdown");
+            blockNumeralDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Numeral", "BlockNumeral", "NumeralDropdown");
             fpsText ??= FindComponentByNormalizedName<TMP_Text>(canvasRoot, "FPSText", "FpsText", "FPS");
         }
 
@@ -2058,6 +2073,7 @@ namespace StackMerge
                 ? StackMergeLanguage.Magyar
                 : StackMergeLanguage.English;
             StackMergeLocalization.CurrentLanguage = currentLanguage;
+            blockNumeralStyle = (BlockNumeralStyle)Mathf.Clamp(PlayerPrefs.GetInt(BlockNumeralSettingKey, 0), 0, 5);
         }
 
         private void WireSettingsControls()
@@ -2082,6 +2098,12 @@ namespace StackMerge
                 languageDropdown.onValueChanged.RemoveAllListeners();
                 languageDropdown.onValueChanged.AddListener(SetLanguageFromDropdown);
             }
+
+            if (blockNumeralDropdown != null)
+            {
+                blockNumeralDropdown.onValueChanged.RemoveAllListeners();
+                blockNumeralDropdown.onValueChanged.AddListener(SetBlockNumeralFromDropdown);
+            }
         }
 
         private void SyncSettingsControls()
@@ -2098,6 +2120,8 @@ namespace StackMerge
             {
                 suppressAchievementNotificationToggle.SetIsOnWithoutNotify(suppressAchievementNotifications);
             }
+
+            RefreshBlockNumeralDropdown();
 
             if (languageDropdown != null)
             {
@@ -2260,6 +2284,7 @@ namespace StackMerge
             PlayerPrefs.SetInt(LanguageSettingKey, currentLanguage == StackMergeLanguage.Magyar ? 1 : 0);
             PlayerPrefs.Save();
             ApplyLanguageToUi();
+            RefreshBlockNumeralDropdown();
         }
 
         private void ApplyLanguageToUi()
@@ -2548,6 +2573,12 @@ namespace StackMerge
             SetActive(achievementsPanel, false);
             SetActive(researchPanel, selectedTabIndex == 5);
             SetActive(settingsPanel, selectedTabIndex == 6);
+            if (selectedTabIndex == 6)
+            {
+                // Unlock states may have changed since the last visit — rebuild the numeral options.
+                RefreshBlockNumeralDropdown();
+            }
+
             SetActive(datacenterPanel, selectedTabIndex == 7);
             if (selectedTabIndex == 7)
             {
@@ -5666,9 +5697,184 @@ namespace StackMerge
             return builder.ToString();
         }
 
-        private static string FormatMatrixCell(int value)
+        private string FormatMatrixCell(int value)
         {
-            return value == StackMergeGameState.JokerBlockValue ? "J" : value.ToString();
+            // The matrix is monospaced plain text, so rich-text tags (Power's <sup>) are disabled.
+            return value == StackMergeGameState.JokerBlockValue ? "J" : FormatBlockValue(value, blockNumeralStyle, allowRichText: false);
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Block numeral skins (goal rewards). Every style stays numerically readable — block
+        // values are exact powers of two, which Byte / Hexadecimal / Power / Roman-tier exploit
+        // for compact, ASCII-safe renderings. Only block faces and the PPO training matrix go
+        // through this; economy numbers (chips, costs, insight) keep the standard formatting.
+        // ------------------------------------------------------------------------------------
+        private string FormatBlockValue(long value)
+        {
+            return FormatBlockValue(value, blockNumeralStyle, allowRichText: true);
+        }
+
+        private static string FormatBlockValue(long value, BlockNumeralStyle style, bool allowRichText)
+        {
+            if (value <= 0)
+            {
+                return value.ToString();
+            }
+
+            switch (style)
+            {
+                case BlockNumeralStyle.Byte:
+                    return FormatByteValue(value);
+                case BlockNumeralStyle.Hexadecimal:
+                    return $"0x{value:X}";
+                case BlockNumeralStyle.Power:
+                {
+                    int exponent = ExactPowerOfTwoExponent(value);
+                    if (exponent < 1)
+                    {
+                        return FormatNumber(value);
+                    }
+
+                    return allowRichText ? $"2<sup>{exponent}</sup>" : $"2^{exponent}";
+                }
+
+                case BlockNumeralStyle.Roman:
+                {
+                    // Roman shows the TIER (the power-of-two exponent): 1024 = X, 32768 = XV.
+                    int exponent = ExactPowerOfTwoExponent(value);
+                    return exponent >= 1 ? ToRoman(exponent) : FormatNumber(value);
+                }
+
+                case BlockNumeralStyle.Scientific:
+                {
+                    if (value < 1000)
+                    {
+                        return value.ToString();
+                    }
+
+                    int exponent = (int)Math.Floor(Math.Log10(value));
+                    double mantissa = value / Math.Pow(10, exponent);
+                    return $"{mantissa:0.0}e{exponent}";
+                }
+
+                default:
+                    return FormatNumber(value);
+            }
+        }
+
+        // Block values are powers of two, so byte units are always EXACT (1KB = 1024).
+        private static string FormatByteValue(long value)
+        {
+            const long Kilo = 1024L;
+            if (value < Kilo)
+            {
+                return $"{value}B";
+            }
+
+            if (value < Kilo * Kilo)
+            {
+                return $"{value / Kilo}KB";
+            }
+
+            if (value < Kilo * Kilo * Kilo)
+            {
+                return $"{value / (Kilo * Kilo)}MB";
+            }
+
+            return $"{value / (Kilo * Kilo * Kilo)}GB";
+        }
+
+        /// <summary>Returns n for value == 2^n (n ≥ 1); -1 for anything that isn't a power of two.</summary>
+        private static int ExactPowerOfTwoExponent(long value)
+        {
+            if (value < 2 || (value & (value - 1)) != 0)
+            {
+                return -1;
+            }
+
+            int exponent = 0;
+            while (value > 1)
+            {
+                value >>= 1;
+                exponent++;
+            }
+
+            return exponent;
+        }
+
+        private static string ToRoman(int number)
+        {
+            if (number <= 0 || number >= 4000)
+            {
+                return number.ToString();
+            }
+
+            (int Value, string Symbol)[] table =
+            {
+                (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+                (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")
+            };
+
+            var builder = new StringBuilder();
+            foreach ((int value, string symbol) in table)
+            {
+                while (number >= value)
+                {
+                    builder.Append(symbol);
+                    number -= value;
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static readonly string[] BlockNumeralLabels = { "Standard", "Byte", "Hexadecimal", "Power", "Roman", "Scientific" };
+
+        private void RefreshBlockNumeralDropdown()
+        {
+            if (blockNumeralDropdown == null)
+            {
+                return;
+            }
+
+            var options = new List<TMP_Dropdown.OptionData>(BlockNumeralLabels.Length);
+            for (int i = 0; i < BlockNumeralLabels.Length; i++)
+            {
+                bool unlocked = i == 0 || (progression != null && progression.IsBlockNumeralUnlocked((BlockNumeralStyle)i));
+                string label = StackMergeLocalization.Translate(BlockNumeralLabels[i]);
+                options.Add(new TMP_Dropdown.OptionData(unlocked ? label : $"{label} ({StackMergeLocalization.Translate("Locked")})"));
+            }
+
+            blockNumeralDropdown.options = options;
+            if (progression != null && !progression.IsBlockNumeralUnlocked(blockNumeralStyle))
+            {
+                blockNumeralStyle = BlockNumeralStyle.Standard;
+            }
+
+            blockNumeralDropdown.SetValueWithoutNotify((int)blockNumeralStyle);
+            blockNumeralDropdown.RefreshShownValue();
+        }
+
+        private void SetBlockNumeralFromDropdown(int index)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            var style = (BlockNumeralStyle)Mathf.Clamp(index, 0, BlockNumeralLabels.Length - 1);
+            if (progression != null && !progression.IsBlockNumeralUnlocked(style))
+            {
+                SetText(feedbackText, "Complete its goal to unlock this numeral");
+                RefreshBlockNumeralDropdown();
+                return;
+            }
+
+            blockNumeralStyle = style;
+            PlayerPrefs.SetInt(BlockNumeralSettingKey, (int)style);
+            PlayerPrefs.Save();
+            RefreshColumns();
+            RefreshNextBlocks();
         }
 
         private static string CenterMatrixCell(string value)
@@ -8732,7 +8938,7 @@ namespace StackMerge
             TMP_Text text = block.GetComponentInChildren<TMP_Text>(true);
             if (text != null)
             {
-                text.text = value == StackMergeGameState.JokerBlockValue ? "Joker" : FormatNumber(value);
+                text.text = value == StackMergeGameState.JokerBlockValue ? "Joker" : FormatBlockValue(value);
                 text.fontSize = fontSize;
                 text.color = GetReadableTextColor(color);
                 text.enableAutoSizing = true;
