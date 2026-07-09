@@ -268,12 +268,21 @@ namespace StackMerge
         [Tooltip("Static per-modifier cards already placed in the Modifiers menu (one per modifier, not instantiated at runtime).")]
         [SerializeField] private StackMergeModifierCard[] modifierCards = Array.Empty<StackMergeModifierCard>();
         [SerializeField] private TMP_Text historySummaryText;
+        [SerializeField] private TMP_Text historyHighestText;
+        [SerializeField] private TMP_Text historyHighestMedianText;
         [SerializeField] private RectTransform historyChartRoot;
         [SerializeField] private RectTransform historySolverTableRoot;
         [SerializeField] private RectTransform historyRecentRunsRoot;
         [SerializeField] private TMP_Text historyInsightText;
         [SerializeField] private Button historyBackButton;
         [SerializeField] private TMP_Text achievementStatsText;
+        [SerializeField] private TMP_Text achievementRunsText;
+        [SerializeField] private TMP_Text achievementBestRunText;
+        [SerializeField] private TMP_Text achievementMovesText;
+        [SerializeField] private TMP_Text achievementMergesText;
+        [SerializeField] private TMP_Text achievementHighestText;
+        [SerializeField] private TMP_Text achievementEarnedText;
+        [SerializeField] private TMP_Text achievementCompletedGoalsText;
         [SerializeField] private RectTransform achievementListRoot;
         [SerializeField] private Button achievementBackButton;
         [SerializeField] private Button[] agentButtons = Array.Empty<Button>();
@@ -2394,8 +2403,17 @@ namespace StackMerge
                 || text == offlineGainText
                 || text == offlineTimeText
                 || text == historySummaryText
+                || text == historyHighestText
+                || text == historyHighestMedianText
                 || text == historyInsightText
                 || text == achievementStatsText
+                || text == achievementRunsText
+                || text == achievementBestRunText
+                || text == achievementMovesText
+                || text == achievementMergesText
+                || text == achievementHighestText
+                || text == achievementEarnedText
+                || text == achievementCompletedGoalsText
                 || text == gameplayInfoText
                 || text == achievementNotificationGoalText
                 || text == gameOverScoreText
@@ -2697,6 +2715,28 @@ namespace StackMerge
         private bool IsResearchMenuUnlocked()
         {
             return progression != null && progression.IsSolverUnlocked(SolverId.MachineLearning);
+        }
+
+        public bool IsHowToPlayLayerUnlocked(StackMergeHowToPlayLayer layer)
+        {
+            if (progression == null)
+            {
+                return layer == StackMergeHowToPlayLayer.Gameplay
+                    || layer == StackMergeHowToPlayLayer.Algorithms
+                    || layer == StackMergeHowToPlayLayer.Upgrades;
+            }
+
+            return layer switch
+            {
+                StackMergeHowToPlayLayer.Gameplay => true,
+                StackMergeHowToPlayLayer.Algorithms => true,
+                StackMergeHowToPlayLayer.Upgrades => true,
+                StackMergeHowToPlayLayer.Agents => progression.AgentsMenuUnlocked,
+                StackMergeHowToPlayLayer.Modifiers => progression.ModifiersMenuUnlocked,
+                StackMergeHowToPlayLayer.Research => IsResearchMenuUnlocked(),
+                StackMergeHowToPlayLayer.Datacenter => progression.DatacenterUnlocked,
+                _ => true
+            };
         }
 
         private void OpenSolverTunePanel()
@@ -7611,6 +7651,8 @@ namespace StackMerge
             if (history.Length == 0)
             {
                 SetText(historySummaryText, "No completed runs yet. Let a run end to start collecting solver stats.");
+                SetText(historyHighestText, "-");
+                SetText(historyHighestMedianText, "-");
                 SetText(historyInsightText, "Tip: use the editor benchmark window for large balance samples without touching player progression.");
                 DrawTrendChart(history);
                 BuildSolverList(Array.Empty<HistorySolverStats>());
@@ -7626,6 +7668,8 @@ namespace StackMerge
             HistorySolverStats bestPeak = solverStats.OrderByDescending(stats => stats.MaxScore).First();
             int trendCount = Math.Min(history.Length, 40);
 
+            SetText(historyHighestText, $"{FormatNumber(best.score)} <size=75%>({SolverName(best.solverId)})</size>");
+            SetText(historyHighestMedianText, $"{FormatNumber(bestMedian.MedianScore)} <size=75%>({bestMedian.SolverName})</size>");
             SetText(
                 historySummaryText,
                 $"Stored runs: {history.Length}/250\n" +
@@ -7792,9 +7836,17 @@ namespace StackMerge
             }
 
             int completed = StackMergeProgression.Achievements.Count(progression.IsAchievementComplete);
+            int goalCount = StackMergeProgression.Achievements.Length;
+            SetText(achievementRunsText, FormatNumber(progression.LifetimeRunsCompleted));
+            SetText(achievementBestRunText, FormatNumber(progression.BestRunScore));
+            SetText(achievementMovesText, FormatNumber(progression.LifetimeMoves));
+            SetText(achievementMergesText, FormatNumber(progression.LifetimeMerges));
+            SetText(achievementHighestText, FormatNumber(progression.LifetimeHighestBlockEver));
+            SetText(achievementEarnedText, FormatNumber(progression.LifetimeChipsEarned));
+            SetText(achievementCompletedGoalsText, $"{completed}/{goalCount} {CompletedSuffix()}");
             SetText(
                 achievementStatsText,
-                $"Completed goals: {completed}/{StackMergeProgression.Achievements.Length}\n" +
+                $"Completed goals: {completed}/{goalCount}\n" +
                 $"Runs: {FormatNumber(progression.LifetimeRunsCompleted)} ({FormatNumber(progression.LifetimeManualRunsCompleted)} manual)\n" +
                 $"Moves: {FormatNumber(progression.LifetimeMoves)}\n" +
                 $"Merges: {FormatNumber(progression.LifetimeMerges)}\n" +
@@ -7804,6 +7856,11 @@ namespace StackMerge
                 $"Best run: {FormatNumber(progression.BestRunScore)}");
 
             BuildGoalRows();
+        }
+
+        private static string CompletedSuffix()
+        {
+            return StackMergeLocalization.Translate("Completed").ToLowerInvariant();
         }
 
         // Instantiates one goalRowPrefab per achievement under achievementListRoot.

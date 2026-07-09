@@ -5,6 +5,17 @@ using UnityEngine.UI;
 
 namespace StackMerge
 {
+    public enum StackMergeHowToPlayLayer
+    {
+        Gameplay,
+        Algorithms,
+        Upgrades,
+        Agents,
+        Modifiers,
+        Research,
+        Datacenter
+    }
+
     [AddComponentMenu("Stack Merge/How To Play Panel")]
     public sealed class StackMergeHowToPlayPanel : MonoBehaviour
     {
@@ -21,8 +32,14 @@ namespace StackMerge
         [Tooltip("Parent under which HowToPlayElement instances are created.")]
         [SerializeField] private Transform contentRoot;
 
+        [Tooltip("Optional gameplay bootstrap. Used to hide help sections for layers the player has not unlocked yet.")]
+        [SerializeField] private StackMergeGameBootstrap gameBootstrap;
+
         [Tooltip("Prefab with a StackMergeHowToPlayElement component and Name/Desc text children.")]
         [SerializeField] private StackMergeHowToPlayElement elementPrefab;
+
+        [Tooltip("Prefab shown instead of the normal element while the related layer is still locked.")]
+        [SerializeField] private GameObject lockedElementPrefab;
 
         [Tooltip("Optional pre-placed elements. If assigned, these are filled instead of instantiating the prefab.")]
         [SerializeField] private StackMergeHowToPlayElement[] sceneElements = Array.Empty<StackMergeHowToPlayElement>();
@@ -31,9 +48,24 @@ namespace StackMerge
         [SerializeField] private bool hidePanelOnAwake = true;
         [SerializeField] private bool rebuildOnOpen = true;
 
+        [Header("Locked Copy")]
+        [SerializeField, TextArea] private string lockedDescriptionEnglish = "This part of the game is still locked. Keep progressing to reveal this help section.";
+        [SerializeField, TextArea] private string lockedDescriptionHungarian = "Ez a jatekreteg meg nincs feloldva. Haladj tovabb, hogy megnyiljon ez a sugo szekcio.";
+
         private readonly List<StackMergeHowToPlayElement> runtimeElements = new();
         private StackMergeLanguage builtForLanguage = (StackMergeLanguage)(-1);
         private bool built;
+
+        private static readonly StackMergeHowToPlayLayer[] SectionLayers =
+        {
+            StackMergeHowToPlayLayer.Gameplay,
+            StackMergeHowToPlayLayer.Algorithms,
+            StackMergeHowToPlayLayer.Upgrades,
+            StackMergeHowToPlayLayer.Agents,
+            StackMergeHowToPlayLayer.Modifiers,
+            StackMergeHowToPlayLayer.Research,
+            StackMergeHowToPlayLayer.Datacenter
+        };
 
         private void Awake()
         {
@@ -81,6 +113,7 @@ namespace StackMerge
         {
             panelRoot ??= gameObject;
             contentRoot ??= FindNamedDescendant(panelRoot.transform, "Content", "ScrollContent", "Elements", "List");
+            gameBootstrap ??= FindAnyObjectByType<StackMergeGameBootstrap>();
 
             if (closeButton == null && panelRoot != null)
             {
@@ -128,6 +161,9 @@ namespace StackMerge
 
         private void FillSceneElements(IReadOnlyList<HowToPlaySection> sections)
         {
+            ClearRuntimeElements();
+            HideTemplateIfChild(lockedElementPrefab);
+
             for (int i = 0; i < sceneElements.Length; i++)
             {
                 StackMergeHowToPlayElement element = sceneElements[i];
@@ -137,11 +173,25 @@ namespace StackMerge
                 }
 
                 bool hasSection = i < sections.Count;
-                element.gameObject.SetActive(hasSection);
-                if (hasSection)
+                if (!hasSection)
                 {
-                    element.SetContent(sections[i].Title, sections[i].Description);
+                    element.gameObject.SetActive(false);
+                    continue;
                 }
+
+                bool unlocked = IsSectionUnlocked(i);
+                if (!unlocked && lockedElementPrefab != null)
+                {
+                    element.gameObject.SetActive(false);
+                    StackMergeHowToPlayElement lockedElement = CreateLockedElement(element.transform.parent, element.transform.GetSiblingIndex());
+                    lockedElement.gameObject.SetActive(true);
+                    SetElementContent(lockedElement, sections[i], i);
+                    runtimeElements.Add(lockedElement);
+                    continue;
+                }
+
+                element.gameObject.SetActive(true);
+                SetElementContent(element, sections[i], i);
             }
         }
 
@@ -152,6 +202,44 @@ namespace StackMerge
                 return;
             }
 
+            ClearRuntimeElements();
+
+            HideTemplateIfChild(elementPrefab.gameObject);
+            HideTemplateIfChild(lockedElementPrefab);
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                StackMergeHowToPlayElement element = CreateRuntimeElement(IsSectionUnlocked(i));
+                element.gameObject.SetActive(true);
+                SetElementContent(element, sections[i], i);
+                runtimeElements.Add(element);
+            }
+        }
+
+        private StackMergeHowToPlayElement CreateRuntimeElement(bool unlocked)
+        {
+            if (unlocked || lockedElementPrefab == null)
+            {
+                return Instantiate(elementPrefab, contentRoot);
+            }
+
+            return CreateLockedElement(contentRoot, -1);
+        }
+
+        private StackMergeHowToPlayElement CreateLockedElement(Transform parent, int siblingIndex)
+        {
+            GameObject instance = Instantiate(lockedElementPrefab, parent);
+            if (siblingIndex >= 0)
+            {
+                instance.transform.SetSiblingIndex(siblingIndex);
+            }
+
+            StackMergeHowToPlayElement element = instance.GetComponent<StackMergeHowToPlayElement>();
+            return element != null ? element : instance.AddComponent<StackMergeHowToPlayElement>();
+        }
+
+        private void ClearRuntimeElements()
+        {
             for (int i = runtimeElements.Count - 1; i >= 0; i--)
             {
                 StackMergeHowToPlayElement element = runtimeElements[i];
@@ -162,18 +250,34 @@ namespace StackMerge
             }
 
             runtimeElements.Clear();
+        }
 
-            if (elementPrefab.transform.parent == contentRoot)
-            {
-                elementPrefab.gameObject.SetActive(false);
-            }
+        private void SetElementContent(StackMergeHowToPlayElement element, HowToPlaySection section, int index)
+        {
+            bool unlocked = IsSectionUnlocked(index);
+            string description = unlocked ? section.Description : GetLockedDescription(StackMergeLocalization.CurrentLanguage);
+            element.SetContent(section.Title, description);
+        }
 
-            foreach (HowToPlaySection section in sections)
+        private bool IsSectionUnlocked(int index)
+        {
+            StackMergeHowToPlayLayer layer = index >= 0 && index < SectionLayers.Length
+                ? SectionLayers[index]
+                : StackMergeHowToPlayLayer.Gameplay;
+
+            return gameBootstrap == null || gameBootstrap.IsHowToPlayLayerUnlocked(layer);
+        }
+
+        private string GetLockedDescription(StackMergeLanguage language)
+        {
+            return language == StackMergeLanguage.Magyar ? lockedDescriptionHungarian : lockedDescriptionEnglish;
+        }
+
+        private void HideTemplateIfChild(GameObject template)
+        {
+            if (template != null && template.transform.parent == contentRoot)
             {
-                StackMergeHowToPlayElement element = Instantiate(elementPrefab, contentRoot);
-                element.gameObject.SetActive(true);
-                element.SetContent(section.Title, section.Description);
-                runtimeElements.Add(element);
+                template.SetActive(false);
             }
         }
 
