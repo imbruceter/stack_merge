@@ -455,7 +455,7 @@ namespace StackMerge
 
                 "Az egyszerű solverek gyorsak, de szűklátókörűek. A tervező és szimulációs solverek több jövőbeli állapotot értékelnek.\n\n" +
 
-                "<u>A PPO különbözik a többi solvertől. Eleinte nem ismeri a játékot, ezért előbb Tréning Módban kell betanítani, mielőtt Normál Módban használható lenne.<u>\n\n" +
+                "<u>A PPO különbözik a többi solvertől. Eleinte nem ismeri a játékot, ezért előbb Tréning Módban kell betanítani, mielőtt Normál Módban használható lenne.</u>\n\n" +
 
                 "Solver időzítés:\n" +
                 "<b>moveInterval = max(minInterval, speedInterval x solverPacing x computePacing x agentPacing x trainingPacing)</b>\n\n" +

@@ -32,6 +32,7 @@ namespace StackMerge
         private const string SuppressAchievementNotificationSettingKey = "StackMerge.Settings.SuppressAchievementNotification";
         private const string LanguageSettingKey = "StackMerge.Settings.Language";
         private const string BlockNumeralSettingKey = "StackMerge.Settings.BlockNumerals";
+        private static readonly Color DropdownSelectedBackgroundColor = HexColor("#F2EEE6");
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
@@ -402,6 +403,7 @@ namespace StackMerge
         private int fpsSampleFrames;
         private readonly Dictionary<TMP_Text, string> settingsStaticTextDefaults = new();
         private readonly Dictionary<TMP_Text, string> staticLocalizedTextDefaults = new();
+        private readonly Dictionary<Image, Color> dropdownItemBackgroundDefaults = new();
         private BottomTabVisual[] bottomTabVisuals = Array.Empty<BottomTabVisual>();
         private readonly Dictionary<Button, Color> buttonNormalColors = new();
         private int bottomMenuHighlightIndex = -1;
@@ -594,6 +596,7 @@ namespace StackMerge
             TickGameOverOverlayDelay();
             TickAchievementNotification();
             TickLanguageDropdownSelection();
+            TickDropdownSelectionVisuals();
             TickFpsDisplay();
             TickPassiveProduction();
             TickDatacenterProduction();
@@ -2139,6 +2142,7 @@ namespace StackMerge
                 languageDropdown.SetValueWithoutNotify(languageIndex);
                 lastLanguageDropdownValue = languageIndex;
                 languageDropdown.RefreshShownValue();
+                ApplyDropdownSelectionBackground(languageDropdown);
             }
 
             syncingSettingsControls = false;
@@ -2151,25 +2155,55 @@ namespace StackMerge
                 return;
             }
 
-            if (languageDropdown.captionText == null)
+            ConfigureDropdownTextReferences(languageDropdown);
+            if (languageDropdown.options.Count != 2
+                || !IsLanguageOption(languageDropdown.options[0].text, StackMergeLanguage.English)
+                || !IsLanguageOption(languageDropdown.options[1].text, StackMergeLanguage.Magyar))
             {
-                Transform label = FindNamedDescendant(languageDropdown.transform, "Label");
-                languageDropdown.captionText = label != null ? label.GetComponent<TMP_Text>() : null;
+                languageDropdown.options = new List<TMP_Dropdown.OptionData>
+                {
+                    new("English"),
+                    new("Magyar")
+                };
             }
 
-            if (languageDropdown.itemText == null && languageDropdown.template != null)
+            languageDropdown.RefreshShownValue();
+            ApplyDropdownSelectionBackground(languageDropdown);
+        }
+
+        private void ConfigureDropdownTextReferences(TMP_Dropdown dropdown)
+        {
+            if (dropdown == null)
             {
-                Transform itemLabel = FindNamedDescendant(languageDropdown.template, "Item Label");
-                if (itemLabel != null)
-                {
-                    languageDropdown.itemText = itemLabel.GetComponent<TMP_Text>();
-                }
-                else
-                {
-                    Toggle itemToggle = languageDropdown.template.GetComponentInChildren<Toggle>(true);
-                    languageDropdown.itemText = itemToggle != null ? itemToggle.GetComponentInChildren<TMP_Text>(true) : null;
-                }
+                return;
             }
+
+            if (dropdown.captionText == null || !dropdown.captionText.transform.IsChildOf(dropdown.transform))
+            {
+                Transform label = FindNamedDescendant(dropdown.transform, "Label");
+                dropdown.captionText = label != null ? label.GetComponent<TMP_Text>() : null;
+            }
+
+            if (dropdown.template == null)
+            {
+                return;
+            }
+
+            bool itemTextInvalid = dropdown.itemText == null || !dropdown.itemText.transform.IsChildOf(dropdown.template);
+            if (!itemTextInvalid)
+            {
+                return;
+            }
+
+            Transform itemLabel = FindNamedDescendant(dropdown.template, "Item Label");
+            if (itemLabel != null)
+            {
+                dropdown.itemText = itemLabel.GetComponent<TMP_Text>();
+                return;
+            }
+
+            Toggle itemToggle = dropdown.template.GetComponentInChildren<Toggle>(true);
+            dropdown.itemText = itemToggle != null ? itemToggle.GetComponentInChildren<TMP_Text>(true) : null;
         }
 
         private int GetLanguageDropdownIndex(StackMergeLanguage language)
@@ -2221,6 +2255,59 @@ namespace StackMerge
             return language == StackMergeLanguage.Magyar
                 ? optionName == "magyar"
                 : optionName == "english" || optionName == "angol";
+        }
+
+        private void TickDropdownSelectionVisuals()
+        {
+            ApplyDropdownSelectionBackground(languageDropdown);
+            ApplyDropdownSelectionBackground(blockNumeralDropdown);
+        }
+
+        private void ApplyDropdownSelectionBackground(TMP_Dropdown dropdown)
+        {
+            if (dropdown == null)
+            {
+                return;
+            }
+
+            foreach (Toggle item in dropdown.GetComponentsInChildren<Toggle>(true))
+            {
+                if (dropdown.template != null && item.transform.IsChildOf(dropdown.template))
+                {
+                    continue;
+                }
+
+                Image background = GetDropdownItemBackground(item);
+                if (background == null)
+                {
+                    continue;
+                }
+
+                if (!dropdownItemBackgroundDefaults.ContainsKey(background))
+                {
+                    dropdownItemBackgroundDefaults[background] = background.color;
+                }
+
+                background.color = item.isOn
+                    ? DropdownSelectedBackgroundColor
+                    : dropdownItemBackgroundDefaults[background];
+            }
+        }
+
+        private static Image GetDropdownItemBackground(Toggle item)
+        {
+            if (item == null)
+            {
+                return null;
+            }
+
+            Transform background = FindNamedDescendant(item.transform, "Item Background");
+            if (background != null && background.TryGetComponent(out Image backgroundImage))
+            {
+                return backgroundImage;
+            }
+
+            return item.targetGraphic as Image ?? item.GetComponent<Image>();
         }
 
         private void TickLanguageDropdownSelection()
@@ -2294,6 +2381,7 @@ namespace StackMerge
             PlayerPrefs.Save();
             ApplyLanguageToUi();
             RefreshBlockNumeralDropdown();
+            ApplyDropdownSelectionBackground(languageDropdown);
         }
 
         private void ApplyLanguageToUi()
@@ -2328,7 +2416,10 @@ namespace StackMerge
 
             foreach (TMP_Text text in settingsPanel.GetComponentsInChildren<TMP_Text>(true))
             {
-                if (text == null || text == fpsText || (languageDropdown != null && text.transform.IsChildOf(languageDropdown.transform)))
+                if (text == null
+                    || text == fpsText
+                    || (languageDropdown != null && text.transform.IsChildOf(languageDropdown.transform))
+                    || (blockNumeralDropdown != null && text.transform.IsChildOf(blockNumeralDropdown.transform)))
                 {
                     continue;
                 }
@@ -2423,6 +2514,11 @@ namespace StackMerge
             }
 
             if (languageDropdown != null && text.transform.IsChildOf(languageDropdown.transform))
+            {
+                return true;
+            }
+
+            if (blockNumeralDropdown != null && text.transform.IsChildOf(blockNumeralDropdown.transform))
             {
                 return true;
             }
@@ -5877,6 +5973,7 @@ namespace StackMerge
                 return;
             }
 
+            ConfigureDropdownTextReferences(blockNumeralDropdown);
             var options = new List<TMP_Dropdown.OptionData>(BlockNumeralLabels.Length);
             for (int i = 0; i < BlockNumeralLabels.Length; i++)
             {
@@ -5893,6 +5990,7 @@ namespace StackMerge
 
             blockNumeralDropdown.SetValueWithoutNotify((int)blockNumeralStyle);
             blockNumeralDropdown.RefreshShownValue();
+            ApplyDropdownSelectionBackground(blockNumeralDropdown);
         }
 
         private void SetBlockNumeralFromDropdown(int index)
@@ -5915,6 +6013,7 @@ namespace StackMerge
             PlayerPrefs.Save();
             RefreshColumns();
             RefreshNextBlocks();
+            RefreshBlockNumeralDropdown();
         }
 
         private static string CenterMatrixCell(string value)

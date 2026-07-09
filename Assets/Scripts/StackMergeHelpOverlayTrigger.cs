@@ -19,6 +19,11 @@ namespace StackMerge
         [SerializeField] private string actionButtonLabel;
         [SerializeField] private UnityEvent actionButtonAction;
 
+        [Header("Magyar Overrides")]
+        [SerializeField] private string magyarTitle;
+        [SerializeField, TextArea(3, 8)] private string magyarBody;
+        [SerializeField] private string magyarActionButtonLabel;
+
         [Header("Trigger")]
         [SerializeField] private bool showOnStart;
         [SerializeField] private bool showOnce;
@@ -55,7 +60,11 @@ namespace StackMerge
             }
 
             UnityAction action = HasActionButton() ? actionButtonAction.Invoke : null;
-            overlay.Show(title, body, actionButtonLabel, action);
+            overlay.Show(
+                Localize(title, magyarTitle),
+                Localize(body, magyarBody),
+                Localize(actionButtonLabel, magyarActionButtonLabel),
+                action);
             MarkShown();
         }
 
@@ -104,9 +113,19 @@ namespace StackMerge
 
         private bool HasActionButton()
         {
-            return !string.IsNullOrWhiteSpace(actionButtonLabel)
+            return !string.IsNullOrWhiteSpace(Localize(actionButtonLabel, magyarActionButtonLabel))
                 && actionButtonAction != null
                 && actionButtonAction.GetPersistentEventCount() > 0;
+        }
+
+        private static string Localize(string english, string magyar)
+        {
+            if (StackMergeLocalization.CurrentLanguage == StackMergeLanguage.Magyar && !string.IsNullOrWhiteSpace(magyar))
+            {
+                return magyar;
+            }
+
+            return StackMergeLocalization.Translate(english ?? string.Empty);
         }
 
         private static StackMergeHelpOverlay FindLoadedOverlay()

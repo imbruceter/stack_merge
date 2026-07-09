@@ -214,7 +214,7 @@ namespace StackMerge
         {
             if (text != null)
             {
-                text.text = StackMergeSpriteTags.ApplyTint(value ?? string.Empty);
+                text.text = StackMergeLocalization.Translate(value ?? string.Empty);
             }
         }
     }
