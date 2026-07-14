@@ -1,0 +1,53 @@
+# Balance audit (ablation, common random numbers)
+# seeds=12345 maxRuns=8000 moveCap=1000 shopHorizon=1 metaHorizon=6 auditMeta=False
+Scope	Key	Seed	TotalSeconds	Runs	Prestiges	FirstPpoSeconds	FirstPrestigeSeconds	TotalEarned	Finished	HitCap
+Shop	(baseline)	12345	24277	2417	0			4312465	False	True
+Shop	Solver.RAND	12345	25121	2411	0			3958089	False	False
+Shop	Solver.MERG	12345	85	1	0			188	False	False
+Shop	Solver.BAL	12345	23330	2319	0			3493370	False	True
+Shop	Solver.HEUR	12345	46800	4618	0			4767870	False	False
+Shop	Solver.LOOK	12345	85	1	0			188	False	False
+Shop	Solver.MOCA	12345	23135	2294	0			3425132	False	True
+Shop	Solver.PLAN-3	12345	22994	2281	0			3388682	False	False
+Shop	Solver.PLAN-5	12345	85	1	0			188	False	False
+Shop	Solver.MOCA+	12345	23800	2366	0			3613420	False	True
+Shop	Solver.MCTS	12345	23599	2344	0			3554597	False	False
+Shop	Solver.STALL	12345	85	1	0			188	False	False
+Shop	Solver.COMBO	12345	24265	2416	0			4291649	False	True
+Shop	Unlock.AutoSolve	12345	515315	8000	0			3229685901	True	False
+Shop	Unlock.AutoRestart	12345	19590	1467	0			7842210	False	False
+Shop	Unlock.SolverTuning	12345	23834	2384	0			3745948	False	True
+Shop	Unlock.AgentsMenu	12345	23827	2369	0			3620698	False	False
+Shop	Unlock.ExtraAgentSlot	12345	85	1	0			188	False	False
+Shop	Unlock.ModifiersMenu	12345	24301	2419	0			4364162	False	True
+Shop	Upgrade.Speed	12345	38376	2071	0			6259143	False	False
+Shop	Upgrade.ComputeSpeed	12345	85	1	0			188	False	False
+Shop	Upgrade.StackCapacity	12345	45659	6239	0			6400194	False	True
+Shop	Upgrade.QueuePreview	12345	24401	2500	0			3668858	False	False
+Shop	Upgrade.ChipYield	12345	85	1	0			188	False	False
+Shop	Upgrade.Difficulty	12345	19845	1741	0			3626235	False	True
+Shop	Upgrade.ScalingFrequency	12345	22869	2265	0			3353966	False	False
+Shop	Upgrade.ProfitableEnding	12345	85	1	0			188	False	False
+Shop	Upgrade.PassiveYield	12345	20229	2055	0			2998204	False	True
+Shop	Upgrade.PassiveTickRate	12345	21911	2161	0			3163148	False	False
+Shop	Upgrade.ActiveMultiplier	12345	85	1	0			188	False	False
+Shop	Upgrade.ComboEngine	12345	25275	2520	0			3677072	False	True
+Shop	Upgrade.SalvageProtocol	12345	22953	2315	0			4388582	False	False
+Shop	Upgrade.TokenDividend	12345	85	1	0			188	False	False
+Shop	TokenPack	12345	20437	1549	0			9626593	False	True
+Shop	Agent.Merge Broker	12345	23662	2351	0			3571273	False	False
+Shop	Agent.Highwater Analyst	12345	85	1	0			188	False	False
+Shop	Agent.Score Auditor	12345	23366	2318	0			3488785	False	True
+Shop	Agent.Overclocker	12345	23167	2297	0			3432424	False	False
+Shop	Agent.Quartermaster	12345	85	1	0			188	False	False
+Shop	Agent.Restart Sponsor	12345	23857	2372	0			3629332	False	True
+Shop	Agent.Token Prospector	12345	23643	2349	0			3566464	False	False
+Shop	Agent.Move Dividend	12345	85	1	0			188	False	False
+Shop	Agent.Velocity Trader	12345	22982	2280	0			3385959	False	True
+Shop	Modifier.Unstable Stack	12345	22840	2267	0			3350054	False	False
+Shop	Modifier.Catalyst Stack	12345	85	1	0			188	False	False
+Shop	Modifier.Mirror Stack	12345	85	1	0			188	False	False
+Shop	Modifier.Joker	12345	85	1	0			188	False	False
+Shop	Modifier.Miner's Pickaxe	12345	85	1	0			188	False	False
+Shop	Modifier.Queue Scrubber	12345	85	1	0			188	False	False
+Shop	Modifier.Neural Accelerator	12345	85	1	0			188	False	False

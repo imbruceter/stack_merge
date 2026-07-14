@@ -34,6 +34,12 @@ namespace StackMerge
         public int passiveYieldLevel;
         public int passiveTickRateLevel;
         public int activeMultiplierLevel;
+        // PPO Curriculum: two per-cycle upgrades (amount + rate) that shave the PPO Playing-mode frame
+        // REQUIREMENT (not frames — frames are the PPO's real knowledge and can't be faked) while the
+        // player is actively in PPO Training mode. Reset on prestige.
+        public int curriculumAmountLevel;
+        public int curriculumRateLevel;
+        public long curriculumFrameReduction;
         public bool modifiersMenuUnlocked;
         public int[] modifierLevels;
         public int runsCompleted;
@@ -50,6 +56,7 @@ namespace StackMerge
         public int highestBlockEver;
         public long lifetimeChipsEarned;
         public long lifetimeChipsSpent;
+        public long lifetimeTokensConsumed;
         public int lifetimeRunsCompleted;
         public int lifetimeManualRunsCompleted;
         public int lifetimeMoves;
@@ -94,6 +101,10 @@ namespace StackMerge
         public bool autoBuyUpgrades;
         public bool autoBuyAgents;
         public bool autoBuyModifiers;
+        // Gameplay-texture upgrades.
+        public int comboEngineLevel;
+        public int salvageProtocolLevel;
+        public int tokenDividendLevel;
     }
 
     [Serializable]
@@ -120,6 +131,23 @@ namespace StackMerge
         Power = 3,
         Roman = 4,
         Scientific = 5
+    }
+
+    /// <summary>
+    /// Income bookkeeping categories for the balance tooling. Source amounts sum exactly to
+    /// TotalChipsEarned; multiplier-type effects (Combo) are credited with the EXTRA chips they
+    /// produced on top of the base amount.
+    /// </summary>
+    public enum IncomeSource
+    {
+        Placement = 0,
+        Merge = 1,
+        NewHigh = 2,
+        Combo = 3,
+        RunBonus = 4,
+        Salvage = 5,
+        Passive = 6,
+        Offline = 7
     }
 
     public enum AutoBuyCategory
@@ -255,7 +283,9 @@ namespace StackMerge
         PrestigeCount,
         MaxedResearchCount,
         DatacenterRackTypesOwned,
-        DatacenterGigaflops
+        DatacenterGigaflops,
+        LifetimeTokensConsumed,
+        TokensHeld
     }
 
     public enum ModifierId
@@ -374,45 +404,85 @@ namespace StackMerge
         private const int AutoRestartUnlockCost = 8000;
         private const int SolverTuningUnlockCost = 30000;
         private const int TokenPackCost = 10000;
-        private const int TokenPackSize = 50;
+        // 10 (was 50): tokens should be a resource to MANAGE, not a rounding error — especially
+        // now that Token Dividend pays for hoarding them.
+        private const int TokenPackSize = 20;
         private const int ExtraAgentSlotUpgradeCost = 1500000;
         private const int ModifiersMenuUnlockCost = 3000000;
         // The Modifier gate must be reachable WITHOUT modifiers (they come after it). Reaching 2048 /
         // a 40k run needs the longer runs that modifiers enable, so those are impossible pre-gate.
         // 1024 / ~6k are the realistic ceiling of a strong solver at max capacity without modifiers;
         // the real "late game" pacing comes from the chip cost of the upgrades + Modifiers menu (3M).
-        private const int ModifierGateRuns = 20;
-        private const int ModifierGateSolvers = 7;
-        private const int ModifierGateBestScore = 6000;
-        private const int ModifierGateMerges = 3000;
-        private const int ModifierGateHighestBlock = 1024;
+        private const int ModifierGateRuns = 1000;
+        // 5 of the 7 available non-PPO solvers (was 7 of 12 before the solver cull).
+        private const int ModifierGateSolvers = 5;
+        private const int ModifierGateBestScore = 7000;
+        private const int ModifierGateMerges = 100000;
+        private const int ModifierGateHighestBlock = 512;
         private const int TokenProspectorMergeTarget = 8;
 
-        private static readonly int[] SpeedUpgradeCosts = { 6000, 30000, 150000, 800000, 4000000 };
-        private static readonly float[] MoveIntervals = { 0.18f, 0.12f, 0.08f, 0.055f, 0.035f, 0.022f };
+        // 10-level ladders: the old 5-level versions had ×5-6 price jumps that left long purchase
+        // droughts. Endpoints (first cost, last cost, total effect) are unchanged — the same climb
+        // is just spread over twice as many, more frequent purchases.
+        private static readonly int[] SpeedUpgradeCosts = { 6000, 12000, 25000, 55000, 110000, 250000, 550000, 1250000, 3000000, 7000000 };
+        private static readonly float[] MoveIntervals = { 0.18f, 0.146f, 0.118f, 0.096f, 0.078f, 0.063f, 0.051f, 0.041f, 0.034f, 0.027f, 0.022f };
         // Second Solver Speed axis: shrinks the pacing overhead specific to the compute-heavy
         // search solvers (Plan3/Plan5/MOCA/MOCA+/MCTS) instead of every solver uniformly. Priced a
         // little above base Speed since it's a narrower, more specialized payoff.
-        private static readonly int[] ComputeSpeedUpgradeCosts = { 150000, 300000, 700000, 2000000, 4500000 };
+        private static readonly int[] ComputeSpeedUpgradeCosts = { 150000, 300000, 900000, 2500000, 6500000 };
         private const double ComputeSpeedReductionPerLevel = 0.11; // -11%/level pacing overhead for heavy solvers, capped at 65% (Mathf.Max floor in GetMoveInterval)
         private static readonly int[] StackCapacityCosts = { 12000, 70000, 400000, 2200000, 11000000 };
         private static readonly int[] QueuePreviewUpgradeCosts = { 40000, 400000 };
-        private static readonly int[] IncomeUpgradeCosts = { 4000, 40000, 350000, 2500000, 15000000 };
+        private static readonly int[] IncomeUpgradeCosts = { 4000, 10000, 25000, 62000, 155000, 390000, 970000, 2400000, 6000000, 15000000 };
+        // +22%/level over 10 levels ≈ the old +35%/level over 5.
+        public const double IncomeBonusPerLevel = 0.22;
         private static readonly int[] DifficultyUpgradeCosts = { 60000, 180000, 600000, 1800000, 6000000 };
-        private static readonly int[] ScalingFrequencyUpgradeCosts = { 90000, 300000, 900000, 2700000, 8000000 };
-        private static readonly int[] ProfitableEndingUpgradeCosts = { 80000, 240000, 750000, 2200000, 7000000 };
-        private const double ScalingFrequencyPressurePerLevel = 0.09;
-        private const double ProfitableEndingBonusPerLevel = 0.08;
+        private static readonly int[] ScalingFrequencyUpgradeCosts = { 90000, 150000, 245000, 400000, 660000, 1100000, 1800000, 2950000, 4850000, 8000000 };
+        private static readonly int[] ProfitableEndingUpgradeCosts = { 60000, 170000, 480000, 1350000, 3800000 };
+        // Halved from 0.09 when the ladder went 5 → 10 levels; MUST stay in sync with the weight
+        // formula in StackMergeGameState.GenerateNextBlock (same 0.045 constant there).
+        private const double ScalingFrequencyPressurePerLevel = 0.045;
+        private const double ProfitableEndingBonusPerLevel = 0.15;
 
         // Passive Production family: chips trickle in on a timer, independent of moves/merges, so
         // there's always something accruing even while just watching the solver play.
-        private static readonly int[] PassiveYieldUpgradeCosts = { 5000, 28000, 140000, 750000, 3800000 };
-        private const long PassiveYieldPerLevel = 3; // chips per tick per level, before stage/income multipliers
-        private static readonly int[] PassiveTickRateUpgradeCosts = { 7000, 35000, 175000, 900000, 4500000 };
+        private static readonly int[] PassiveYieldUpgradeCosts = { 5000, 10500, 22000, 46000, 96000, 190000, 370000, 700000, 1300000, 2400000 };
+        // Chips per tick by level, before stage/income multipliers. Geometric so late levels stay
+        // relevant next to per-run income (the old linear 3/level topped out at a laughable 15).
+        private static readonly long[] PassiveYieldPerTickByLevel = { 0, 100, 200, 350, 500, 800, 1200, 1500, 2000, 3000, 5000 };
+        private static readonly int[] PassiveTickRateUpgradeCosts = { 7000, 14000, 29000, 60000, 120000, 235000, 450000, 850000, 1550000, 2800000 };
         // Seconds between passive ticks. Index 0 is the base rate before any Tick Rate level is bought.
-        private static readonly float[] PassiveTickIntervals = { 14f, 10f, 7f, 5f, 3.5f, 2.5f };
-        private static readonly int[] ActiveMultiplierUpgradeCosts = { 4000, 25000, 130000, 700000, 4500000 };
-        private const double ActiveMultiplierBonusPerLevel = 0.4; // +40% passive yield per level while actively playing
+        private static readonly float[] PassiveTickIntervals = { 10f, 9f, 8f, 7f, 6f, 5f, 4f, 3f, 2f, 1.5f, 1f };
+        private static readonly int[] ActiveMultiplierUpgradeCosts = { 4000, 8700, 19000, 41000, 88000, 180000, 360000, 700000, 1350000, 2500000 };
+        private const double ActiveMultiplierBonusPerLevel = 0.2; // +20% passive yield per level while actively playing (10 levels = the old +200% total)
+
+        // PPO Curriculum family: shaves the Playing-mode frame requirement while the player is in PPO
+        // Training mode. Amount = frames shaved per tick; Rate = tick interval. Billion-scale prices
+        // (long[] — 3B+ overflow int) are intentional — early prestiges afford the low levels; late
+        // prestiges (huge multipliers) can max it. At max both: 150k/hour reduction; at L5/L5: 50k/hour.
+        private static readonly long[] CurriculumAmountUpgradeCosts = { 500_000_000L, 1_500_000_000L, 3_000_000_000L, 5_000_000_000L, 8_000_000_000L, 12_000_000_000L, 18_000_000_000L, 25_000_000_000L, 35_000_000_000L, 50_000_000_000L };
+        private static readonly long[] CurriculumFrameReductionPerTick = { 0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200 };
+        private static readonly long[] CurriculumRateUpgradeCosts = { 500_000_000L, 1_500_000_000L, 3_000_000_000L, 5_000_000_000L, 8_000_000_000L, 12_000_000_000L, 18_000_000_000L, 25_000_000_000L, 35_000_000_000L, 50_000_000_000L };
+        // Seconds between curriculum ticks. Index 0 is the base rate before any Rate level is bought.
+        private static readonly float[] CurriculumTickIntervals = { 10f, 9.44f, 8.88f, 8.32f, 7.76f, 7.2f, 6.72f, 6.24f, 5.76f, 5.28f, 4.8f };
+
+        // Combo Engine: consecutive merging moves build a streak; every streak step adds
+        // +1%/level to move income, streak capped at 20 (L10 → up to ×3 at full streak).
+        private static readonly int[] ComboEngineUpgradeCosts = { 15000, 30000, 60000, 125000, 250000, 500000, 1000000, 2000000, 4000000, 8000000 };
+        private const double ComboBonusPerStreakPerLevel = 0.01;
+        private const int ComboStreakCap = 20;
+
+        // Salvage Protocol: at game over, a share of the run's final score converts to chips
+        // (+4%/level, 40% at max) — makes the run's end a real payout instead of a full stop.
+        // (Score-based: the old stranded-board basis was so small it could never pay for itself.)
+        private static readonly int[] SalvageProtocolUpgradeCosts = { 25000, 50000, 100000, 200000, 400000, 800000, 1600000, 3200000, 6400000, 12800000 };
+        private const double SalvageSharePerLevel = 0.06;
+
+        // Token Dividend: held restart tokens pay chip income, scaling with the square root of the
+        // hoard (+1%/level × √tokens, no cap — quadrupling the hoard doubles the bonus). Pairs with
+        // the held-token-scaled pack price so hoarding finds its own equilibrium.
+        private static readonly int[] TokenDividendUpgradeCosts = { 50000, 200000, 800000, 3200000, 12800000 };
+        private const double TokenDividendPerSqrtTokenPerLevel = 0.01;
 
         private const int AgentsMenuUnlockCost = 120000;
         private const int MaxHistoryEntries = 250;
@@ -422,26 +492,34 @@ namespace StackMerge
 
         public static readonly AgentDefinition[] Agents =
         {
-            new(AgentId.MergeBroker, "Merge Broker", 60000, "Boosts merge income.", "+75% <sprite name=\"chips\" tint=1> from merge rewards."),
-            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 120000, "Rewards new highs.", "+140% <sprite name=\"chips\" tint=1> from new highest-block rewards."),
-            new(AgentId.ScoreAuditor, "Score Auditor", 220000, "Turns score into <sprite name=\"chips\" tint=1>.", "+60% <sprite name=\"chips\" tint=1> from end-of-run score bonus."),
-            new(AgentId.Overclocker, "Overclocker", 400000, "Runs the solver faster.", "Solver move interval is 25% shorter."),
-            new(AgentId.Quartermaster, "Quartermaster", 650000, "Improves baseline income.", "+4 <sprite name=\"chips\" tint=1> on every successful placement."),
-            new(AgentId.RestartSponsor, "Restart Sponsor", 1000000, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
-            new(AgentId.TokenProspector, "Token Prospector", 1500000, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
-            new(AgentId.MoveDividend, "Move Dividend", 2200000, "Rewards long, stable runs.", "End-of-run <sprite name=\"chips\" tint=1> gain a bonus from total moves completed."),
-            new(AgentId.VelocityTrader, "Velocity Trader", 3000000, "Rewards fast solvers.", "End-of-run <sprite name=\"chips\" tint=1> gain a throughput bonus from moves per second.")
+            // MUST stay in AgentId enum order — indexed by (int)AgentId elsewhere. UI DISPLAY order is
+            // controlled separately (AgentDisplayOrder in the bootstrap via SetSiblingIndex), so reorder
+            // THAT, never this array. Prices are the user's 2026-07-12 sink-ladder tuning.
+            new(AgentId.MergeBroker, "Merge Broker", 12000000, "Boosts merge income.", "+75% <sprite name=\"chips\" tint=1> from merge rewards."),
+            new(AgentId.HighwaterAnalyst, "Highwater Analyst", 250000, "Rewards new highs.", "+200% <sprite name=\"chips\" tint=1> from new highest-block rewards."),
+            new(AgentId.ScoreAuditor, "Score Auditor", 800000, "Turns score into <sprite name=\"chips\" tint=1>.", "+100% <sprite name=\"chips\" tint=1> from end-of-run score bonus."),
+            new(AgentId.Overclocker, "Overclocker", 1500000, "Runs the solver faster.", "Solver move interval is 25% shorter."),
+            new(AgentId.Quartermaster, "Quartermaster", 500000, "Improves baseline income.", "+10 <sprite name=\"chips\" tint=1> on every successful placement."),
+            new(AgentId.RestartSponsor, "Restart Sponsor", 100000, "Keeps restarts funded.", "Auto Restart consumes no tokens while this agent is active."),
+            new(AgentId.TokenProspector, "Token Prospector", 20000000, "Turns merge volume into restart fuel.", $"+1 token for every {TokenProspectorMergeTarget} merges while active."),
+            new(AgentId.MoveDividend, "Move Dividend", 6000000, "Rewards long, stable runs.", "End-of-run <sprite name=\"chips\" tint=1> gain a bonus from total moves completed."),
+            new(AgentId.VelocityTrader, "Velocity Trader", 4000000, "Rewards fast solvers.", "End-of-run <sprite name=\"chips\" tint=1> gain a throughput bonus from moves per second.")
         };
 
         public static readonly ModifierDefinition[] Modifiers =
         {
-            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run. If a full stack receives a non-merge block, its bottom block is removed without reducing score.", 800000, 1600000, 3200000, 6400000, 12800000),
-            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more <sprite name=\"chips\" tint=1>.", "Merge rewards are permanently doubled on every run after purchase.", 3000000),
-            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge. If the top and bottom block of a stack match, they merge through the stack.", 3000000),
-            new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 4500000),
-            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one pickaxe use per run. The solver may delete any block in any stack.", 2000000, 4000000, 8000000, 16000000, 32000000),
-            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one queue skip per run. The current next block is removed and the following block moves forward.", 1800000, 3600000, 7200000, 14400000, 28800000),
-            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "MOCA, MOCA+, and MCTS run permanently about twice as fast. Negative speed tuning on those solvers is also twice as effective.", 6000000)
+            // Costs doubled 2026-07-12: at the ×24 modifier stage the old prices let the whole tier
+            // be burst-bought in minutes. Sim-calibrated with the stage cliff and agent/solver sinks.
+            // MUST stay in ModifierId enum order — indexed by (int)ModifierId (GetModifierDefinition,
+            // effects, save data). UI DISPLAY order is controlled separately (ModifierDisplayOrder in the
+            // bootstrap via SetSiblingIndex), so reorder THAT, never this array. Prices are the user's tuning.
+            new(ModifierId.UnstableStack, "Unstable Stack", "Deletes bottom blocks when a full stack would fail.", "Each level gives one rescue per run. If a full stack receives a non-merge block, its bottom block is removed without reducing score.", 3000000, 5000000, 10000000, 20000000, 40000000),
+            new(ModifierId.CatalystStack, "Catalyst Stack", "Converts merges into more <sprite name=\"chips\" tint=1>.", "Merge rewards are permanently doubled on every run after purchase.", 10000000),
+            new(ModifierId.MirrorStack, "Mirror Stack", "Lets stack ends interact.", "Unlocks a special merge. If the top and bottom block of a stack match, they merge through the stack.", 25000000),
+            new(ModifierId.Joker, "Joker", "Adds wild blocks to the queue.", "Unlocks occasional Joker blocks. A Joker placed onto any block merges with it.", 80000000),
+            new(ModifierId.MinersPickaxe, "Miner's Pickaxe", "Lets solvers remove blocks from the board.", "Each level gives one pickaxe use per run. The solver may delete any block in any stack.", 5000000, 8000000, 15000000, 30000000, 50000000),
+            new(ModifierId.QueueScrubber, "Queue Scrubber", "Lets solvers delete bad upcoming blocks.", "Each level gives one queue skip per run. The current next block is removed and the following block moves forward.", 5000000, 8000000, 15000000, 30000000, 50000000),
+            new(ModifierId.NeuralAccelerator, "Neural Accelerator", "Speeds up expensive solvers.", "MOCA runs permanently about twice as fast. Negative speed tuning on it is also twice as effective.", 2500000)
         };
 
         // ------------------------------------------------------------------------------------
@@ -494,15 +572,19 @@ namespace StackMerge
             new(11, "Merge Habit", "Merge a total of 10000 times", AchievementMetric.LifetimeMerges, 10_000),
             new(12, "Merge Engine", "Merge a total of 100 K times", AchievementMetric.LifetimeMerges, 100_000),
             new(13, "Merge Singularity", "Merge a total of 1 M times", AchievementMetric.LifetimeMerges, 1_000_000),
-            new(14, "High 1024", "Reach high 1024", AchievementMetric.LifetimeHighestBlockEver, 1024),
+            new(14, "High 512", "Reach high 512", AchievementMetric.LifetimeHighestBlockEver, 512),
             new(15, "High 8192", "Reach high 8192", AchievementMetric.LifetimeHighestBlockEver, 8192),
             new(16, "High 32768", "Reach high 32768", AchievementMetric.LifetimeHighestBlockEver, 32768),
             new(17, "Agents Online", "Unlock Agents", AchievementMetric.AgentsUnlockedEver, 1),
             new(18, "Modifiers Online", "Unlock Modifiers", AchievementMetric.ModifiersUnlockedEver, 1),
-            new(19, "Solver Tour", "Use all solvers at least once", AchievementMetric.SolversUsed, StackMergeSolverCatalog.Definitions.Length),
+            new(19, "Solver Tour", "Use all solvers at least once", AchievementMetric.SolversUsed, StackMergeSolverCatalog.AvailableSolverCount),
             new(20, "Agent Tour", "Use all Agents at least once", AchievementMetric.AgentsUsed, Agents.Length),
             new(21, "Unstable Lifeline", "Let Unstable Stack save your run a total of 100 times", AchievementMetric.LifetimeUnstableSaves, 100),
             new(22, "Joker Merges", "Merge with a Joker for a total of 100 times", AchievementMetric.LifetimeJokerMerges, 100),
+            // IDs 28/29 sit here by ARRAY position (goal rows render in array order, not by Id), so they
+            // appear directly above "First Prestige".
+            new(28, "Token Furnace", "Consume a total of 5000 <sprite name=\"token\" tint=1>", AchievementMetric.LifetimeTokensConsumed, 5000),
+            new(29, "Token Reserve", "Hold at least 10000 <sprite name=\"token\" tint=1> at once", AchievementMetric.TokensHeld, 10_000),
             new(23, "First Prestige", "Prestige reset for the first time", AchievementMetric.PrestigeCount, 1),
             new(24, "Prestige Loop", "Prestige reset for a total of 5 times", AchievementMetric.PrestigeCount, 5),
             new(25, "Research Complete", "Buy all the researches", AchievementMetric.MaxedResearchCount, 16),
@@ -524,7 +606,7 @@ namespace StackMerge
             new(ResearchId.InsightAmplifier, "Insight Amplifier", "+35% <sprite name=\"insight\" tint=1> from every future prestige per level.", 2, 1, 25, 70, 180, 450, 1100),
             new(ResearchId.SeedCapital, "Seed Capital", "Start after each prestige reset with <sprite name=\"chips\" tint=1> already banked. This allows making purchases right at the beginning of the game.", 1, 0, 1, 45, 120, 280, 650),
             new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation unlocks per level after prestige: Auto Solve, Auto Restart <sprite name=\"token\" tint=1>, then Solver Tuning.", 0, 1, 25, 70, 180),
-            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR.", 0, 2, 90, 240, 600, 1500),
+            new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: BAL, HEUR, COMBO, then LOOK.", 0, 2, 90, 240, 600, 1500),
             new(ResearchId.YieldTheory, "Yield Theory", "+30% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.PpoBootcamp, "PPO Bootcamp", "PPO still resets every prestige, but each level lowers the trained frame requirement for Normal Mode by 8%.", 1, 1, 25, 70, 180, 450, 1100),
             new(ResearchId.PpoMemory, "PPO Memory", "Prestige banks 50000 PPO training frames per level. The next playthrough's PPO Training starts from that saved progress, with the knowledge already learned (instead of zero).", 1, 3, 300, 800, 2000, 5000, 12000),
@@ -535,7 +617,7 @@ namespace StackMerge
             new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, <sprite name=\"chips\" tint=1> and passive <sprite name=\"insight\" tint=1> continue at a reduced rate based on your current prestige strength.", 2, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1>.", 2, 4, 1200, 3000, 7500),
             new(ResearchId.AgentSynergy, "Agent Synergy", "Every hired Agent's bonus effect is 25% stronger per level. Agents become a core engine of faster replays.", 0, 3, 300, 800, 2000, 5000, 12000),
-            new(ResearchId.BulkDiscount, "Bulk Discount", "Upgrades, Agents and Modifiers cost 5% less per level — 25% cheaper at max. Cheaper shopping compounds with higher income to shorten every cycle.", 0, 4, 1200, 3000, 7500, 18000, 42000),
+            new(ResearchId.BulkDiscount, "Bulk Discount", "Upgrades, Agents and Modifiers cost 5% less per level (25% at max), and the Modifiers gate needs 15% fewer Runs & Merges per level (75% at max). Cheaper, faster shopping shortens every cycle.", 0, 4, 1200, 3000, 7500, 18000, 42000),
             new(ResearchId.EvaluationEfficiency, "Evaluation Efficiency", "Shortens the result-evaluation pause after every PPO Training run by 15% per level, so Training mode gets through its runs much faster.", 1, 2, 90, 240, 600, 1500, 3600)
         };
 
@@ -545,18 +627,48 @@ namespace StackMerge
         // fraction of a tick across a save/quit is inconsequential, and offline accrual is handled
         // separately by the Offline Engine/Buffer research).
         private float passiveProductionTimer;
+        // Runtime-only clock for the PPO Curriculum tick (accumulated reduction itself IS persisted).
+        private float curriculumTimer;
         // Runtime-only fractional accumulators for the Datacenter's per-second production.
         private double datacenterFrameCarry;
         private double datacenterInsightCarry;
+        // Combo Engine streak — runtime-only, reset every run end.
+        private int comboStreak;
+        // Income ledger — runtime-only, per-source chip bookkeeping for the balance tooling.
+        private readonly long[] incomeLedger = new long[8];
 
         public StackMergeProgression(StackMergeProgressionData data)
+            : this(data, true)
+        {
+        }
+
+        private StackMergeProgression(StackMergeProgressionData data, bool applyOfflineProgress)
         {
             this.data = data ?? new StackMergeProgressionData();
             Normalize();
             machineLearningAgent = new StackMergePpoAgent(this.data.machineLearningPolicy);
             ApplyMachineLearningResearchBonuses();
-            ApplyOfflineProgress();
+            if (applyOfflineProgress)
+            {
+                ApplyOfflineProgress();
+            }
         }
+
+#if UNITY_EDITOR
+        public StackMergeProgression CloneForSimulation()
+        {
+            string json = JsonUtility.ToJson(data);
+            var clone = new StackMergeProgression(JsonUtility.FromJson<StackMergeProgressionData>(json), false)
+            {
+                passiveProductionTimer = passiveProductionTimer,
+                datacenterFrameCarry = datacenterFrameCarry,
+                datacenterInsightCarry = datacenterInsightCarry,
+                comboStreak = comboStreak
+            };
+            Array.Copy(incomeLedger, clone.incomeLedger, Math.Min(incomeLedger.Length, clone.incomeLedger.Length));
+            return clone;
+        }
+#endif
 
         public long Chips => data.chips;
 
@@ -705,7 +817,11 @@ namespace StackMerge
             }
         }
 
-        public bool MachineLearningPlayingModeUnlocked => MachineLearningFrames >= MachineLearningPlayingModeFrameRequirement;
+        /// <summary>The frame requirement after the PPO Curriculum's accumulated reduction (floored at 1).</summary>
+        public long EffectivePlayingModeFrameRequirement =>
+            Math.Max(1, MachineLearningPlayingModeFrameRequirement - Math.Max(0, data.curriculumFrameReduction));
+
+        public bool MachineLearningPlayingModeUnlocked => MachineLearningFrames >= EffectivePlayingModeFrameRequirement;
 
         // PPO runs in Training mode whenever it hasn't unlocked Playing mode yet, or when the player
         // has explicitly chosen Training. Once Playing mode is unlocked the player can switch it off.
@@ -736,9 +852,10 @@ namespace StackMerge
         public int MachineLearningBestHigh => Math.Max(data.machineLearningBestHigh, data.machineLearningPolicy?.bestHigh ?? 0);
 
         public bool CanUnlockModifiersMenu => data.agentsMenuUnlocked
+            && AllAgentsUnlocked
             && UnlockedSolverCount >= ModifierGateSolvers
-            && data.runsCompleted >= ModifierGateRuns
-            && data.totalMerges >= ModifierGateMerges
+            && data.runsCompleted >= GatedModifierRuns
+            && data.totalMerges >= GatedModifierMerges
             && data.bestRunScore >= ModifierGateBestScore
             && data.highestBlockEver >= ModifierGateHighestBlock;
 
@@ -821,7 +938,29 @@ namespace StackMerge
         /// <summary>Raw chips-per-tick at a given Passive Yield level, before stage/income multipliers.</summary>
         public static long GetPassiveYieldPerTick(int level)
         {
-            return Math.Max(0, level) * PassiveYieldPerLevel;
+            int clamped = Mathf.Clamp(level, 0, PassiveYieldPerTickByLevel.Length - 1);
+            return PassiveYieldPerTickByLevel[clamped];
+        }
+
+        /// <summary>Combo Engine: % income bonus per streak step at a given level.</summary>
+        public static float GetComboEffectPercentPerStreak(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, ComboEngineUpgradeCosts.Length);
+            return (float)(clamped * ComboBonusPerStreakPerLevel * 100.0);
+        }
+
+        /// <summary>Salvage Protocol: % of the run's final score converted to chips at game over.</summary>
+        public static float GetSalvageEffectPercent(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, SalvageProtocolUpgradeCosts.Length);
+            return (float)(clamped * SalvageSharePerLevel * 100.0);
+        }
+
+        /// <summary>Token Dividend: % income bonus per √(held tokens) at a given level.</summary>
+        public static float GetTokenDividendPercentPerSqrtToken(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, TokenDividendUpgradeCosts.Length);
+            return (float)(clamped * TokenDividendPerSqrtTokenPerLevel * 100.0);
         }
 
         /// <summary>Seconds between passive ticks at a given Passive Tick Rate level.</summary>
@@ -1045,38 +1184,48 @@ namespace StackMerge
 
         public string GetResearchEffectSummary(ResearchId researchId)
         {
-            int level = GetResearchLevel(researchId);
+            return GetResearchEffectSummary(researchId, GetResearchLevel(researchId));
+        }
+
+        /// <summary>
+        /// Effect string computed at an EXPLICIT level (for current→next previews). The simple
+        /// per-level researches inline their formula so the next level can be shown even at level 0;
+        /// the aggregate ones (PassiveInsight) read live state and so show the same value regardless
+        /// of the passed level — the UI just omits the arrow when current == next.
+        /// </summary>
+        public string GetResearchEffectSummary(ResearchId researchId, int level)
+        {
             return researchId switch
             {
-                ResearchId.InsightAmplifier => $"Prestige Insight x{GetPrestigeInsightMultiplier():0.00}",
+                ResearchId.InsightAmplifier => $"Prestige Insight x{1.0 + level * 0.35:0.00}",
                 ResearchId.SeedCapital => $"Start chips: {GetPrestigeStartChips(level)}",
                 ResearchId.AutomationMemory => level switch
                 {
                     0 => "No automation is remembered yet.",
                     1 => "Auto Solve unlock remembered.",
-                    2 => "Auto Restart unlock and 50 tokens remembered.",
+                    2 => $"Auto Restart unlock and {TokenPackSize} tokens remembered.",
                     _ => "Auto Solve, Auto Restart, tokens, and Solver Tuning remembered."
                 },
                 ResearchId.AlgorithmArchive => level switch
                 {
                     0 => "No algorithms remembered yet.",
-                    1 => "Start with RAND.",
-                    2 => "Start with RAND and MERG.",
-                    3 => "Start with RAND, MERG, and BAL.",
-                    _ => "Start with RAND, MERG, BAL, and HEUR."
+                    1 => "Start with BAL.",
+                    2 => "Start with BAL and HEUR.",
+                    3 => "Start with BAL, HEUR, and COMBO.",
+                    _ => "Start with BAL, HEUR, COMBO, and LOOK."
                 },
-                ResearchId.YieldTheory => $"Chip rewards x{GetResearchIncomeMultiplier():0.00}",
+                ResearchId.YieldTheory => $"Chip rewards x{1.0 + level * 0.30:0.00}",
                 ResearchId.PpoBootcamp => $"PPO Normal mode at {MachineLearningPlayingModeFrameRequirement} frames",
                 ResearchId.PpoMemory => $"Warm start: {GetPpoMemoryFrameAllowance(level):N0} frames retained",
-                ResearchId.PpoHighFocus => $"New-high learning x{GetPpoHighFocusMultiplier():0.00}",
-                ResearchId.PpoStability => $"Survival shaping x{GetPpoStabilityMultiplier():0.00}",
-                ResearchId.InsightExtractor => $"Normal-mode prestige x{GetInsightExtractorMultiplier():0.00}",
+                ResearchId.PpoHighFocus => $"New-high learning x{1f + level * 0.12f:0.00}",
+                ResearchId.PpoStability => $"Survival shaping x{1f + level * 0.10f:0.00}",
+                ResearchId.InsightExtractor => $"Normal-mode prestige x{1.0 + level * 0.50:0.00}",
                 ResearchId.PassiveInsight => $"Normal Insight x{GetNormalModeInsightMultiplier():0.00}",
-                ResearchId.OfflineEfficiency => $"Offline efficiency {GetOfflineEfficiency() * 100:0}%",
-                ResearchId.OfflineTime => $"Offline cap {GetOfflineHourCap():0.#}h",
-                ResearchId.AgentSynergy => $"Agent bonuses x{AgentSynergyMultiplier:0.00}",
-                ResearchId.BulkDiscount => $"Shop prices x{ShopDiscountMultiplier:0.00}",
-                ResearchId.EvaluationEfficiency => $"Training eval pause {MachineLearningEvaluationSeconds:0.0}s",
+                ResearchId.OfflineEfficiency => $"Offline efficiency {(level <= 0 ? 0.0 : 0.08 + level * 0.05) * 100:0}%",
+                ResearchId.OfflineTime => $"Offline cap {(level switch { <= 0 => 1.0, 1 => 3.0, 2 => 6.0, 3 => 12.0, 4 => 18.0, _ => 24.0 }):0.#}h",
+                ResearchId.AgentSynergy => $"Agent bonuses x{1.0 + level * 0.25:0.00}",
+                ResearchId.BulkDiscount => $"Shop prices x{Math.Max(0.75, 1.0 - level * 0.05):0.00}",
+                ResearchId.EvaluationEfficiency => $"Training eval pause {BaseTrainingEvaluationSeconds * Mathf.Max(0.25f, 1f - level * 0.15f):0.0}s",
                 _ => string.Empty
             };
         }
@@ -1097,7 +1246,20 @@ namespace StackMerge
 
         public long PreviewPrestigeInsightGain()
         {
-            if (!PrestigeAvailable || data.machineLearningNormalRuns <= 0)
+            if (!PrestigeAvailable)
+            {
+                return 0;
+            }
+
+            // The first prestige always yields exactly 1 Insight once PPO is trained (that is what
+            // Seed Capital L1 costs) — it must NOT require a Normal-mode run first. This check has to
+            // come before the normal-runs guard below, or a freshly-trained PPO previews 0.
+            if (data.prestigeCount <= 0)
+            {
+                return 1;
+            }
+
+            if (data.machineLearningNormalRuns <= 0)
             {
                 return 0;
             }
@@ -1106,11 +1268,6 @@ namespace StackMerge
             int bestHigh = Math.Max(1, data.machineLearningNormalBestHigh);
             long frames = Math.Max(0, data.machineLearningNormalFrames);
             int normalRuns = Math.Max(0, data.machineLearningNormalRuns);
-
-            if (data.prestigeCount <= 0)
-            {
-                return 1;
-            }
 
             double performance = ComputeInsightValue(bestScore, bestHigh, normalRuns, bestScore, bestHigh);
             double usage = 1.0
@@ -1135,7 +1292,7 @@ namespace StackMerge
 
             if (!MachineLearningPlayingModeUnlocked)
             {
-                return $"Finish PPO Training first.\n<b>{MachineLearningFrames:N0} / {MachineLearningPlayingModeFrameRequirement:N0} frames</b>.";
+                return $"Finish PPO Training first.\n<b>{MachineLearningFrames:N0} / {EffectivePlayingModeFrameRequirement:N0} frames</b>.";
             }
 
             return $"PPO is trained, prestige reset unlocked.\n<b>Gain: <sprite name=\"insight\" tint=1> {PreviewPrestigeInsightGain():N0}</b>.";
@@ -1417,9 +1574,14 @@ namespace StackMerge
             return true;
         }
 
+        /// <summary>
+        /// Token pack price scales with the currently HELD tokens (+1% per held token): spenders
+        /// restock cheap, hoarders pay a rising premium. Counterweight to the uncapped sqrt Token
+        /// Dividend — the two curves meet at a natural hoard equilibrium instead of a hard cap.
+        /// </summary>
         public long GetTokenPackCost()
         {
-            return TokenPackCost;
+            return (long)Math.Ceiling(TokenPackCost * (1.0 + Math.Max(0, Tokens) / 100.0));
         }
 
         public int GetTokenPackSize()
@@ -1429,7 +1591,7 @@ namespace StackMerge
 
         public bool BuyTokenPack()
         {
-            if (!Spend(TokenPackCost))
+            if (!Spend(GetTokenPackCost()))
             {
                 return false;
             }
@@ -1456,6 +1618,7 @@ namespace StackMerge
             }
 
             data.tokens--;
+            data.lifetimeTokensConsumed++;
             return true;
         }
 
@@ -1615,6 +1778,72 @@ namespace StackMerge
             return upgradeIndex == data.profitableEndingLevel && BuyProfitableEndingUpgrade();
         }
 
+        public int ComboEngineLevel => data.comboEngineLevel;
+
+        public int MaxComboEngineLevel => ComboEngineUpgradeCosts.Length;
+
+        public bool IsMaxComboEngine => data.comboEngineLevel >= ComboEngineUpgradeCosts.Length;
+
+        public long GetComboEngineUpgradeCost()
+        {
+            return IsMaxComboEngine ? 0 : ApplyShopDiscount(ComboEngineUpgradeCosts[data.comboEngineLevel]);
+        }
+
+        public bool BuyComboEngineUpgrade()
+        {
+            if (IsMaxComboEngine || !Spend(GetComboEngineUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.comboEngineLevel++;
+            return true;
+        }
+
+        public int SalvageProtocolLevel => data.salvageProtocolLevel;
+
+        public int MaxSalvageProtocolLevel => SalvageProtocolUpgradeCosts.Length;
+
+        public bool IsMaxSalvageProtocol => data.salvageProtocolLevel >= SalvageProtocolUpgradeCosts.Length;
+
+        public long GetSalvageProtocolUpgradeCost()
+        {
+            return IsMaxSalvageProtocol ? 0 : ApplyShopDiscount(SalvageProtocolUpgradeCosts[data.salvageProtocolLevel]);
+        }
+
+        public bool BuySalvageProtocolUpgrade()
+        {
+            if (IsMaxSalvageProtocol || !Spend(GetSalvageProtocolUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.salvageProtocolLevel++;
+            return true;
+        }
+
+        public int TokenDividendLevel => data.tokenDividendLevel;
+
+        public int MaxTokenDividendLevel => TokenDividendUpgradeCosts.Length;
+
+        public bool IsMaxTokenDividend => data.tokenDividendLevel >= TokenDividendUpgradeCosts.Length;
+
+        public long GetTokenDividendUpgradeCost()
+        {
+            return IsMaxTokenDividend ? 0 : ApplyShopDiscount(TokenDividendUpgradeCosts[data.tokenDividendLevel]);
+        }
+
+        public bool BuyTokenDividendUpgrade()
+        {
+            if (IsMaxTokenDividend || !Spend(GetTokenDividendUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.tokenDividendLevel++;
+            return true;
+        }
+
         public long GetPassiveYieldUpgradeCost()
         {
             return IsMaxPassiveYield ? 0 : ApplyShopDiscount(PassiveYieldUpgradeCosts[data.passiveYieldLevel]);
@@ -1694,9 +1923,107 @@ namespace StackMerge
             data.chips += gained;
             data.totalChipsEarned += gained;
             data.lifetimeChipsEarned += gained;
+            RecordIncome(IncomeSource.Passive, gained);
             Save();
 
             return gained;
+        }
+
+        // ------------------------------------------------------------------------------------
+        // PPO Curriculum — two per-cycle upgrades that shave the Playing-mode frame REQUIREMENT
+        // while the player is actively in PPO Training mode (see the design notes on the data fields).
+        // ------------------------------------------------------------------------------------
+        public int CurriculumAmountLevel => data.curriculumAmountLevel;
+        public int MaxCurriculumAmountLevel => CurriculumAmountUpgradeCosts.Length;
+        public bool IsMaxCurriculumAmount => data.curriculumAmountLevel >= CurriculumAmountUpgradeCosts.Length;
+
+        public int CurriculumRateLevel => data.curriculumRateLevel;
+        public int MaxCurriculumRateLevel => CurriculumRateUpgradeCosts.Length;
+        public bool IsMaxCurriculumRate => data.curriculumRateLevel >= CurriculumRateUpgradeCosts.Length;
+
+        /// <summary>The amount upgrade unlocks once PPO is owned; the rate upgrade only after amount L1.</summary>
+        public bool CurriculumUnlocked => IsSolverUnlocked(SolverId.MachineLearning);
+        public bool CurriculumRateUnlocked => data.curriculumAmountLevel >= 1;
+
+        /// <summary>Frames shaved off the requirement per curriculum tick, at a given amount level.</summary>
+        public static long GetCurriculumReductionPerTick(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, CurriculumFrameReductionPerTick.Length - 1);
+            return CurriculumFrameReductionPerTick[clamped];
+        }
+
+        /// <summary>Seconds between curriculum ticks, at a given rate level.</summary>
+        public static float GetCurriculumTickInterval(int level)
+        {
+            int clamped = Mathf.Clamp(level, 0, CurriculumTickIntervals.Length - 1);
+            return CurriculumTickIntervals[clamped];
+        }
+
+        /// <summary>Frames-per-hour the requirement drops at the current levels (while training) — for UI.</summary>
+        public long CurriculumReductionPerHour
+        {
+            get
+            {
+                float interval = GetCurriculumTickInterval(data.curriculumRateLevel);
+                return interval <= 0f ? 0 : (long)Math.Round(3600f / interval) * GetCurriculumReductionPerTick(data.curriculumAmountLevel);
+            }
+        }
+
+        public long GetCurriculumAmountUpgradeCost()
+        {
+            return IsMaxCurriculumAmount ? 0 : ApplyShopDiscount(CurriculumAmountUpgradeCosts[data.curriculumAmountLevel]);
+        }
+
+        public bool BuyCurriculumAmountUpgrade()
+        {
+            if (!CurriculumUnlocked || IsMaxCurriculumAmount || !Spend(GetCurriculumAmountUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.curriculumAmountLevel++;
+            return true;
+        }
+
+        public long GetCurriculumRateUpgradeCost()
+        {
+            return IsMaxCurriculumRate ? 0 : ApplyShopDiscount(CurriculumRateUpgradeCosts[data.curriculumRateLevel]);
+        }
+
+        public bool BuyCurriculumRateUpgrade()
+        {
+            if (!CurriculumRateUnlocked || IsMaxCurriculumRate || !Spend(GetCurriculumRateUpgradeCost()))
+            {
+                return false;
+            }
+
+            data.curriculumRateLevel++;
+            return true;
+        }
+
+        /// <summary>
+        /// Advances the curriculum clock. Only accrues while the player is in ACTIVE PPO Training mode
+        /// — this is the anti-abuse guard (the requirement can't drop unless the PPO is actually
+        /// training), so no floor/cap is needed: reduction and real frames climb together.
+        /// </summary>
+        public void TickCurriculum(float deltaSeconds)
+        {
+            if (data.curriculumAmountLevel <= 0 || !IsMachineLearningTrainingActive)
+            {
+                return;
+            }
+
+            curriculumTimer += Math.Max(0f, deltaSeconds);
+            float interval = GetCurriculumTickInterval(data.curriculumRateLevel);
+            if (interval <= 0f || curriculumTimer < interval)
+            {
+                return;
+            }
+
+            int ticks = (int)(curriculumTimer / interval);
+            curriculumTimer -= ticks * interval;
+            data.curriculumFrameReduction += GetCurriculumReductionPerTick(data.curriculumAmountLevel) * ticks;
+            Save();
         }
 
         private long GetOwnedDatacenterRackTypeCount()
@@ -2116,7 +2443,7 @@ namespace StackMerge
                 return "Modifier Lab unlocked";
             }
 
-            return $"Requires: Agents {FormatGate(data.agentsMenuUnlocked)}, Solvers {UnlockedSolverCount}/{ModifierGateSolvers}, Runs {data.runsCompleted}/{ModifierGateRuns}, Merges {data.totalMerges}/{ModifierGateMerges}, Best {data.bestRunScore}/{ModifierGateBestScore}, High {data.highestBlockEver}/{ModifierGateHighestBlock}";
+            return $"Requires: Agents {FormatGate(data.agentsMenuUnlocked)}, All agents {FormatGate(AllAgentsUnlocked)}, Solvers {UnlockedSolverCount}/{ModifierGateSolvers}, Runs {data.runsCompleted}/{GatedModifierRuns}, Merges {data.totalMerges}/{GatedModifierMerges}, Best {data.bestRunScore}/{ModifierGateBestScore}, High {data.highestBlockEver}/{ModifierGateHighestBlock}";
         }
 
         public bool BuyModifiersMenuUnlock()
@@ -2215,6 +2542,24 @@ namespace StackMerge
         {
             int index = (int)agentId;
             return index >= 0 && index < data.agentUnlocked.Length && data.agentUnlocked[index];
+        }
+
+        /// <summary>True once every agent has been hired — a Modifiers-menu gate condition so the
+        /// player can't skip agent engagement (and can't bank idle toward modifiers unspent).</summary>
+        public bool AllAgentsUnlocked
+        {
+            get
+            {
+                for (int i = 0; i < Agents.Length; i++)
+                {
+                    if (data.agentUnlocked == null || i >= data.agentUnlocked.Length || !data.agentUnlocked[i])
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
         }
 
         public bool IsAgentActive(AgentId agentId)
@@ -2326,19 +2671,8 @@ namespace StackMerge
                 return 0;
             }
 
-            double highestMultiplier = GetHighestBlockRewardMultiplier(Math.Max(result.HighestBlock, result.ResultingTopValue));
-            long placement = result.ActionKind == SolverActionKind.Place ? 2 + AgentFlatPlacementBonus : 0;
-            double merge = result.MergeCount <= 0
-                ? 0
-                : result.MergeCount * Math.Max(1, result.ResultingTopValue) * highestMultiplier * 0.55;
-            long highest = result.MergeCount > 0 && result.ResultingTopValue >= result.HighestBlock
-                ? (long)Math.Ceiling(Math.Max(1, result.HighestBlock) * highestMultiplier * 0.85)
-                : 0;
-
-            long gained = placement;
-            gained += (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
-            gained += (long)Math.Ceiling(highest * AgentHighestMultiplier);
-            gained = (long)Math.Ceiling(gained * IncomeScale);
+            MoveIncomeBreakdown breakdown = CalculateMoveIncomeBreakdown(result, true);
+            long gained = breakdown.PreGlobalIncome;
             if (gained > 0 && !suppressChips)
             {
                 gained = ApplyStageMultiplier(gained);
@@ -2346,6 +2680,7 @@ namespace StackMerge
                 data.chips += gained;
                 data.totalChipsEarned += gained;
                 data.lifetimeChipsEarned += gained;
+                RecordMoveIncome(gained, breakdown.PlacementComponent, breakdown.MergeComponent, breakdown.HighComponent, breakdown.ComboMultiplier);
             }
             else if (suppressChips)
             {
@@ -2391,8 +2726,137 @@ namespace StackMerge
             return AwardRunCompleted(runScore, solverId, moves, merges, highestMergedBlock, manualRun, 0f);
         }
 
+        /// <summary>Current Combo Engine streak (consecutive merging moves this run) — for UI.</summary>
+        public int CurrentComboStreak => comboStreak;
+
+        /// <summary>Chips credited to one income source since load (runtime-only, not persisted).</summary>
+        public long GetIncomeBySource(IncomeSource source)
+        {
+            int index = (int)source;
+            return index >= 0 && index < incomeLedger.Length ? incomeLedger[index] : 0;
+        }
+
+        /// <summary>Snapshot of the whole income ledger — the balance simulator diffs these per cycle.</summary>
+        public long[] CopyIncomeLedger()
+        {
+            return (long[])incomeLedger.Clone();
+        }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Simulator replay helper: captures the per-move payout before global economy multipliers,
+        /// without advancing Combo Engine streak. AwardMove immediately after this will use the same
+        /// input and advance the real state.
+        /// </summary>
+        public long CalculateReplayMoveIncomeBeforeGlobal(MoveResult result)
+        {
+            return CalculateMoveIncomeBreakdown(result, false).PreGlobalIncome;
+        }
+#endif
+
+        private struct MoveIncomeBreakdown
+        {
+            public long PlacementComponent;
+            public long MergeComponent;
+            public long HighComponent;
+            public double ComboMultiplier;
+            public long PreGlobalIncome;
+        }
+
+        private MoveIncomeBreakdown CalculateMoveIncomeBreakdown(MoveResult result, bool advanceComboStreak)
+        {
+            if (!result.Accepted)
+            {
+                return default;
+            }
+
+            double highestMultiplier = GetHighestBlockRewardMultiplier(Math.Max(result.HighestBlock, result.ResultingTopValue));
+            long placement = result.ActionKind == SolverActionKind.Place ? 2 + AgentFlatPlacementBonus : 0;
+            double merge = result.MergeCount <= 0
+                ? 0
+                : result.MergeCount * Math.Max(1, result.ResultingTopValue) * highestMultiplier * 0.55;
+            long highest = result.MergeCount > 0 && result.ResultingTopValue >= result.HighestBlock
+                ? (long)Math.Ceiling(Math.Max(1, result.HighestBlock) * highestMultiplier * 0.85)
+                : 0;
+
+            int nextComboStreak = result.MergeCount > 0 ? comboStreak + 1 : 0;
+            if (advanceComboStreak)
+            {
+                comboStreak = nextComboStreak;
+            }
+
+            double comboMultiplier = 1.0 + Math.Min(nextComboStreak, ComboStreakCap) * data.comboEngineLevel * ComboBonusPerStreakPerLevel;
+            long mergeComponent = (long)Math.Ceiling(merge * AgentMergeMultiplier * ModifierMergeMultiplier);
+            long highComponent = (long)Math.Ceiling(highest * AgentHighestMultiplier);
+            long preGlobalIncome = placement + mergeComponent + highComponent;
+            preGlobalIncome = (long)Math.Ceiling(preGlobalIncome * comboMultiplier * IncomeScale);
+
+            return new MoveIncomeBreakdown
+            {
+                PlacementComponent = placement,
+                MergeComponent = mergeComponent,
+                HighComponent = highComponent,
+                ComboMultiplier = comboMultiplier,
+                PreGlobalIncome = preGlobalIncome
+            };
+        }
+
+        private void RecordIncome(IncomeSource source, long amount)
+        {
+            if (amount > 0)
+            {
+                incomeLedger[(int)source] += amount;
+            }
+        }
+
+        // Splits a credited move payout across its components. The combo share is the extra the
+        // multiplier produced ((m-1)/m of the total); the remainder is split proportionally to the
+        // pre-multiplier components so the ledger still sums exactly to the credited amount.
+        private void RecordMoveIncome(long credited, long placementComponent, long mergeComponent, long highComponent, double comboMultiplier)
+        {
+            long comboShare = comboMultiplier > 1.0
+                ? (long)Math.Round(credited * (comboMultiplier - 1.0) / comboMultiplier)
+                : 0;
+            long rest = credited - comboShare;
+            long componentTotal = Math.Max(1, placementComponent + mergeComponent + highComponent);
+            long placementShare = (long)Math.Round(rest * (double)placementComponent / componentTotal);
+            long highShare = (long)Math.Round(rest * (double)highComponent / componentTotal);
+            long mergeShare = rest - placementShare - highShare;
+            RecordIncome(IncomeSource.Placement, placementShare);
+            RecordIncome(IncomeSource.Merge, mergeShare);
+            RecordIncome(IncomeSource.NewHigh, highShare);
+            RecordIncome(IncomeSource.Combo, comboShare);
+        }
+
+        /// <summary>
+        /// Salvage Protocol: converts a share of the run's final score into chips at game over.
+        /// (Score-based since the balance rework — the stranded-board basis was too small to matter.)
+        /// </summary>
+        public long AwardSalvage(long runScore, bool suppressChips = false)
+        {
+            if (data.salvageProtocolLevel <= 0 || runScore <= 0 || suppressChips)
+            {
+                return 0;
+            }
+
+            long gained = (long)Math.Ceiling(runScore * data.salvageProtocolLevel * SalvageSharePerLevel * IncomeScale);
+            if (gained <= 0)
+            {
+                return 0;
+            }
+
+            gained = ApplyStageMultiplier(gained);
+            gained = ApplyIncomeMultiplier(gained);
+            data.chips += gained;
+            data.totalChipsEarned += gained;
+            data.lifetimeChipsEarned += gained;
+            RecordIncome(IncomeSource.Salvage, gained);
+            return gained;
+        }
+
         public long AwardRunCompleted(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock, bool manualRun, float elapsedSeconds, bool suppressChips = false)
         {
+            comboStreak = 0;
             data.runsCompleted++;
             data.lifetimeRunsCompleted++;
             if (manualRun)
@@ -2406,11 +2870,12 @@ namespace StackMerge
             data.lifetimeHighestBlockEver = Math.Max(data.lifetimeHighestBlockEver, highestMergedBlock);
             double highestMultiplier = GetHighestBlockRewardMultiplier(highestMergedBlock);
             double scoreBonus = Math.Max(1, runScore) * 0.22 * highestMultiplier * AgentScoreMultiplier;
+            // Move Dividend & Velocity Trader tripled (2026-07-12): they read as near-useless in playtest.
             double moveBonus = IsAgentActive(AgentId.MoveDividend)
-                ? Math.Max(0, moves) * Math.Max(1.0, highestMultiplier * 0.35) * 4.0 * AgentSynergyMultiplier
+                ? Math.Max(0, moves) * Math.Max(1.0, highestMultiplier * 0.35) * 12.0 * AgentSynergyMultiplier
                 : 0;
             double speedBonus = IsAgentActive(AgentId.VelocityTrader) && elapsedSeconds > 0.01f
-                ? scoreBonus * Math.Min(2.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.18) * AgentSynergyMultiplier
+                ? scoreBonus * Math.Min(7.5, Math.Max(0.0, (moves / elapsedSeconds) - 1.0) * 0.54) * AgentSynergyMultiplier
                 : 0;
             double profitableEndingMultiplier = 1.0 + data.profitableEndingLevel * ProfitableEndingBonusPerLevel;
             long bonus = Math.Max(1, (long)Math.Ceiling((scoreBonus + moveBonus + speedBonus) * profitableEndingMultiplier * IncomeScale));
@@ -2421,6 +2886,7 @@ namespace StackMerge
                 data.chips += bonus;
                 data.totalChipsEarned += bonus;
                 data.lifetimeChipsEarned += bonus;
+                RecordIncome(IncomeSource.RunBonus, bonus);
             }
             else
             {
@@ -2596,6 +3062,8 @@ namespace StackMerge
                 AchievementMetric.MaxedResearchCount => GetMaxedResearchCount(),
                 AchievementMetric.DatacenterRackTypesOwned => GetOwnedDatacenterRackTypeCount(),
                 AchievementMetric.DatacenterGigaflops => (long)DatacenterTotalGigaflops,
+                AchievementMetric.LifetimeTokensConsumed => data.lifetimeTokensConsumed,
+                AchievementMetric.TokensHeld => data.tokens,
                 _ => 0
             };
         }
@@ -2719,13 +3187,13 @@ namespace StackMerge
 
         private double AgentMergeMultiplier => IsAgentActive(AgentId.MergeBroker) ? 1.0 + 0.75 * AgentSynergyMultiplier : 1.0;
 
-        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 1.0 + 1.40 * AgentSynergyMultiplier : 1.0;
+        private double AgentHighestMultiplier => IsAgentActive(AgentId.HighwaterAnalyst) ? 1.0 + 2.00 * AgentSynergyMultiplier : 1.0;
 
-        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.0 + 0.60 * AgentSynergyMultiplier : 1.0;
+        private double AgentScoreMultiplier => IsAgentActive(AgentId.ScoreAuditor) ? 1.0 + 1.00 * AgentSynergyMultiplier : 1.0;
 
         private float AgentMoveIntervalMultiplier => IsAgentActive(AgentId.Overclocker) ? 0.75f : 1f;
 
-        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? (int)Math.Round(4 * AgentSynergyMultiplier) : 0;
+        private int AgentFlatPlacementBonus => IsAgentActive(AgentId.Quartermaster) ? (int)Math.Round(10 * AgentSynergyMultiplier) : 0;
 
         private double ModifierMergeMultiplier => GetModifierLevel(ModifierId.CatalystStack) > 0 ? 2.0 : 1.0;
 
@@ -2749,6 +3217,13 @@ namespace StackMerge
 
         /// <summary>Bulk Discount research: price multiplier for Upgrades, Agents and Modifiers (not solvers or token packs). -5%/level, -25% at max.</summary>
         private double ShopDiscountMultiplier => Math.Max(0.75, 1.0 - GetResearchLevel(ResearchId.BulkDiscount) * 0.05);
+
+        /// <summary>Bulk Discount also eases the Modifiers gate's Runs/Merges requirements: -15%/level, -75% at max.</summary>
+        private double ModifierGateRequirementMultiplier => Math.Max(0.25, 1.0 - GetResearchLevel(ResearchId.BulkDiscount) * 0.15);
+
+        private int GatedModifierRuns => (int)Math.Ceiling(ModifierGateRuns * ModifierGateRequirementMultiplier);
+
+        private int GatedModifierMerges => (int)Math.Ceiling(ModifierGateMerges * ModifierGateRequirementMultiplier);
 
         /// <summary>
         /// Seconds of the artificial "Evaluating…" pause after each PPO Training run (see
@@ -2851,11 +3326,11 @@ namespace StackMerge
             return seedCapitalLevel switch
             {
                 <= 0 => 0,
-                1 => 20000,
-                2 => 50000,
-                3 => 100000,
-                4 => 250000,
-                _ => 500000
+                1 => 100000,
+                2 => 200000,
+                3 => 350000,
+                4 => 500000,
+                _ => 1000000
             };
         }
 
@@ -2984,9 +3459,14 @@ namespace StackMerge
 
         private void ApplyImmediateResearchEffects(ResearchId researchId)
         {
-            // Yield / prestige multiplier research is read dynamically. Unlock-memory research should
-            // also feel good if bought mid-prestige, so it can apply to the current run layer too.
-            if (researchId == ResearchId.AutomationMemory || researchId == ResearchId.AlgorithmArchive)
+            // Yield / prestige multiplier research is read dynamically. Prestige-start research should
+            // also feel good if bought mid-prestige, so it applies to the current run layer too.
+            // Seed Capital MUST be here: bought right after the first prestige (the only affordable
+            // node), it top-ups chips to the new level's start amount immediately — otherwise the
+            // grant only ran at reset (level 0 = 0 chips) and the player got nothing for their Insight.
+            if (researchId == ResearchId.SeedCapital
+                || researchId == ResearchId.AutomationMemory
+                || researchId == ResearchId.AlgorithmArchive)
             {
                 ApplyPrestigeStartResearchBonuses();
             }
@@ -3007,10 +3487,10 @@ namespace StackMerge
             data.chips = Math.Max(data.chips, GetPrestigeStartChips(GetResearchLevel(ResearchId.SeedCapital)));
 
             int algorithmArchiveLevel = GetResearchLevel(ResearchId.AlgorithmArchive);
-            UnlockStarterSolver(SolverId.Rand, algorithmArchiveLevel >= 1);
-            UnlockStarterSolver(SolverId.Merge, algorithmArchiveLevel >= 2);
-            UnlockStarterSolver(SolverId.Balance, algorithmArchiveLevel >= 3);
-            UnlockStarterSolver(SolverId.Heur, algorithmArchiveLevel >= 4);
+            UnlockStarterSolver(SolverId.Balance, algorithmArchiveLevel >= 1);
+            UnlockStarterSolver(SolverId.Heur, algorithmArchiveLevel >= 2);
+            UnlockStarterSolver(SolverId.Combo, algorithmArchiveLevel >= 3);
+            UnlockStarterSolver(SolverId.Look, algorithmArchiveLevel >= 4);
 
             if (!data.solverUnlocked[data.selectedSolver] && HasPurchasedSolver)
             {
@@ -3087,7 +3567,15 @@ namespace StackMerge
             data.passiveYieldLevel = 0;
             data.passiveTickRateLevel = 0;
             data.activeMultiplierLevel = 0;
+            data.curriculumAmountLevel = 0;
+            data.curriculumRateLevel = 0;
+            data.curriculumFrameReduction = 0;
+            data.comboEngineLevel = 0;
+            data.salvageProtocolLevel = 0;
+            data.tokenDividendLevel = 0;
+            comboStreak = 0;
             passiveProductionTimer = 0f;
+            curriculumTimer = 0f;
             data.modifiersMenuUnlocked = false;
             data.modifierLevels = new int[Modifiers.Length];
             data.runsCompleted = 0;
@@ -3250,6 +3738,7 @@ namespace StackMerge
                 data.totalChipsEarned += offlineChips;
                 data.lifetimeChipsEarned += offlineChips;
                 data.lastOfflineChips = offlineChips;
+                RecordIncome(IncomeSource.Offline, offlineChips);
             }
 
             if (offlineInsight > 0)
@@ -3318,9 +3807,95 @@ namespace StackMerge
             return Math.Max(1, (long)Math.Ceiling(amount * multiplier));
         }
 
+        /// <summary>Token Dividend: held tokens pay chip income, scaling with √(hoard size), no cap.</summary>
+        public double TokenDividendMultiplier =>
+            1.0 + Math.Sqrt(Math.Max(0, Tokens)) * data.tokenDividendLevel * TokenDividendPerSqrtTokenPerLevel;
+
+        /// <summary>
+        /// Product of every GLOBAL chip-income multiplier (stage × Chip Yield × Yield Theory ×
+        /// datacenter market × token dividend). The simulator's run cache divides income by this at
+        /// capture time and multiplies by the current value at replay, so cached runs stay exact
+        /// while the global economy moves on.
+        /// </summary>
+        public double CurrentGlobalIncomeMultiplier =>
+            (data.modifiersMenuUnlocked ? 24.0 : data.agentsMenuUnlocked ? 5.0 : 1.0)
+            * (1.0 + data.incomeLevel * IncomeBonusPerLevel)
+            * GetResearchIncomeMultiplier()
+            * DatacenterMarketMultiplier
+            * TokenDividendMultiplier;
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Simulator-only bulk twin of the per-move AwardMove effects for a replayed run (see the
+        /// simulator's run cache): re-applies every captured pre-global move payout through the
+        /// current global economy multipliers, advances the same lifetime counters and distributes
+        /// the income ledger in the same proportions the cached real run produced.
+        /// </summary>
+        public long AwardReplayRun(int moves, int merges, int highestBlock, long[] moveIncomeBeforeGlobal, long[] ledgerShare, int unstableSaves = 0, int jokerMerges = 0)
+        {
+            long gained = 0;
+            if (moveIncomeBeforeGlobal != null)
+            {
+                foreach (long baseIncome in moveIncomeBeforeGlobal)
+                {
+                    if (baseIncome <= 0)
+                    {
+                        continue;
+                    }
+
+                    gained += ApplyIncomeMultiplier(ApplyStageMultiplier(baseIncome));
+                }
+            }
+
+            if (gained > 0)
+            {
+                data.chips += gained;
+                data.totalChipsEarned += gained;
+                data.lifetimeChipsEarned += gained;
+
+                long shareTotal = 0;
+                if (ledgerShare != null)
+                {
+                    foreach (long share in ledgerShare)
+                    {
+                        shareTotal += Math.Max(0, share);
+                    }
+                }
+
+                if (shareTotal > 0)
+                {
+                    long distributed = 0;
+                    for (int i = 0; i < ledgerShare.Length && i < incomeLedger.Length; i++)
+                    {
+                        long slice = (long)Math.Round(gained * (double)Math.Max(0, ledgerShare[i]) / shareTotal);
+                        incomeLedger[i] += slice;
+                        distributed += slice;
+                    }
+
+                    incomeLedger[(int)IncomeSource.Merge] += gained - distributed; // rounding remainder
+                }
+                else
+                {
+                    RecordIncome(IncomeSource.Merge, gained);
+                }
+            }
+
+            data.totalBlocksDropped += Math.Max(0, moves);
+            data.lifetimeMoves += Math.Max(0, moves);
+            data.totalMerges += Math.Max(0, merges);
+            data.lifetimeMerges += Math.Max(0, merges);
+            data.highestBlockEver = Math.Max(data.highestBlockEver, highestBlock);
+            data.lifetimeHighestBlockEver = Math.Max(data.lifetimeHighestBlockEver, highestBlock);
+            data.lifetimeUnstableSaves += Math.Max(0, unstableSaves);
+            data.lifetimeJokerMerges += Math.Max(0, jokerMerges);
+            AwardMergeTokens(Math.Max(0, merges));
+            return gained;
+        }
+#endif
+
         private long ApplyIncomeMultiplier(long amount)
         {
-            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * 0.35) * GetResearchIncomeMultiplier() * DatacenterMarketMultiplier));
+            return Math.Max(1, (long)Math.Ceiling(amount * (1.0 + data.incomeLevel * IncomeBonusPerLevel) * GetResearchIncomeMultiplier() * DatacenterMarketMultiplier * TokenDividendMultiplier));
         }
 
         private void AwardMergeTokens(int mergeCount)
@@ -3353,7 +3928,11 @@ namespace StackMerge
                 SolverId.Plan5 => 0.95f,
                 SolverId.Moca => 0.92f,
                 SolverId.MocaPlus => 1.05f,
-                SolverId.Mcts => 1.12f,
+                // MCTS's real compute is light for a heavy solver (measured ~0.29 ms/move, faster
+                // than MOCA and the PLANs), so it earns a fast pacing instead of the slowest. This
+                // is its identity: the expensive-to-unlock but efficient heavy solver, whose neutral
+                // score is mediocre-by-design and pays off under tuning (Safety cushion / Combo setup).
+                SolverId.Mcts => 0.55f,
                 SolverId.MachineLearning => 0.20f,
                 _ => 1f
             };
@@ -3446,10 +4025,16 @@ namespace StackMerge
             data.incomeLevel = Mathf.Clamp(data.incomeLevel, 0, IncomeUpgradeCosts.Length);
             data.difficultyLevel = Mathf.Clamp(data.difficultyLevel, 0, DifficultyUpgradeCosts.Length);
             data.scalingFrequencyLevel = Mathf.Clamp(data.scalingFrequencyLevel, 0, ScalingFrequencyUpgradeCosts.Length);
+            data.comboEngineLevel = Mathf.Clamp(data.comboEngineLevel, 0, ComboEngineUpgradeCosts.Length);
+            data.salvageProtocolLevel = Mathf.Clamp(data.salvageProtocolLevel, 0, SalvageProtocolUpgradeCosts.Length);
+            data.tokenDividendLevel = Mathf.Clamp(data.tokenDividendLevel, 0, TokenDividendUpgradeCosts.Length);
             data.profitableEndingLevel = Mathf.Clamp(data.profitableEndingLevel, 0, ProfitableEndingUpgradeCosts.Length);
             data.passiveYieldLevel = Mathf.Clamp(data.passiveYieldLevel, 0, PassiveYieldUpgradeCosts.Length);
             data.passiveTickRateLevel = Mathf.Clamp(data.passiveTickRateLevel, 0, PassiveTickRateUpgradeCosts.Length);
             data.activeMultiplierLevel = Mathf.Clamp(data.activeMultiplierLevel, 0, ActiveMultiplierUpgradeCosts.Length);
+            data.curriculumAmountLevel = Mathf.Clamp(data.curriculumAmountLevel, 0, CurriculumAmountUpgradeCosts.Length);
+            data.curriculumRateLevel = Mathf.Clamp(data.curriculumRateLevel, 0, CurriculumRateUpgradeCosts.Length);
+            data.curriculumFrameReduction = Math.Max(0, data.curriculumFrameReduction);
             data.modifierLevels = NormalizeModifierLevels(data.modifierLevels);
             data.researchInsight = Math.Max(0, data.researchInsight);
             data.lifetimeResearchInsight = Math.Max(data.lifetimeResearchInsight, data.researchInsight);

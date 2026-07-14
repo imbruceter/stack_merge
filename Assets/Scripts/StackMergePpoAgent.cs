@@ -275,7 +275,10 @@ namespace StackMerge
             episodeReward += transition.Reward;
             data.steps++;
 
-            int targetBatch = trainingMode ? 256 : 512;
+            // Smaller training batch (64) so the backprop happens as several small updates spread
+            // through the run instead of one ~450-backprop spike at game-over — that spike was the
+            // main cause of the FPS drop in Training mode (Normal mode does no updates and stays smooth).
+            int targetBatch = trainingMode ? 64 : 512;
             if (trajectory.Count >= targetBatch || result.IsGameOver)
             {
                 UpdatePolicy(trainingMode);
@@ -437,10 +440,10 @@ namespace StackMerge
                 ? 0.02f * (float)Math.Exp(-Math.Max(0, data.updates) / 30000f) + 0.004f
                 : 0.003f;
 
-            // Multiple epochs per batch make the PPO clip actually matter and dramatically improve
-            // sample efficiency / consistency (1 epoch behaves like noisy vanilla policy gradient).
-            // Training runs in the background so the extra cost is acceptable.
-            int epochs = trainingMode ? 3 : 1;
+            // Multiple epochs per batch make the PPO clip actually matter and improve sample
+            // efficiency; 2 (was 3) keeps most of that benefit while cutting the per-update backprop
+            // cost by a third, which — together with the smaller batch — smooths the Training-mode FPS.
+            int epochs = trainingMode ? 2 : 1;
             int[] order = new int[count];
             for (int i = 0; i < count; i++)
             {

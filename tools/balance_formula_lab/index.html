@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stack Merge — Balance Formula Lab</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Stack Merge</p>
+        <h1>Balance Formula Lab</h1>
+        <p class="sub">Zárt képletes becslő — a benchmark-profilokból és a játék tényleges konstansaiból számol, szimuláció nélkül.</p>
+      </div>
+      <div class="actions">
+        <button id="exportTsv" type="button">TSV export</button>
+        <button id="resetDefaults" type="button" class="ghost">Alaphelyzet</button>
+      </div>
+    </header>
+
+    <section class="layout">
+      <aside class="panel controls">
+        <details open>
+          <summary>Benchmark-szcenárió</summary>
+          <label><span>Stack-profil</span><select id="stackProfile"></select></label>
+          <label><span>Modifier-profil</span><select id="modifierProfile"></select></label>
+          <label><span>Solver</span><select id="solver"></select></label>
+          <div class="grid2">
+            <label><span>Moves</span><input id="moves" type="number" min="1" step="1"></label>
+            <label><span>Merges</span><input id="merges" type="number" min="0" step="1"></label>
+            <label><span>Átlag score</span><input id="avgScore" type="number" min="1" step="1"></label>
+            <label><span>Best high</span><input id="bestHigh" type="number" min="1" step="1"></label>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Gazdasági szintek</summary>
+          <div id="levelInputs" class="level-grid"></div>
+        </details>
+
+        <details>
+          <summary>Stat-formáló szintek</summary>
+          <p class="hint">Ezek a run-statisztikákat változtatják (moves/merges/high) — hatásukat a lenti benchmark-összevetés méri, nem képlet.</p>
+          <div id="statLevelInputs" class="level-grid"></div>
+        </details>
+
+        <details open>
+          <summary>Globális szorzók</summary>
+          <label><span>Réteg (stage)</span>
+            <select id="layer">
+              <option value="base">Alap (×1)</option>
+              <option value="agents">Agents feloldva (×5)</option>
+              <option value="modifiers">Modifiers feloldva (×24)</option>
+            </select>
+          </label>
+          <div class="grid2">
+            <label title="Yield Theory kutatás szorzója"><span>Research ×</span><input id="researchIncome" type="number" min="1" step="0.01" value="1"></label>
+            <label title="Datacenter Market Bots szorzó"><span>Market ×</span><input id="datacenterMarket" type="number" min="1" step="0.01" value="1"></label>
+            <label title="Tartott tokenek (Token Dividendhez)"><span>Tokenek</span><input id="tokens" type="number" min="0" step="1" value="25"></label>
+            <label title="Átlagos lerakott blokkérték — a score-ból ennyit von le lerakásonként a merge-átlag becslése"><span>Átlag spawn-tile</span><input id="avgSpawnTile" type="number" min="2" step="0.1" value="3"></label>
+            <label title="New-high események tier-enként; a 2026-07-11 benchmark ~20,6 eseményt mért runonként ~7 tier felett → ~2,9/tier"><span>New-high / tier</span><input id="newHighEvents" type="number" min="0" step="0.1" value="2.9"></label>
+            <label title="Átlagos effektív combo-streak a merge-lépéseken (0-20); a 2026-07-11 benchmark ~1,7-1,9-et mért MINDEN solvernél"><span>Combo streak</span><input id="comboStreak" type="number" min="0" max="20" step="0.1" value="2"></label>
+          </div>
+          <label class="check" title="A Token Prospector/Restart Sponsor token-áramát a pótlási áron (pack-ár × (1 + tartott token/100) / 10) számítja a bevételbe">
+            <input id="includeTokenValue" type="checkbox" checked><span>Token-érték beszámítása (chip-egyenérték)</span>
+          </label>
+        </details>
+
+        <details open>
+          <summary>Agents</summary>
+          <div id="agentInputs" class="check-list"></div>
+        </details>
+
+        <details>
+          <summary>Modifier-szintek</summary>
+          <div id="modifierInputs" class="level-grid"></div>
+        </details>
+      </aside>
+
+      <section class="content">
+        <section class="summary-grid">
+          <article class="metric"><span>Run-bevétel</span><strong id="kpiRunIncome">—</strong></article>
+          <article class="metric"><span>Chips / mp</span><strong id="kpiCps">—</strong><em>ciklusidővel (run + restart)</em></article>
+          <article class="metric"><span>Ciklusidő</span><strong id="kpiCycle">—</strong><em>játékidő + 1,2 mp restart</em></article>
+          <article class="metric"><span>Globális ×</span><strong id="kpiGlobal">—</strong><em>stage · yield · research · market · dividend</em></article>
+          <article class="metric"><span>Token / run</span><strong id="kpiTokens">—</strong></article>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Bevétel-összetétel</h2>
+              <p>Egy run bevétele forrásonként. *A token-érték chip-egyenértékes becslés (1 token = 1000 chip pack-áron).</p>
+            </div>
+          </div>
+          <div id="incomeBar" class="income-bar" role="img" aria-label="Bevétel-összetétel"></div>
+          <div id="incomeLegend" class="legend"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Következő szint értéke — gazdasági upgrade-ek</h2>
+              <p>Pontosan egy következő szint megvétele. Megtérülés = ár / ΔCPS, azaz ennyi játékidő alatt hozza vissza az árát.</p>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="upgradeTable"></table></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Agentek és gazdasági modifierek</h2>
+              <p>Bekapcsolás/következő szint a jelenlegi szcenárióból. A Restart Sponsor / Token Prospector értéke a token-áramból jön.</p>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="toggleTable"></table></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Stat-formáló elemek — benchmark-összevetés</h2>
+              <p>Ezek nem a képleteken, hanem a run-statisztikákon keresztül hatnak (moves/merges/high). Két benchmark-profil különbsége mutatja az együttes értéküket:</p>
+            </div>
+          </div>
+          <div class="ab-compare">
+            <label><span>A profil</span><select id="abProfileA"></select></label>
+            <label><span>B profil</span><select id="abProfileB"></select></label>
+            <div id="abResult" class="ab-result"></div>
+          </div>
+          <ul id="statShapingList" class="stat-list"></ul>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <h2>Solver-összehasonlítás</h2>
+              <p>A kiválasztott benchmark-profil statjaival, solverenkénti pacing-gel és a jelenlegi gazdasági állapottal.</p>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="solverTable"></table></div>
+        </section>
+
+        <section class="panel">
+          <h2>Képlet-bontás</h2>
+          <pre id="formulaBreakdown"></pre>
+          <p class="hint">Közelítések: a per-move kerekítések (ceil) elhagyva; a merge-ek high-szorzója a csúcs és fél-csúcs átlaga (a run közben nő a csúcs); a Neural Accelerator ×0,5 pacing-közelítés (valójában a solver CPU-idejét felezi); a score lerakás-értékeket is tartalmaz, ezért a merge-átlag a spawn-tile levonásával készül.</p>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-12 10:54:39
+Total time: 195,81s
+Tuning: Simulation rounds Default, Rollout moves Default, Score delta Default, Empty cells Default, Danger penalty Default, Queue fit Default
+Modifiers: Unstable Stack L5, Catalyst Stack L1, Mirror Stack L1, Joker L1, Miner's Pickaxe L5, Queue Scrubber L5, Neural Accelerator L1
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+MOCA	100/100	4577	9356	9375	15132	21,9%	506,1	456,1	0,90	335	1024	14,2	1,8	6,2	1564	3,87	100%	0%	0%	195,8	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: MOCA (9356)
+  Best peak score: MOCA (15132)
+  Most merges/run: MOCA (456,1)
+  Highest merge density: MOCA (0,90/move)
+  Longest runs (moves): MOCA (506,1)
+  Highest avg block: MOCA (335)
+  Most new-high events: MOCA (14,2/run)
+  Best combo streak: MOCA (1,8 avg)
+  Most consistent (lowest CV): MOCA (21,9%)
+  Cheapest CPU (ms/move): MOCA (3,87 ms)

@@ -1,0 +1,19 @@
+=== BALANCE AUDIT ===  (2 variants × 1 seed(s), wall 157s, 4 threads)
+Δ% = how much LONGER the playthrough takes without the item (fixed seeds — differences are causal, not noise).
+ROI = simulated seconds saved per 1M chips (shop) / per 1K Insight (meta) spent on the item in the baseline.
+Verdicts: STRONG ≥ 10% | OK | WEAK ≤ 0.5% | HARMFUL < 0 (faster without it!) | REQUIRED = didn't finish within 2× the baseline's runs.
+Note: banning a research node also locks its descendants — their value is included in the node's Δ.
+Key filter: "ChipYield".
+Variant run cap: baseline runs x 2 + 100.
+Run replay cache: 255 hits / 15 959 misses / 15 959 stored deterministic runs.
+Fork snapshots: 51 captured first-purchase states; variants resume from these instead of replaying the shared prefix.
+
+=== SHOP scope (horizon: first prestige, seed 12345) ===
+Baseline: 13:16:24 (5391 runs)
+Baseline time-to-PPO: 9:57:12
+
+Item                                  Spent        Δtime       Δ%    ΔPPO%       ROI  Verdict
+Upgrade.ChipYield                       25M > cap               —        —         —  REQUIRED
+
+REQUIRED diagnostics (cap = baseline runs x 2 + 100):
+  Upgrade.ChipYield: stopped by run cap; runs 10 882, sim 1d 07:45:22, prestiges 0, PPO no, chips 34,9K, earned 9,3M, high 128, best 4,4K, levels cap/yield/diff/scale/speed 1/0/0/0/3

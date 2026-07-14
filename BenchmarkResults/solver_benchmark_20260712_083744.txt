@@ -1,0 +1,20 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-12 08:37:44
+Total time: 0,90s
+Tuning: Empty cells Default, Smoothness Default, Danger penalty Default, Merge reward Default
+Modifiers: Unstable Stack L0, Catalyst Stack L0, Mirror Stack L0, Joker L0, Miner's Pickaxe L0, Queue Scrubber L0, Neural Accelerator L0
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+BAL	100/100	1617	2599	2636	4143	21,1%	268,6	228,6	0,85	73	128	20,6	1,7	5,4	661	0,03	100%	0%	0%	0,9	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: BAL (2599)
+  Best peak score: BAL (4143)
+  Most merges/run: BAL (228,6)
+  Highest merge density: BAL (0,85/move)
+  Longest runs (moves): BAL (268,6)
+  Highest avg block: BAL (73)
+  Most new-high events: BAL (20,6/run)
+  Best combo streak: BAL (1,7 avg)
+  Most consistent (lowest CV): BAL (21,1%)
+  Cheapest CPU (ms/move): BAL (0,03 ms)

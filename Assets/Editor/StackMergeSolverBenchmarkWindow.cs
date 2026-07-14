@@ -48,6 +48,103 @@ namespace StackMerge.Editor
             GetWindow<StackMergeSolverBenchmarkWindow>("Solver Benchmark");
         }
 
+        /// <summary>
+        /// Headless entry point for weight/tuning iteration:
+        /// Unity -batchmode -quit -executeMethod StackMerge.Editor.StackMergeSolverBenchmarkWindow.RunSolverBenchmarkBatch
+        ///   [-benchSolver STALL|all] [-benchRuns 100] [-benchMaxMods] [-benchMoveCap 1500]
+        ///   [-benchSolverSecs 300] [-benchRunSecs 3] [-benchSeed 12345] [-benchTuning 0,0,3,0,0,0]
+        /// Single-solver runs draw the same run seeds for a given seed, so before/after weight
+        /// changes compare on identical boards. Summary TSV goes to BenchmarkResults/.
+        /// </summary>
+        public static void RunSolverBenchmarkBatch()
+        {
+            var runner = CreateInstance<StackMergeSolverBenchmarkWindow>();
+            try
+            {
+                string[] args = Environment.GetCommandLineArgs();
+                runner.EnsureBenchmarkModifierArray();
+                string solverArg = GetBatchString(args, "-benchSolver");
+                runner.runAllSolvers = string.IsNullOrEmpty(solverArg) || solverArg.Equals("all", StringComparison.OrdinalIgnoreCase);
+                if (!runner.runAllSolvers)
+                {
+                    SolverDefinition match = StackMergeSolverCatalog.Definitions
+                        .FirstOrDefault(definition => definition.DisplayName.Equals(solverArg, StringComparison.OrdinalIgnoreCase));
+                    if (string.IsNullOrEmpty(match.DisplayName))
+                    {
+                        throw new ArgumentException($"Unknown solver '{solverArg}'. Use a display name (RAND, MERG, ..., PPO) or 'all'.");
+                    }
+
+                    runner.selectedSolver = match.Id;
+                }
+
+                runner.runCount = Mathf.Clamp(GetBatchInt(args, "-benchRuns", 100), 1, 100000);
+                // Calibration baseline plays on the maxed board (stack 10) — the shipped default
+                // capacity would silently benchmark a different game.
+                runner.stackCapacity = Mathf.Clamp(GetBatchInt(args, "-benchStackCap", 10), 2, StackMergeGameState.MaxStackCapacity);
+                runner.queueLength = Mathf.Clamp(GetBatchInt(args, "-benchQueue", runner.queueLength), 1, StackMergeGameState.DefaultQueueLength + 2);
+                runner.maxMovesPerRun = Mathf.Clamp(GetBatchInt(args, "-benchMoveCap", 1500), 100, 10000);
+                runner.maxSecondsPerSolver = Mathf.Clamp(GetBatchInt(args, "-benchSolverSecs", 300), 5, 36000);
+                runner.maxSecondsPerRun = Mathf.Clamp(GetBatchInt(args, "-benchRunSecs", 3), 1, 60);
+                runner.seed = GetBatchInt(args, "-benchSeed", runner.seed);
+                if (Array.IndexOf(args, "-benchMaxMods") >= 0)
+                {
+                    for (int i = 0; i < StackMergeProgression.Modifiers.Length; i++)
+                    {
+                        runner.benchmarkModifierLevels[i] = StackMergeProgression.Modifiers[i].MaxLevel;
+                    }
+                }
+
+                string tuningArg = GetBatchString(args, "-benchTuning");
+                if (!string.IsNullOrEmpty(tuningArg))
+                {
+                    string[] parts = tuningArg.Split(',');
+                    for (int i = 0; i < parts.Length && i < runner.benchmarkTuningSlots.Length; i++)
+                    {
+                        runner.benchmarkTuningSlots[i] = int.TryParse(parts[i].Trim(), out int value) ? value : 0;
+                    }
+                }
+
+                runner.RunBenchmark();
+
+                string dir = Path.Combine(Application.dataPath, "..", "BenchmarkResults");
+                Directory.CreateDirectory(dir);
+                string path = Path.GetFullPath(Path.Combine(dir, $"solver_benchmark_{DateTime.Now:yyyyMMdd_HHmmss}.txt"));
+                File.WriteAllText(path, runner.lastOutput, Encoding.UTF8);
+                UnityEngine.Debug.Log($"Solver benchmark summary written to: {path}");
+            }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogException(exception);
+                if (Application.isBatchMode)
+                {
+                    EditorApplication.Exit(1);
+                }
+
+                throw;
+            }
+            finally
+            {
+                DestroyImmediate(runner);
+            }
+
+            if (Application.isBatchMode)
+            {
+                EditorApplication.Exit(0);
+            }
+        }
+
+        private static string GetBatchString(string[] args, string name)
+        {
+            int index = Array.IndexOf(args, name);
+            return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+        }
+
+        private static int GetBatchInt(string[] args, string name, int fallback)
+        {
+            string raw = GetBatchString(args, name);
+            return !string.IsNullOrEmpty(raw) && int.TryParse(raw, out int value) ? value : fallback;
+        }
+
         private void OnGUI()
         {
             EditorGUILayout.LabelField("Stack Merge Solver Benchmark", EditorStyles.boldLabel);
@@ -166,7 +263,7 @@ namespace StackMerge.Editor
             lastMlRunLines.Clear();
             lastPpoDetailPath = string.Empty;
             SolverId[] solverIds = runAllSolvers
-                ? StackMergeSolverCatalog.Definitions.Select(definition => definition.Id).ToArray()
+                ? StackMergeSolverCatalog.Definitions.Where(definition => definition.Available).Select(definition => definition.Id).ToArray()
                 : new[] { selectedSolver };
 
             var random = new System.Random(seed);
@@ -343,6 +440,16 @@ namespace StackMerge.Editor
             bool runTimedOut = false;
             bool solverTimedOut = false;
 
+            // Economy-relevant per-run stats, mirroring the exact rules the game pays out on
+            // (CalculateMoveIncomeBreakdown): combo streak advances on every accepted move
+            // (+1 on merge moves, reset otherwise) and new-high triggers on merge moves whose
+            // resulting top ties or beats the pre-move highest block.
+            int comboStreak = 0;
+            int maxComboStreak = 0;
+            long effectiveStreakSum = 0;
+            int mergeMoves = 0;
+            int newHighEvents = 0;
+
             while (!state.IsGameOver && moves < maxMovesPerRun)
             {
                 if (runStopwatch.Elapsed.TotalSeconds >= maxSecondsPerRun)
@@ -369,6 +476,22 @@ namespace StackMerge.Editor
                     break;
                 }
 
+                if (result.MergeCount > 0)
+                {
+                    comboStreak++;
+                    maxComboStreak = Math.Max(maxComboStreak, comboStreak);
+                    effectiveStreakSum += Math.Min(comboStreak, 20);
+                    mergeMoves++;
+                    if (result.ResultingTopValue >= result.HighestBlock)
+                    {
+                        newHighEvents++;
+                    }
+                }
+                else
+                {
+                    comboStreak = 0;
+                }
+
                 if (solver.Id == SolverId.MachineLearning && ppoLearningEnabled)
                 {
                     ppoAgent?.Observe(result, state, ppoTrainingMode);
@@ -382,6 +505,18 @@ namespace StackMerge.Editor
                 ppoAgent?.ForceUpdate(ppoTrainingMode);
             }
 
+            long strandedValue = 0;
+            foreach (IReadOnlyList<int> stack in state.Stacks)
+            {
+                foreach (int blockValue in stack)
+                {
+                    if (blockValue != StackMergeGameState.JokerBlockValue)
+                    {
+                        strandedValue += blockValue;
+                    }
+                }
+            }
+
             runStopwatch.Stop();
             return new BenchmarkRunResult(
                 state.Score,
@@ -392,7 +527,11 @@ namespace StackMerge.Editor
                 moves >= maxMovesPerRun && !state.IsGameOver,
                 runTimedOut,
                 solverTimedOut,
-                runStopwatch.Elapsed.TotalSeconds);
+                runStopwatch.Elapsed.TotalSeconds,
+                maxComboStreak,
+                mergeMoves > 0 ? effectiveStreakSum / (double)mergeMoves : 0,
+                newHighEvents,
+                strandedValue);
         }
 
         private string BuildOutput(IReadOnlyList<BenchmarkSummary> rows, TimeSpan elapsed, bool canceled)
@@ -409,21 +548,28 @@ namespace StackMerge.Editor
             }
 
             builder.AppendLine();
-            builder.AppendLine("Solver\tRuns\tMin\tMedian\tAvg\tMax\tAvgMoves\tAvgMerges\tBestHigh\tEnded%\tTimed%\tMoveCap%\tSecs\tNotes");
+            builder.AppendLine("Solver\tRuns\tMin\tMedian\tAvg\tMax\tCV%\tAvgMoves\tAvgMerges\tMrg/Move\tAvgHigh\tBestHigh\tNewHighs\tAvgStreak\tMaxStreak\tStranded\tms/Move\tEnded%\tTimed%\tMoveCap%\tSecs\tNotes");
 
             foreach (BenchmarkSummary row in rows.OrderByDescending(row => row.MedianScore))
             {
                 builder.AppendLine(
-                    $"{row.SolverName}\t{row.Runs}/{row.TargetRuns}\t{row.MinScore}\t{row.MedianScore}\t{row.AverageScore:0}\t{row.MaxScore}\t{row.AverageMoves:0.0}\t{row.AverageMerges:0.0}\t{row.BestHighestMerged}\t{row.GameOverRate * 100:0}%\t{row.TimeoutRate * 100:0}%\t{row.MoveCapRate * 100:0}%\t{row.Elapsed.TotalSeconds:0.0}\t{row.Notes}");
+                    $"{row.SolverName}\t{row.Runs}/{row.TargetRuns}\t{row.MinScore}\t{row.MedianScore}\t{row.AverageScore:0}\t{row.MaxScore}\t{row.ScoreCv * 100:0.0}%\t{row.AverageMoves:0.0}\t{row.AverageMerges:0.0}\t{row.MergeRate:0.00}\t{row.AverageHighestMerged:0}\t{row.BestHighestMerged}\t{row.AverageNewHighEvents:0.0}\t{row.AverageMergeStreak:0.0}\t{row.AverageMaxComboStreak:0.0}\t{row.AverageStrandedValue:0}\t{row.AverageMsPerMove:0.00}\t{row.GameOverRate * 100:0}%\t{row.TimeoutRate * 100:0}%\t{row.MoveCapRate * 100:0}%\t{row.Elapsed.TotalSeconds:0.0}\t{row.Notes}");
             }
 
             if (rows.Count > 0)
             {
-                BenchmarkSummary bestMedian = rows.OrderByDescending(row => row.MedianScore).First();
-                BenchmarkSummary bestPeak = rows.OrderByDescending(row => row.MaxScore).First();
                 builder.AppendLine();
-                builder.AppendLine($"Best median: {bestMedian.SolverName} ({bestMedian.MedianScore})");
-                builder.AppendLine($"Best peak: {bestPeak.SolverName} ({bestPeak.MaxScore})");
+                builder.AppendLine("Stat champions (specialization check — runner-up in parentheses):");
+                builder.AppendLine($"  Best median score: {Champion(rows, row => row.MedianScore, row => $"{row.MedianScore}")}");
+                builder.AppendLine($"  Best peak score: {Champion(rows, row => row.MaxScore, row => $"{row.MaxScore}")}");
+                builder.AppendLine($"  Most merges/run: {Champion(rows, row => row.AverageMerges, row => $"{row.AverageMerges:0.0}")}");
+                builder.AppendLine($"  Highest merge density: {Champion(rows, row => row.MergeRate, row => $"{row.MergeRate:0.00}/move")}");
+                builder.AppendLine($"  Longest runs (moves): {Champion(rows, row => row.AverageMoves, row => $"{row.AverageMoves:0.0}")}");
+                builder.AppendLine($"  Highest avg block: {Champion(rows, row => row.AverageHighestMerged, row => $"{row.AverageHighestMerged:0}")}");
+                builder.AppendLine($"  Most new-high events: {Champion(rows, row => row.AverageNewHighEvents, row => $"{row.AverageNewHighEvents:0.0}/run")}");
+                builder.AppendLine($"  Best combo streak: {Champion(rows, row => row.AverageMergeStreak, row => $"{row.AverageMergeStreak:0.0} avg")}");
+                builder.AppendLine($"  Most consistent (lowest CV): {Champion(rows, row => -row.ScoreCv, row => $"{row.ScoreCv * 100:0.0}%")}");
+                builder.AppendLine($"  Cheapest CPU (ms/move): {Champion(rows, row => -row.AverageMsPerMove, row => $"{row.AverageMsPerMove:0.00} ms")}");
             }
 
             if (!runAllSolvers && selectedSolver == SolverId.MachineLearning && lastMlRunLines.Count > 0)
@@ -447,6 +593,24 @@ namespace StackMerge.Editor
             }
 
             return builder.ToString();
+        }
+
+        // Names the leader for one stat, with the runner-up in parentheses so the specialization
+        // gap ("miben és mennyivel erősebb") is visible at a glance.
+        private static string Champion(
+            IReadOnlyList<BenchmarkSummary> rows,
+            Func<BenchmarkSummary, double> rank,
+            Func<BenchmarkSummary, string> display)
+        {
+            BenchmarkSummary[] ordered = rows.OrderByDescending(rank).ToArray();
+            BenchmarkSummary best = ordered[0];
+            if (ordered.Length < 2)
+            {
+                return $"{best.SolverName} ({display(best)})";
+            }
+
+            BenchmarkSummary second = ordered[1];
+            return $"{best.SolverName} ({display(best)}) — 2. {second.SolverName} ({display(second)})";
         }
 
         private SolverTuningSettings BuildBenchmarkTuning(SolverId solverId)
@@ -747,7 +911,11 @@ namespace StackMerge.Editor
                 bool hitMoveCap,
                 bool runTimedOut,
                 bool solverTimedOut,
-                double elapsedSeconds)
+                double elapsedSeconds,
+                int maxComboStreak = 0,
+                double averageMergeStreak = 0,
+                int newHighEvents = 0,
+                long strandedBoardValue = 0)
             {
                 Score = score;
                 Moves = moves;
@@ -758,6 +926,10 @@ namespace StackMerge.Editor
                 RunTimedOut = runTimedOut;
                 SolverTimedOut = solverTimedOut;
                 ElapsedSeconds = elapsedSeconds;
+                MaxComboStreak = maxComboStreak;
+                AverageMergeStreak = averageMergeStreak;
+                NewHighEvents = newHighEvents;
+                StrandedBoardValue = strandedBoardValue;
             }
 
             public long Score { get; }
@@ -777,6 +949,18 @@ namespace StackMerge.Editor
             public bool SolverTimedOut { get; }
 
             public double ElapsedSeconds { get; }
+
+            /// <summary>Longest uninterrupted merge streak in the run (raw, uncapped).</summary>
+            public int MaxComboStreak { get; }
+
+            /// <summary>Average Combo Engine-effective streak (capped at 20) over the run's merge moves.</summary>
+            public double AverageMergeStreak { get; }
+
+            /// <summary>Merge moves whose resulting top tied/beat the pre-move highest block (new-high payouts).</summary>
+            public int NewHighEvents { get; }
+
+            /// <summary>Block value left on the board at run end (Jokers excluded).</summary>
+            public long StrandedBoardValue { get; }
         }
 
         private readonly struct MlBenchmarkRunLine
@@ -814,9 +998,17 @@ namespace StackMerge.Editor
                 long medianScore,
                 double averageScore,
                 long maxScore,
+                double scoreCv,
                 double averageMoves,
                 double averageMerges,
+                double mergeRate,
+                double averageHighestMerged,
                 int bestHighestMerged,
+                double averageNewHighEvents,
+                double averageMergeStreak,
+                double averageMaxComboStreak,
+                double averageStrandedValue,
+                double averageMsPerMove,
                 double gameOverRate,
                 double timeoutRate,
                 double moveCapRate,
@@ -830,9 +1022,17 @@ namespace StackMerge.Editor
                 MedianScore = medianScore;
                 AverageScore = averageScore;
                 MaxScore = maxScore;
+                ScoreCv = scoreCv;
                 AverageMoves = averageMoves;
                 AverageMerges = averageMerges;
+                MergeRate = mergeRate;
+                AverageHighestMerged = averageHighestMerged;
                 BestHighestMerged = bestHighestMerged;
+                AverageNewHighEvents = averageNewHighEvents;
+                AverageMergeStreak = averageMergeStreak;
+                AverageMaxComboStreak = averageMaxComboStreak;
+                AverageStrandedValue = averageStrandedValue;
+                AverageMsPerMove = averageMsPerMove;
                 GameOverRate = gameOverRate;
                 TimeoutRate = timeoutRate;
                 MoveCapRate = moveCapRate;
@@ -856,11 +1056,30 @@ namespace StackMerge.Editor
 
             public long MaxScore { get; }
 
+            /// <summary>Score coefficient of variation (σ/avg) — consistency across runs.</summary>
+            public double ScoreCv { get; }
+
             public double AverageMoves { get; }
 
             public double AverageMerges { get; }
 
+            /// <summary>Merges per move — merge density.</summary>
+            public double MergeRate { get; }
+
+            public double AverageHighestMerged { get; }
+
             public int BestHighestMerged { get; }
+
+            public double AverageNewHighEvents { get; }
+
+            public double AverageMergeStreak { get; }
+
+            public double AverageMaxComboStreak { get; }
+
+            public double AverageStrandedValue { get; }
+
+            /// <summary>Average solver think+apply wall-clock per move — the CPU-cost axis.</summary>
+            public double AverageMsPerMove { get; }
 
             public double GameOverRate { get; }
 
@@ -889,17 +1108,34 @@ namespace StackMerge.Editor
                             ? "Partial"
                             : string.Empty;
 
+                double averageScore = results.Count > 0 ? results.Average(result => result.Score) : 0;
+                double scoreVariance = results.Count > 0
+                    ? results.Average(result => Math.Pow(result.Score - averageScore, 2))
+                    : 0;
+                double scoreCv = averageScore > 0 ? Math.Sqrt(scoreVariance) / averageScore : 0;
+                double averageMoves = results.Count > 0 ? results.Average(result => result.Moves) : 0;
+                double averageMerges = results.Count > 0 ? results.Average(result => result.Merges) : 0;
+                double totalMoves = results.Sum(result => (double)result.Moves);
+
                 return new BenchmarkSummary(
                     solverId,
                     results.Count,
                     targetRuns,
                     orderedScores.Length > 0 ? orderedScores.First() : 0,
                     Median(orderedScores),
-                    results.Count > 0 ? results.Average(result => result.Score) : 0,
+                    averageScore,
                     orderedScores.Length > 0 ? orderedScores.Last() : 0,
-                    results.Count > 0 ? results.Average(result => result.Moves) : 0,
-                    results.Count > 0 ? results.Average(result => result.Merges) : 0,
+                    scoreCv,
+                    averageMoves,
+                    averageMerges,
+                    averageMoves > 0 ? averageMerges / averageMoves : 0,
+                    results.Count > 0 ? results.Average(result => result.HighestMergedBlock) : 0,
                     results.Count > 0 ? results.Max(result => result.HighestMergedBlock) : 0,
+                    results.Count > 0 ? results.Average(result => result.NewHighEvents) : 0,
+                    results.Count > 0 ? results.Average(result => result.AverageMergeStreak) : 0,
+                    results.Count > 0 ? results.Average(result => result.MaxComboStreak) : 0,
+                    results.Count > 0 ? results.Average(result => result.StrandedBoardValue) : 0,
+                    totalMoves > 0 ? results.Sum(result => result.ElapsedSeconds) * 1000.0 / totalMoves : 0,
                     results.Count > 0 ? results.Count(result => result.GameOver) / (double)results.Count : 0,
                     results.Count > 0 ? results.Count(result => result.RunTimedOut || result.SolverTimedOut) / (double)results.Count : 0,
                     results.Count > 0 ? results.Count(result => result.HitMoveCap) / (double)results.Count : 0,

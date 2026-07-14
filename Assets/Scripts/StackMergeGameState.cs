@@ -657,7 +657,9 @@ namespace StackMerge
 
             for (int exponent = 0; exponent <= maxSpawnExponent; exponent++)
             {
-                double pressure = 1.0 + ScalingFrequencyLevel * 0.09 * exponent;
+                // 0.045/level — halved when the Scaling Frequency ladder went 5 → 10 levels (keep
+                // in sync with StackMergeProgression.ScalingFrequencyPressurePerLevel).
+                double pressure = 1.0 + ScalingFrequencyLevel * 0.045 * exponent;
                 double weight = Math.Pow(0.56, exponent) * pressure;
                 weights[exponent] = weight;
                 totalWeight += weight;

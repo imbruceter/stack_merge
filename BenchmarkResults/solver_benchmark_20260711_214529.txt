@@ -1,0 +1,20 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-11 21:45:29
+Total time: 9,15s
+Tuning: Combo setup Default, Queue fit Default, Merge reward Default, Future depth Default, Safety cushion Default
+Modifiers: Unstable Stack L5, Catalyst Stack L1, Mirror Stack L1, Joker L1, Miner's Pickaxe L5, Queue Scrubber L5, Neural Accelerator L1
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+COMBO	100/100	5744	10163	10253	19357	20,5%	563,3	513,3	0,91	328	1024	20,7	1,9	6,9	1722	0,16	100%	0%	0%	9,1	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: COMBO (10163)
+  Best peak score: COMBO (19357)
+  Most merges/run: COMBO (513,3)
+  Highest merge density: COMBO (0,91/move)
+  Longest runs (moves): COMBO (563,3)
+  Highest avg block: COMBO (328)
+  Most new-high events: COMBO (20,7/run)
+  Best combo streak: COMBO (1,9 avg)
+  Most consistent (lowest CV): COMBO (20,5%)
+  Cheapest CPU (ms/move): COMBO (0,16 ms)

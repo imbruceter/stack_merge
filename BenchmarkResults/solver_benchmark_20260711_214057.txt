@@ -1,0 +1,20 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-11 21:40:57
+Total time: 1,84s
+Tuning: Legal moves Default, Empty cells Default, Danger penalty Default, Height spread Default, Merge reward Default
+Modifiers: Unstable Stack L5, Catalyst Stack L1, Mirror Stack L1, Joker L1, Miner's Pickaxe L5, Queue Scrubber L5, Neural Accelerator L1
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+STALL	100/100	1556	2478	2722	5072	28,3%	236,2	206,2	0,87	102	256	16,1	1,8	6,2	472	0,08	100%	0%	0%	1,8	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: STALL (2478)
+  Best peak score: STALL (5072)
+  Most merges/run: STALL (206,2)
+  Highest merge density: STALL (0,87/move)
+  Longest runs (moves): STALL (236,2)
+  Highest avg block: STALL (102)
+  Most new-high events: STALL (16,1/run)
+  Best combo streak: STALL (1,8 avg)
+  Most consistent (lowest CV): STALL (28,3%)
+  Cheapest CPU (ms/move): STALL (0,08 ms)

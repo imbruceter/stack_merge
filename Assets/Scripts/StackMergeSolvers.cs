@@ -248,13 +248,14 @@ namespace StackMerge
 
     public readonly struct SolverDefinition
     {
-        public SolverDefinition(SolverId id, string displayName, long cost, string lockedHint, string description)
+        public SolverDefinition(SolverId id, string displayName, long cost, string lockedHint, string description, bool available = true)
         {
             Id = id;
             DisplayName = displayName;
             Cost = cost;
             LockedHint = lockedHint;
             Description = description;
+            Available = available;
         }
 
         public SolverId Id { get; }
@@ -266,6 +267,14 @@ namespace StackMerge
         public string LockedHint { get; }
 
         public string Description { get; }
+
+        /// <summary>
+        /// Whether this solver is offered in the shop / benchmark / auto-buyer. Removed solvers
+        /// (MERG, STALL, MCTS, PLAN-5, MOCA+) are kept in the catalog (their SolverId indices and
+        /// classes must stay — e.g. STALL's ScoreAntiStall is a shared static used by MOCA+) but
+        /// flagged unavailable. Flip back to true to restore any of them.
+        /// </summary>
+        public bool Available { get; }
     }
 
     public static class StackMergeSolverCatalog
@@ -273,18 +282,25 @@ namespace StackMerge
         public static readonly SolverDefinition[] Definitions =
         {
             new(SolverId.Rand, "RAND", 1000, "Free baseline solver.", "Randomly chooses any valid stack. Weak, chaotic, but fast."),
-            new(SolverId.Merge, "MERG", 3000, "Looks for direct merges.", "Prioritizes immediate merges and cascades before anything else."),
+            // MERG removed (2026-07-12): BAL is the more sensible cheap-tier pick. Class kept; flagged unavailable.
+            new(SolverId.Merge, "MERG", 3000, "Looks for direct merges.", "Prioritizes immediate merges and cascades before anything else.", available: false),
             new(SolverId.Balance, "BAL", 6000, "Keeps stacks even.", "Avoids tall dangerous stacks and spreads risk across the board."),
             new(SolverId.Heur, "HEUR", 30000, "Scores every legal move.", "Uses handcrafted heuristics: merge value, danger, future queue fit, and free space."),
-            new(SolverId.Look, "LOOK", 80000, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
-            new(SolverId.Moca, "MOCA", 220000, "Runs simulations.", "Rolls out multiple futures and picks the best average result."),
-            new(SolverId.Plan3, "PLAN-3", 130000, "Reads the visible queue.", "Queue planner. Searches lines through up to 3 visible next blocks before choosing."),
-            new(SolverId.Plan5, "PLAN-5", 400000, "Uses the extended queue.", "Deep queue planner. Searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked."),
-            new(SolverId.MocaPlus, "MOCA+", 900000, "Smarter Monte Carlo rollouts.", "Enhanced Monte Carlo. Each rollout uses short queue planning and an anti-stall board score."),
-            new(SolverId.Mcts, "MCTS", 1800000, "Builds a search tree.", "Monte Carlo Tree Search. Balances exploring new lines with exploiting lines that already score well."),
-            new(SolverId.AntiStall, "STALL", 18000, "Avoids dead boards.", "Anti-stall solver. Heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges."),
-            new(SolverId.Combo, "COMBO", 180000, "Sets up chain merges.", "Combo-focused solver. Reads the queue and rewards positions that can cascade over the next 2-3 turns."),
-            new(SolverId.MachineLearning, "PPO", 100000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
+            // LOOK repriced above COMBO to match the intended quality ladder (RAND<BAL<HEUR<COMBO<LOOK<MOCA<PLAN).
+            new(SolverId.Look, "LOOK", 500000, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
+            // MOCA & PLAN repriced high — they double as the mid-late ("agents phase") chip sinks.
+            new(SolverId.Moca, "MOCA", 4000000, "Runs simulations.", "Rolls out multiple futures, judging each by the surviving board and the peak tier it reaches."),
+            new(SolverId.Plan3, "PLAN", 15000000, "Reads the visible queue.", "Queue planner. Searches lines through the visible next blocks; tune its planning depth (3–5) for patience vs practicality."),
+            // PLAN-5 removed (2026-07-12): merged into PLAN via its Planning depth tuning (up to 5). Class kept; unavailable.
+            new(SolverId.Plan5, "PLAN-5", 400000, "Uses the extended queue.", "Deep queue planner. Searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked.", available: false),
+            // MOCA+ removed (2026-07-12): its smart-rollout params fold into MOCA's tuning (Stage B). Class kept; unavailable.
+            new(SolverId.MocaPlus, "MOCA+", 900000, "Smarter Monte Carlo rollouts.", "Enhanced Monte Carlo. Each rollout uses short queue planning and an anti-stall board score.", available: false),
+            // MCTS removed (2026-07-12): weaker than MOCA, its niche folds into MOCA tuning (Stage B). Class kept; unavailable.
+            new(SolverId.Mcts, "MCTS", 1800000, "Builds a search tree.", "Monte Carlo Tree Search. Balances exploring new lines with exploiting lines that already score well.", available: false),
+            // STALL removed (2026-07-12): run-length niche not worth a slot. Class kept (ScoreAntiStall is a shared static); unavailable.
+            new(SolverId.AntiStall, "STALL", 18000, "Avoids dead boards.", "Anti-stall solver. Heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges.", available: false),
+            new(SolverId.Combo, "COMBO", 250000, "Sets up chain merges.", "Combo-focused solver. Reads the queue and rewards positions that can cascade over the next 2-3 turns."),
+            new(SolverId.MachineLearning, "PPO", 250000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
         };
 
         public static readonly SolverTuningDefinition[] TuningDefinitions =
@@ -362,6 +378,24 @@ namespace StackMerge
                 TuneAbsolute(SolverTuneParameterId.Lambda, "Lambda (GAE)", "Advantage estimation bias/variance trade-off. Higher = lower bias, more variance.", 0.95f, 0.01f, 0.80f, 0.99f),
                 TuneAbsolute(SolverTuneParameterId.ClipEpsilon, "Clip epsilon", "How big a policy update each step may make. Smaller is more conservative and stable.", 0.20f, 0.01f, 0.10f, 0.30f))
         };
+
+        /// <summary>Count of solvers offered in the shop (Available). Removed solvers are excluded.</summary>
+        public static int AvailableSolverCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (SolverDefinition definition in Definitions)
+                {
+                    if (definition.Available)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
 
         public static SolverDefinition GetDefinition(SolverId id)
         {
@@ -677,13 +711,19 @@ namespace StackMerge
             int minHeight = copy.Stacks.Min(stack => stack.Count);
             int dangerStacks = copy.Stacks.Count(stack => stack.Count >= copy.StackCapacity - 1);
 
+            // BAL is deliberately a weak "easy to use, hard to miss" solver — consistent, not strong.
+            // Tuned for LOW VARIANCE, not high average: stronger danger avoidance raises the floor
+            // (fewer early crashes), weaker greedy score chasing lowers the ceiling (fewer risky
+            // spikes), heavier evenness keeps play steady. NOTE: most of the run-to-run spread is
+            // block-RNG, not the solver — pushing these weights harder than this stops helping
+            // (benchmarked: min/max pin to the same seed-driven values), so this is the sweet spot.
             double score = 0;
-            score += result.MergeCount * 180;
-            score += scoreDelta * 0.5;
-            score -= (maxHeight - minHeight) * 90;
-            score -= maxHeight * maxHeight * 16;
-            score -= dangerStacks * 220;
-            score += FreeSlots(copy) * 16;
+            score += result.MergeCount * 160;
+            score += scoreDelta * 0.32;
+            score -= (maxHeight - minHeight) * 130;
+            score -= maxHeight * maxHeight * 18;
+            score -= dangerStacks * 360;
+            score += FreeSlots(copy) * 20;
             return score;
         }
     }
@@ -902,7 +942,7 @@ namespace StackMerge
 
     public sealed class Plan3StackMergeSolver : QueuePlannerStackMergeSolver
     {
-        public Plan3StackMergeSolver() : base(SolverId.Plan3, "PLAN-3", 3)
+        public Plan3StackMergeSolver() : base(SolverId.Plan3, "PLAN", 3)
         {
         }
     }
@@ -934,12 +974,18 @@ namespace StackMerge
             int maxHeight = MaxHeight(state);
             int minHeight = state.Stacks.Min(stack => stack.Count);
 
+            // Survival IS merge availability: the board only empties through merges, so the
+            // longest runs come from merging often (at any tile value) while keeping the queue
+            // matched — not from passively hoarding space. scoreDelta stays low on purpose:
+            // STALL's identity is run LENGTH, not chip value per merge.
             double score = 0;
             score += legalMoves * 260;
             score += FreeSlots(state) * 34;
             score += emptyStacks * 210;
             score += breathingStacks * 120;
-            score += result.MergeCount * 120;
+            score += result.MergeCount * 620;
+            score += CountQueueTopMatches(state) * 170;
+            score += CountAdjacentEqualPairs(state) * 60;
             score += scoreDelta * 0.25;
             score -= dangerStacks * 520;
             score -= maxHeight * maxHeight * 18;
@@ -1063,8 +1109,21 @@ namespace StackMerge
         {
             int[] legalMoves = state.GetLegalMoveIndices();
             SolverDecision best = ChooseBestToolAction(state, context, "Monte Carlo tool");
-            int simulations = context.TunedSimulationCount();
-            int rolloutDepth = context.TunedRolloutDepth();
+            // MOCA is the "smart sampler" — but its old scoring only counted points grabbed during
+            // the rollout (score-delta), so it played myopically and under-scored the planners it is
+            // meant to rival. Now each rollout is judged by the QUALITY of the surviving board plus
+            // the peak tier it reached, so MOCA seeks sustainable, height-building lines. Rollouts run
+            // deeper and more numerous than before; the policy stays HEUR (fast) — the per-move queue
+            // planning is what makes MOCA+ ~60x slower for a marginal gain, so MOCA deliberately skips it.
+            // Real-time (in-game) budget is capped tight so MOCA stays at 120fps on phones — each
+            // rollout step runs a full HEUR scan over every legal move, so cost is ~sims×depth×moves²;
+            // 3×2 keeps it smooth. The benchmark (full mode) keeps the larger budget for measured strength.
+            int simulations = context.LightweightMode
+                ? Math.Clamp(context.TunedSimulationCount(), 2, 3)
+                : Math.Max(6, context.TunedSimulationCount() + 2);
+            int rolloutDepth = context.LightweightMode
+                ? Math.Clamp(context.TunedRolloutDepth(), 1, 2)
+                : Math.Max(5, context.TunedRolloutDepth() + 2);
             foreach (int firstMove in legalMoves)
             {
                 double totalScore = 0;
@@ -1080,6 +1139,7 @@ namespace StackMerge
                         continue;
                     }
 
+                    int peakHigh = copy.HighestBlock;
                     for (int depth = 0; depth < rolloutDepth && !copy.IsGameOver; depth++)
                     {
                         SolverDecision rolloutMove = HeuristicStackMergeSolver.ChooseHeuristicMove(copy, context, "Rollout");
@@ -1089,12 +1149,26 @@ namespace StackMerge
                         }
 
                         ApplyDecision(copy, rolloutMove);
+                        peakHigh = Math.Max(peakHigh, copy.HighestBlock);
                     }
 
+                    // Score-SEEKING terminal signal: keep the points earned over the rollout (the
+                    // original working signal) and add a strong peak-tier reward so MOCA actively
+                    // builds toward new highs. Deliberately does NOT use the survival-biased
+                    // EvaluateBoard — its -maxHeight² term punishes the tall stacks MOCA must build
+                    // to reach high tiers (that made an earlier rework play timid and score LESS).
+                    // Only a light free-space term and a death penalty keep it from suiciding.
                     double runScore = copy.Score - startScore;
+                    runScore += FloorLog2(Math.Max(1, peakHigh)) * 220;
+                    runScore += FreeSlots(copy) * 10;
+                    if (copy.IsGameOver)
+                    {
+                        runScore -= 6000;
+                    }
+
                     double firstMoveScore = HeuristicStackMergeSolver.ScoreMove(copy, firstResult, copy.Score - startScore);
                     firstMoveScore += TuningScore(copy, firstResult, copy.Score - startScore, context);
-                    runScore += firstMoveScore * 0.35;
+                    runScore += firstMoveScore * 0.3;
                     totalScore += runScore;
                     successfulRuns++;
                 }

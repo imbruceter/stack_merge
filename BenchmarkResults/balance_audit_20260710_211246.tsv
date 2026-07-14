@@ -1,0 +1,4 @@
+# Balance audit (ablation, common random numbers)
+# seeds=12345 maxRuns=12000 moveCap=1000 shopHorizon=1 metaHorizon=6 auditMeta=False
+Scope	Key	Seed	TotalSeconds	Runs	Prestiges	FirstPpoSeconds	FirstPrestigeSeconds	TotalEarned	Finished	HitCap	HitRunLimit	PpoUnlocked	FinalChips	HighestBlock	BestRunScore	LevelsCapYieldDiffScaleSpeed	StopReason
+Shop	(baseline)	12345	47589	5323	1	35650	47589	0	True	False	False	False	0	2	0	0/0/0/0/0	finished

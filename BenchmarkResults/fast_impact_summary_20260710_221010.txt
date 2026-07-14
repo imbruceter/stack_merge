@@ -1,0 +1,62 @@
+=== FAST IMPACT LAB ===  (51 purchased item groups, wall 93s)
+Single-baseline observational model: it does NOT replay the game per item. It compares local before/after windows around each purchase, then adds cycle-speedup signals for meta effects.
+Use it for balance direction: strong / weak / late / gate. Keep exact ablation only for suspicious edge cases.
+Horizon: 1 prestige(s), seed 12345, window 120 runs before/after.
+Baseline reached: 13:13:09 (5 323 runs, 1 prestiges, stop finished).
+PPO first unlocked: 9:54:09.
+Run replay cache: 0 hits / 5 316 misses / 5 316 stored deterministic runs.
+
+Item                            Role            Spent  Buy#     First   Cover   Direct Driver       Income    Score    High    Cycle  Payback  Verdict
+TokenPack                       Economy          4,9M   485   1:56:47     85% +1407372,5% output +1…   +58,4%   +12,3%      1x        —     0,4x  STRONG
+Unlock.AutoSolve                Gate             1,2K     1   0:20:23     97%      +0% output +0% +2945,1%  +362,8%      8x        —  2062,5x  GATE
+Unlock.ModifiersMenu            Gate               3M     1   9:42:35     27%    +380% output +3… +2333,8%  +242,5%     16x        —  1704,3x  GATE
+Modifier.Unstable Stack         Modifier        24,8M     5   9:42:44     27%     +60% output +6…   +2260%  +251,8%     16x        —   210,0x  STRONG
+Solver.RAND                     Solver             1K     1   0:09:17     99%      +0% output +0% +1850,8%  +297,8%      8x        —  1574,2x  STRONG
+Modifier.Queue Scrubber         Modifier        55,8M     5   9:43:11     26%     +60% output +6…   +1777%  +276,8%     16x        —    97,8x  STRONG
+Modifier.Miner's Pickaxe        Modifier          62M     5   9:43:28     26%     +60% output +6… +1650,4%  +299,5%     16x        —    90,6x  STRONG
+Solver.MERG                     Solver             3K     1   0:23:37     97%   -11,8% throughpu… +1644,7%  +428,9%      4x        —   926,7x  STRONG
+Modifier.Catalyst Stack         Modifier           3M     1   9:43:52     26%     +12% output +1… +1425,4%  +319,4%     16x        —  1920,7x  STRONG
+Unlock.AutoRestart              Gate               8K     1   0:35:27     96%      +0% output +0%  +254,2%   +72,4%      1x        —   301,9x  GATE
+Modifier.Mirror Stack           Modifier           3M     1   9:44:11     26%     +12% output +1… +1252,4%  +329,5%     16x        —  1964,8x  STRONG
+Unlock.SolverTuning             Gate              30K     1   1:45:29     87%      +0% output +0%   +57,3%   +21,5%      1x        —    59,8x  GATE
+Upgrade.ChipYield               Economy           25M    10   0:25:24     97%    +180% output +1… +1010,1%  +248,3%      2x        —     0,1x  STRONG
+Unlock.AgentsMenu               Gate             120K     1   6:38:49     50%    +400% output +4…  +684,4%    -3,4%      1x        —   339,4x  STRONG
+Agent.Merge Broker              Agent             60K     1   6:39:45     50%      +0% output +0%  +578,1%    -4,5%      1x        —   679,2x  STRONG
+Agent.Highwater Analyst         Agent            120K     1   6:40:49     49%      +0% output +0%  +450,9%    -4,8%      1x        —   331,9x  STRONG
+Solver.BAL                      Solver             6K     1   0:29:58     96%      +0% output +0%  +442,8%  +122,1%      2x        —   449,9x  STRONG
+Upgrade.PassiveYield            Economy          7,3M    10   0:26:59     97%      +0% passive +…  +676,7%  +178,4%      2x        —     0,4x  STRONG
+Upgrade.Speed                   Throughput       7,8M    10   0:31:38     96%  +597,5% output +5…  +378,4%  +105,1%      1x        —     0,3x  STRONG
+Upgrade.ActiveMultiplier        Economy          8,2M    10   0:28:10     96%      +0% passive +…  +561,1%  +151,7%      2x        —     0,3x  STRONG
+Solver.PLAN-3                   Solver           130K     1   6:44:09     49%   +11,7% solver +4…  +208,5%    -7,2%      1x        —   258,6x  STRONG
+Solver.COMBO                    Solver           180K     1   6:49:17     48%   +16,9% output +1…  +104,1%   -15,8%      1x        —   151,1x  STRONG
+Upgrade.PassiveTickRate         Economy          8,8M    10   0:33:38     96%      +0% passive +…  +313,6%   +88,8%      1x        —     0,3x  STRONG
+Solver.HEUR                     Solver            30K     1   1:40:47     87%   +20,9% throughpu…   +65,5%   +29,5%      1x        —    61,5x  STRONG
+Modifier.Joker                  Modifier         4,5M     1   9:45:14     26%     +12% output +1…   -65,4%  +289,9%     16x        —        —  STRONG
+Agent.Velocity Trader           Agent              3M     1   9:06:57     31%      +0% output +0%   +38,4%    +3,1%      1x        —    21,0x  STRONG
+Agent.Score Auditor             Agent            220K     1   7:01:18     47%      +0% output +0%   +37,5%    -1,8%      2x        —    81,0x  STRONG
+Solver.MOCA                     Solver           220K     1   6:58:14     47%      +0% output +0%   +35,9%    -7,8%      2x        —    75,1x  STRONG
+Upgrade.ComputeSpeed            Throughput       7,7M     5   6:45:22     49%   +12,4% output +1…    +178%    -8,8%      1x        —     4,3x  STRONG
+Agent.Overclocker               Agent            400K     1   7:22:02     44%      +0% output +0%   +26,2%   +10,2%    0,5x        —    44,9x  STRONG
+Solver.PLAN-5                   Solver           400K     1   7:12:30     45%      +0% output +0%   +20,4%   +17,1%    0,5x        —    31,7x  STRONG
+Unlock.ExtraAgentSlot           Gate             1,5M     1   8:13:30     38%      +0% output +0%   +20,7%    -1,3%      1x        —    16,0x  STRONG
+Agent.Token Prospector          Agent            1,5M     1   8:16:21     37%      +0% output +0%   +12,9%    +2,2%      1x        —    10,6x  STRONG
+Agent.Restart Sponsor           Agent              1M     1   8:05:22     39%      +0% output +0%   +12,1%    +6,3%      1x        —    12,5x  STRONG
+Agent.Quartermaster             Agent            650K     1   7:35:11     43%      +0% output +0%   +11,7%    +0,6%      2x        —    15,7x  STRONG
+Modifier.Neural Accelerator     Modifier           6M     1   9:45:40     26%     +12% output +1…   -75,3%  +257,2%     16x        —        —  STRONG
+Solver.LOOK                     Solver            80K     1   5:23:37     59%     -24% output -2…   +10,6%   +49,7%      1x        —     7,3x  STRONG
+Upgrade.Difficulty              Gate             8,6M     5   3:34:43     73%    +140% output +1…    -3,2%    -8,5%      1x        —        —  STRONG
+Solver.MOCA+                    Solver           900K     1   7:52:26     40%      +0% output +0%    +4,6%    -0,2%      1x        —     4,7x  STRONG
+Agent.Move Dividend             Agent            2,2M     1   8:57:06     32%      +0% output +0%    +6,2%    +3,2%      1x        —     4,2x  STRONG
+Upgrade.StackCapacity           Gate            13,7M     5   0:47:45     94%    +100% board +10…    +2,7%    +7,5%      1x        —     0,0x  STRONG
+Upgrade.QueuePreview            Gate             440K     2   2:08:17     84%     +24% output +2…   +22,7%     +13%      1x        —     2,5x  STRONG
+Upgrade.ScalingFrequency        Gate            20,2M    10   5:44:04     57%     +80% board +80%    +2,3%       0%      1x        —     0,0x  STRONG
+Upgrade.SalvageProtocol         Economy         25,6M    10   1:28:22     89%      +0% output +0%   +51,6%   +22,7%      1x        —     0,1x  STRONG
+Upgrade.ProfitableEnding        Economy         10,3M     5   5:33:15     58%      +0% output +0%    +5,6%   +21,7%      1x        —     0,0x  OK
+Upgrade.TokenDividend           Economy         17,1M     5   3:02:46     77%   +14,6% income +1…    +4,4%    +2,2%      1x        —     0,0x  OK
+Solver.MCTS                     Solver           1,8M     1   8:22:28     37%      +0% output +0%    -4,1%    -5,2%      1x        —        —  WEAK
+Upgrade.ComboEngine             Economy           16M    10   0:53:33     93%      +0% output +0%   -16,7%    -5,2%      1x        —        —  WEAK
+Solver.STALL                    Solver            18K     1   0:56:54     93%   -20,3% solver +5…   -24,5%   -11,2%      1x        —        —  WEAK
+Solver.PPO                      Solver           100M     1   9:54:09     25%      +0% output +0%    -100%    -100%       —        —        —  WEAK
+Research.Seed Capital           Meta               1i     1  13:13:09      0%      +0% output +0%    -100%    -100%       —        —        —  LATE
+
+Columns: Direct is the purchase's immediate formula/snapshot delta. Income/Score/High are local after-vs-before windows. Cycle is completed-prestige-cycle speedup after the first purchase when available. Payback estimates extra chips over the remaining baseline horizon divided by chips spent.

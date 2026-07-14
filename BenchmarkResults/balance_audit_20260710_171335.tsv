@@ -1,0 +1,77 @@
+# Balance audit (ablation, common random numbers)
+# seeds=12345 maxRuns=50000 moveCap=1000 shopHorizon=1 metaHorizon=6 auditMeta=True
+Scope	Key	Seed	TotalSeconds	Runs	Prestiges	FirstPpoSeconds	FirstPrestigeSeconds	TotalEarned	Finished	HitCap
+Shop	(baseline)	12345	22374	2224	0			3239880	False	False
+Shop	Solver.RAND	12345	85	1	0			188	False	False
+Shop	Solver.MERG	12345	85	1	0			188	False	False
+Shop	Solver.BAL	12345	85	1	0			188	False	False
+Shop	Solver.HEUR	12345	37596	3497	0			3637689	False	False
+Shop	Solver.LOOK	12345	85	1	0			188	False	False
+Shop	Solver.MOCA	12345	85	1	0			188	False	False
+Shop	Solver.PLAN-3	12345	85	1	0			188	False	False
+Shop	Solver.PLAN-5	12345	21205	2119	0			2957038	False	False
+Shop	Solver.MOCA+	12345	85	1	0			188	False	False
+Shop	Solver.MCTS	12345	85	1	0			188	False	False
+Shop	Solver.STALL	12345	85	1	0			188	False	False
+Shop	Solver.COMBO	12345	21166	2115	0			2949927	False	False
+Shop	Unlock.AutoSolve	12345	85	1	0			188	False	False
+Shop	Unlock.AutoRestart	12345	85	1	0			188	False	False
+Shop	Unlock.SolverTuning	12345	85	1	0			188	False	False
+Shop	Unlock.AgentsMenu	12345	22131	2203	0			3175750	False	False
+Shop	Unlock.ExtraAgentSlot	12345	85	1	0			188	False	False
+Shop	Unlock.ModifiersMenu	12345	85	1	0			188	False	False
+Shop	Upgrade.Speed	12345	85	1	0			188	False	False
+Shop	Upgrade.ComputeSpeed	12345	22362	2223	0			3236864	False	False
+Shop	Upgrade.StackCapacity	12345	85	1	0			188	False	False
+Shop	Upgrade.QueuePreview	12345	85	1	0			188	False	False
+Shop	Upgrade.ChipYield	12345	85	1	0			188	False	False
+Shop	Upgrade.Difficulty	12345	19505	1712	0			2921178	False	False
+Shop	Upgrade.ScalingFrequency	12345	85	1	0			188	False	False
+Shop	Upgrade.ProfitableEnding	12345	85	1	0			188	False	False
+Shop	Upgrade.PassiveYield	12345	85	1	0			188	False	False
+Shop	Upgrade.PassiveTickRate	12345	20684	2049	0			2881123	False	False
+Shop	Upgrade.ActiveMultiplier	12345	85	1	0			188	False	False
+Shop	Upgrade.ComboEngine	12345	85	1	0			188	False	False
+Shop	Upgrade.SalvageProtocol	12345	85	1	0			188	False	False
+Shop	Upgrade.TokenDividend	12345	21757	2200	0			3081565	False	False
+Shop	TokenPack	12345	85	1	0			188	False	False
+Shop	Agent.Merge Broker	12345	85	1	0			188	False	False
+Shop	Agent.Highwater Analyst	12345	85	1	0			188	False	False
+Shop	Agent.Score Auditor	12345	22110	2201	0			3170505	False	False
+Shop	Agent.Overclocker	12345	85	1	0			188	False	False
+Shop	Agent.Quartermaster	12345	85	1	0			188	False	False
+Shop	Agent.Restart Sponsor	12345	85	1	0			188	False	False
+Shop	Agent.Token Prospector	12345	21258	2124	0			2967493	False	False
+Shop	Agent.Move Dividend	12345	85	1	0			188	False	False
+Shop	Agent.Velocity Trader	12345	85	1	0			188	False	False
+Shop	Modifier.Unstable Stack	12345	85	1	0			188	False	False
+Shop	Modifier.Catalyst Stack	12345	22340	2221	0			3231410	False	False
+Shop	Modifier.Mirror Stack	12345	85	1	0			188	False	False
+Shop	Modifier.Joker	12345	85	1	0			188	False	False
+Shop	Modifier.Miner's Pickaxe	12345	85	1	0			188	False	False
+Shop	Modifier.Queue Scrubber	12345	22362	2223	0			3236864	False	False
+Shop	Modifier.Neural Accelerator	12345	85	1	0			188	False	False
+Meta	(baseline)	12345	85	1	0			188	False	False
+Meta	Research.Insight Amplifier	12345	85	1	0			188	False	False
+Meta	Research.Seed Capital	12345	21532	2149	0			3030170	False	False
+Meta	Research.Automation Memory	12345	85	1	0			188	False	False
+Meta	Research.Algorithm Archive	12345	85	1	0			188	False	False
+Meta	Research.Yield Theory	12345	85	1	0			188	False	False
+Meta	Research.PPO Bootcamp	12345	21166	2115	0			2949927	False	False
+Meta	Research.PPO Memory	12345	85	1	0			188	False	False
+Meta	Research.High Focus	12345	85	1	0			188	False	False
+Meta	Research.Stability Model	12345	85	1	0			188	False	False
+Meta	Research.Insight Extractor	12345	85	1	0			188	False	False
+Meta	Research.Passive Insight	12345	85	1	0			188	False	False
+Meta	Research.Offline Engine	12345	85	1	0			188	False	False
+Meta	Research.Offline Buffer	12345	85	1	0			188	False	False
+Meta	Research.Agent Synergy	12345	85	1	0			188	False	False
+Meta	Research.Bulk Discount	12345	85	1	0			188	False	False
+Meta	Research.Evaluation Efficiency	12345	85	1	0			188	False	False
+Meta	Rack.CPU Rack	12345	85	1	0			188	False	False
+Meta	Rack.GPU Rack	12345	85	1	0			188	False	False
+Meta	Rack.TPU Pod	12345	85	1	0			188	False	False
+Meta	Rack.Neural Fabric	12345	85	1	0			188	False	False
+Meta	Facility.Power Grid	12345	85	1	0			188	False	False
+Meta	Facility.Cooling Loop	12345	85	1	0			188	False	False
+Meta	Facility.Fabric Interconnect	12345	85	1	0			188	False	False

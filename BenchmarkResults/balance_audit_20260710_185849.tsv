@@ -1,0 +1,19 @@
+# Balance audit (ablation, common random numbers)
+# seeds=12345 maxRuns=20000 moveCap=1000 shopHorizon=1 metaHorizon=6 auditMeta=False
+Scope	Key	Seed	TotalSeconds	Runs	Prestiges	FirstPpoSeconds	FirstPrestigeSeconds	TotalEarned	Finished	HitCap	HitRunLimit
+Shop	(baseline)	12345	50994	5323	1	35650	50994	0	True	False	False
+Shop	Upgrade.Speed	12345	90075	3672	1	62637	90075	0	True	False	False
+Shop	Upgrade.ComputeSpeed	12345	50682	5238	1	35247	50682	0	True	False	False
+Shop	Upgrade.StackCapacity	12345	73606	10746	0			10779383	False	False	True
+Shop	Upgrade.QueuePreview	12345	53078	6016	1	37704	53078	0	True	False	False
+Shop	Upgrade.ChipYield	12345	112874	10746	0			9283979	False	False	True
+Shop	Upgrade.Difficulty	12345	71434	10746	0			1192470560	False	False	True
+Shop	Upgrade.ScalingFrequency	12345	49071	4307	1	33568	49071	0	True	False	False
+Shop	Upgrade.ProfitableEnding	12345	50732	5330	1	35278	50732	0	True	False	False
+Shop	Upgrade.PassiveYield	12345	47419	5087	1	32053	47419	0	True	False	False
+Shop	Upgrade.PassiveTickRate	12345	50618	5321	1	35257	50618	0	True	False	False
+Shop	Upgrade.ActiveMultiplier	12345	50733	5341	1	35230	50733	0	True	False	False
+Shop	Upgrade.ComboEngine	12345	52046	5325	1	36672	52046	0	True	False	False
+Shop	Upgrade.SalvageProtocol	12345	49184	5155	1	33786	49184	0	True	False	False
+Shop	Upgrade.TokenDividend	12345	51214	5347	1	35780	51214	0	True	False	False
+Shop	TokenPack	12345	54529	4097	1	38938	54529	0	True	False	False

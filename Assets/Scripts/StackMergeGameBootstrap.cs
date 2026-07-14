@@ -174,10 +174,20 @@ namespace StackMerge
         [SerializeField] private Button profitableEndingUpgradeButton;
         [Tooltip("Single Passive Yield upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Passive Yield\".")]
         [SerializeField] private Button passiveYieldUpgradeButton;
+        [Tooltip("Single Combo Engine upgrade button. Optional: auto-found by a name/label containing \"Combo Engine\".")]
+        [SerializeField] private Button comboEngineUpgradeButton;
+        [Tooltip("Single Salvage Protocol upgrade button. Optional: auto-found by a name/label containing \"Salvage Protocol\".")]
+        [SerializeField] private Button salvageProtocolUpgradeButton;
+        [Tooltip("Single Token Dividend upgrade button. Optional: auto-found by a name/label containing \"Token Dividend\".")]
+        [SerializeField] private Button tokenDividendUpgradeButton;
         [Tooltip("Single Passive Tick Rate upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Passive Tick Rate\".")]
         [SerializeField] private Button passiveTickRateUpgradeButton;
         [Tooltip("Single Active Multiplier upgrade button. Optional: if left empty, the Bootstrap searches the scene for a Button whose name/label contains \"Active Multiplier\".")]
         [SerializeField] private Button activeMultiplierUpgradeButton;
+        [Tooltip("PPO Curriculum amount upgrade. Optional: auto-found by a name/label containing \"Curriculum\" (but not \"Rate\").")]
+        [SerializeField] private Button curriculumAmountUpgradeButton;
+        [Tooltip("PPO Curriculum rate upgrade. Optional: auto-found by a name/label containing \"Curriculum Rate\".")]
+        [SerializeField] private Button curriculumRateUpgradeButton;
         [SerializeField] private TMP_Text progressionStageText;
         [SerializeField] private Button modifiersMenuUnlockButton;
         [SerializeField] private Button agentsMenuUnlockButton;
@@ -1470,6 +1480,36 @@ namespace StackMerge
             {
                 computeSpeedUpgradeButton = FindButtonByLooseName("Compute Speed");
             }
+
+            if (comboEngineUpgradeButton == null)
+            {
+                comboEngineUpgradeButton = FindButtonByLooseName("Combo Engine");
+            }
+
+            if (salvageProtocolUpgradeButton == null)
+            {
+                salvageProtocolUpgradeButton = FindButtonByLooseName("Salvage Protocol");
+            }
+
+            if (tokenDividendUpgradeButton == null)
+            {
+                tokenDividendUpgradeButton = FindButtonByLooseName("Token Dividend");
+            }
+
+            if (curriculumRateUpgradeButton == null)
+            {
+                curriculumRateUpgradeButton = FindButtonByLooseName("Curriculum Rate");
+            }
+
+            if (curriculumAmountUpgradeButton == null)
+            {
+                // Match the amount button by "Curriculum" but not the rate button we just resolved.
+                Button curriculum = FindButtonByLooseName("Curriculum");
+                if (curriculum != curriculumRateUpgradeButton)
+                {
+                    curriculumAmountUpgradeButton = curriculum;
+                }
+            }
         }
 
         private Button FindButtonByLooseName(string expectedName)
@@ -1811,6 +1851,36 @@ namespace StackMerge
             {
                 scalingFrequencyUpgradeButton.onClick.RemoveAllListeners();
                 scalingFrequencyUpgradeButton.onClick.AddListener(BuyScalingFrequencyUpgrade);
+            }
+
+            if (comboEngineUpgradeButton != null)
+            {
+                comboEngineUpgradeButton.onClick.RemoveAllListeners();
+                comboEngineUpgradeButton.onClick.AddListener(BuyComboEngineUpgrade);
+            }
+
+            if (salvageProtocolUpgradeButton != null)
+            {
+                salvageProtocolUpgradeButton.onClick.RemoveAllListeners();
+                salvageProtocolUpgradeButton.onClick.AddListener(BuySalvageProtocolUpgrade);
+            }
+
+            if (tokenDividendUpgradeButton != null)
+            {
+                tokenDividendUpgradeButton.onClick.RemoveAllListeners();
+                tokenDividendUpgradeButton.onClick.AddListener(BuyTokenDividendUpgrade);
+            }
+
+            if (curriculumAmountUpgradeButton != null)
+            {
+                curriculumAmountUpgradeButton.onClick.RemoveAllListeners();
+                curriculumAmountUpgradeButton.onClick.AddListener(BuyCurriculumAmountUpgrade);
+            }
+
+            if (curriculumRateUpgradeButton != null)
+            {
+                curriculumRateUpgradeButton.onClick.RemoveAllListeners();
+                curriculumRateUpgradeButton.onClick.AddListener(BuyCurriculumRateUpgrade);
             }
 
             if (profitableEndingUpgradeButton != null)
@@ -2616,6 +2686,9 @@ namespace StackMerge
             {
                 RefreshHud();
             }
+
+            // PPO Curriculum only accrues while actively in PPO Training mode (guarded inside).
+            progression.TickCurriculum(Time.deltaTime);
         }
 
         private bool HasAssignedResearchCardButtons()
@@ -2810,7 +2883,11 @@ namespace StackMerge
         // prestige button/summary text enforces on its own.
         private bool IsResearchMenuUnlocked()
         {
-            return progression != null && progression.IsSolverUnlocked(SolverId.MachineLearning);
+            // Permanent once earned: buying PPO opens it, and after the first prestige (which requires
+            // PPO) it STAYS open — prestige resets the solver unlocks, but Research is not stage-gated
+            // and spends persistent Insight, so re-locking it would strand the player's Insight.
+            return progression != null
+                && (progression.PrestigeCount >= 1 || progression.IsSolverUnlocked(SolverId.MachineLearning));
         }
 
         public bool IsHowToPlayLayerUnlocked(StackMergeHowToPlayLayer layer)
@@ -3688,13 +3765,19 @@ namespace StackMerge
                     ? $"Merge x{result.MergeCount}: {FormatNumber(result.ResultingTopValue)}"
                     : $"+{FormatNumber(result.PlacedValue)}"
             };
+
+            // Combo Engine: surface the running streak so the multiplier is visible in play.
+            if (progression.ComboEngineLevel > 0 && progression.CurrentComboStreak >= 2)
+            {
+                moveText += $" | Combo x{progression.CurrentComboStreak}";
+            }
             string resultReason = string.IsNullOrWhiteSpace(result.Reason)
                 ? reason
                 : string.IsNullOrWhiteSpace(reason)
                     ? result.Reason
                     : $"{reason}; {result.Reason}";
             string learningText = progression.SelectedSolver == SolverId.MachineLearning
-                ? $" | PPO U{progression.MachineLearningAgent.Metrics.Updates}"
+                ? $" | PPO knowledge {progression.MachineLearningSkill * 100f:0}%"
                 : string.Empty;
             SetText(feedbackText, $"{moveText}\n{chipText}{learningText}\n{resultReason}");
 
@@ -3717,6 +3800,14 @@ namespace StackMerge
         {
             bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
             SolverId histSolverId = manualRun ? (SolverId)(-1) : progression.SelectedSolver;
+
+            // Salvage Protocol: convert a share of the run's final score into chips.
+            long salvaged = progression.AwardSalvage(gameState.Score, machineLearningTraining);
+            if (salvaged > 0)
+            {
+                SetText(feedbackText, $"Salvage: +{FormatNumber(salvaged)} <sprite name=\"chips\" tint=1>");
+            }
+
             long runBonus = progression.AwardRunCompleted(
                 gameState.Score,
                 histSolverId,
@@ -3954,7 +4045,7 @@ namespace StackMerge
             {
                 SetText(ppoModeHintText, playingUnlocked
                     ? "Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."
-                    : $"Normal mode unlocks after {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)}");
+                    : $"Normal mode unlocks after {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(progression.EffectivePlayingModeFrameRequirement)}");
             }
 
             SetActive(ppoModeOverlay, true);
@@ -4208,7 +4299,7 @@ namespace StackMerge
             bool bought = false;
             foreach (SolverDefinition definition in StackMergeSolverCatalog.Definitions)
             {
-                if (definition.Id == SolverId.MachineLearning || progression.IsSolverUnlocked(definition.Id))
+                if (!definition.Available || definition.Id == SolverId.MachineLearning || progression.IsSolverUnlocked(definition.Id))
                 {
                     continue;
                 }
@@ -4252,6 +4343,9 @@ namespace StackMerge
                 boughtThisPass |= TryBuy(!progression.IsMaxPassiveYield, progression.GetPassiveYieldUpgradeCost(), progression.BuyPassiveYieldUpgrade);
                 boughtThisPass |= TryBuy(progression.PassiveSupportUpgradesUnlocked && !progression.IsMaxPassiveTickRate, progression.GetPassiveTickRateUpgradeCost(), progression.BuyPassiveTickRateUpgrade);
                 boughtThisPass |= TryBuy(progression.PassiveSupportUpgradesUnlocked && !progression.IsMaxActiveMultiplier, progression.GetActiveMultiplierUpgradeCost(), progression.BuyActiveMultiplierUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxComboEngine, progression.GetComboEngineUpgradeCost(), progression.BuyComboEngineUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxSalvageProtocol, progression.GetSalvageProtocolUpgradeCost(), progression.BuySalvageProtocolUpgrade);
+                boughtThisPass |= TryBuy(!progression.IsMaxTokenDividend, progression.GetTokenDividendUpgradeCost(), progression.BuyTokenDividendUpgrade);
                 boughtAny |= boughtThisPass;
             }
 
@@ -4895,7 +4989,7 @@ namespace StackMerge
             }
 
             long frames = progression.MachineLearningFrames;
-            long required = Math.Max(1, progression.MachineLearningPlayingModeFrameRequirement);
+            long required = Math.Max(1, progression.EffectivePlayingModeFrameRequirement);
             bool trained = progression.MachineLearningPlayingModeUnlocked;
             long gain = progression.PreviewPrestigeInsightGain();
 
@@ -5374,6 +5468,71 @@ namespace StackMerge
 
             bool bought = progression.BuyIncomeUpgrade();
             SetText(feedbackText, bought ? $"Chip yield level {progression.IncomeLevel}" : "Income upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyComboEngineUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyComboEngineUpgrade();
+            SetText(feedbackText, bought ? $"Combo Engine level {progression.ComboEngineLevel}" : "Combo Engine upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuySalvageProtocolUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuySalvageProtocolUpgrade();
+            SetText(feedbackText, bought ? $"Salvage Protocol level {progression.SalvageProtocolLevel}" : "Salvage Protocol upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyTokenDividendUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyTokenDividendUpgrade();
+            SetText(feedbackText, bought ? $"Token Dividend level {progression.TokenDividendLevel}" : "Token Dividend upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyCurriculumAmountUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyCurriculumAmountUpgrade();
+            SetText(feedbackText, bought ? $"PPO Curriculum level {progression.CurriculumAmountLevel}" : "Curriculum upgrade unavailable");
+            progression.Save();
+            RefreshEverything();
+        }
+
+        private void BuyCurriculumRateUpgrade()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            bool bought = progression.BuyCurriculumRateUpgrade();
+            SetText(feedbackText, bought ? $"Curriculum Rate level {progression.CurriculumRateLevel}" : "Curriculum Rate upgrade unavailable");
             progression.Save();
             RefreshEverything();
         }
@@ -6153,12 +6312,10 @@ namespace StackMerge
             {
                 SetText(solverText, "Manual");
             }
-            else if (progression.SelectedSolver == SolverId.MachineLearning)
-            {
-                SetText(solverText, $"{GetSelectedSolver().DisplayName} Lv {progression.MachineLearningLevel}");
-            }
             else
             {
+                // PPO shows just its name; its "knowledge %" goes in the feedback line (the old
+                // "Lv N" read like a separate progression track, which confused players).
                 SetText(solverText, $"{GetSelectedSolver().DisplayName}");
             }
             SetText(speedText, machineLearningTraining
@@ -6267,6 +6424,18 @@ namespace StackMerge
                 }
 
                 SolverDefinition definition = StackMergeSolverCatalog.Definitions[i];
+                // Removed solvers (Available=false) are hidden from the shop; their button object is
+                // disabled so a layout group re-flows around it. Flip Available back to true to restore.
+                if (button.gameObject.activeSelf != definition.Available)
+                {
+                    button.gameObject.SetActive(definition.Available);
+                }
+
+                if (!definition.Available)
+                {
+                    continue;
+                }
+
                 bool unlocked = progression.IsSolverUnlocked(definition.Id);
                 bool selectedInPanel = selectedSolverId == definition.Id;
                 bool active = progression.SelectedSolver == definition.Id;
@@ -6334,7 +6503,12 @@ namespace StackMerge
             SetText(
                 solverDetailStatusText,
                 statusLabel);
-            if (!isMachineLearning && active)
+            if (isMachineLearning && active)
+            {
+                SetButtonText(solverDetailActionButton, "Change mode");
+                if (solverDetailActionButton != null) solverDetailActionButton.interactable = true;
+            }
+            else if (!isMachineLearning && active)
             {
                 SetButtonText(solverDetailActionButton, solverDeselected ? "Select" : "Deselect");
                 if (solverDetailActionButton != null) solverDetailActionButton.interactable = true;
@@ -6364,6 +6538,18 @@ namespace StackMerge
                 }
 
                 SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(card.solverId);
+                // Removed solvers (Available=false) hide their whole card so the shop shows only the
+                // 7 kept solvers (+ PPO). Flip Available back to true in the catalog to restore.
+                if (card.gameObject.activeSelf != definition.Available)
+                {
+                    card.gameObject.SetActive(definition.Available);
+                }
+
+                if (!definition.Available)
+                {
+                    continue;
+                }
+
                 bool unlocked = progression.IsSolverUnlocked(card.solverId);
                 bool active = progression.SelectedSolver == card.solverId;
                 bool isMachineLearning = card.solverId == SolverId.MachineLearning;
@@ -6381,6 +6567,13 @@ namespace StackMerge
                     {
                         card.actionButton.interactable = machineLearningGateReady && progression.Chips >= definition.Cost;
                     }
+                }
+                else if (isMachineLearning && active)
+                {
+                    // PPO stays clickable while selected so you can re-open the Training/Normal mode
+                    // popup — otherwise switching mode meant deselecting to another solver and back.
+                    SetButtonText(card.actionButton, "Change mode");
+                    if (card.actionButton != null) card.actionButton.interactable = true;
                 }
                 else if (!isMachineLearning && active)
                 {
@@ -6957,11 +7150,37 @@ namespace StackMerge
 
         // Drives every static Agent card (Name/Cost-InfoText/Button) straight from progression
         // state. Cards are never instantiated — one already exists per agent in the Hierarchy.
+        // Desired shop DISPLAY order (independent of the AgentId/ModifierId enum order the data arrays
+        // must keep). Edit these to reorder the UI — never reorder the definition arrays.
+        private static readonly AgentId[] AgentDisplayOrder =
+        {
+            AgentId.RestartSponsor, AgentId.HighwaterAnalyst, AgentId.Quartermaster, AgentId.ScoreAuditor,
+            AgentId.Overclocker, AgentId.VelocityTrader, AgentId.MoveDividend, AgentId.MergeBroker, AgentId.TokenProspector
+        };
+
+        private static readonly ModifierId[] ModifierDisplayOrder =
+        {
+            ModifierId.NeuralAccelerator, ModifierId.UnstableStack, ModifierId.MinersPickaxe, ModifierId.QueueScrubber,
+            ModifierId.CatalystStack, ModifierId.MirrorStack, ModifierId.Joker
+        };
+
         private void RefreshAgentCards()
         {
             if (progression == null || agentCards == null)
             {
                 return;
+            }
+
+            for (int order = 0; order < AgentDisplayOrder.Length; order++)
+            {
+                foreach (StackMergeAgentCard card in agentCards)
+                {
+                    if (card != null && card.agentId == AgentDisplayOrder[order])
+                    {
+                        card.transform.SetSiblingIndex(order);
+                        break;
+                    }
+                }
             }
 
             foreach (StackMergeAgentCard card in agentCards)
@@ -7148,6 +7367,18 @@ namespace StackMerge
                 return;
             }
 
+            for (int order = 0; order < ModifierDisplayOrder.Length; order++)
+            {
+                foreach (StackMergeModifierCard card in modifierCards)
+                {
+                    if (card != null && card.modifierId == ModifierDisplayOrder[order])
+                    {
+                        card.transform.SetSiblingIndex(order);
+                        break;
+                    }
+                }
+            }
+
             foreach (StackMergeModifierCard card in modifierCards)
             {
                 if (card == null)
@@ -7201,19 +7432,20 @@ namespace StackMerge
 
             if (modifiersMenuUnlockButton != null)
             {
+                // Single short two-line label so it fits: "Modifiers Lab\n{Locked | <chips> 3M | Unlocked}".
                 if (progression.ModifiersMenuUnlocked)
                 {
-                    SetUpgradeButtonLabels(modifiersMenuUnlockButton, "Modifier Lab", "Unlocked", false);
+                    SetButtonText(modifiersMenuUnlockButton, "Modifiers Lab\nUnlocked");
+                    modifiersMenuUnlockButton.interactable = false;
                 }
                 else
                 {
                     long cost = progression.GetModifiersMenuUnlockCost();
                     bool gateReady = progression.CanUnlockModifiersMenu;
-                    SetUpgradeButtonLabels(
-                        modifiersMenuUnlockButton,
-                        "Modifier Lab",
-                        gateReady ? $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}" : "Stage locked",
-                        gateReady && progression.Chips >= cost);
+                    SetButtonText(modifiersMenuUnlockButton, gateReady
+                        ? $"Modifiers Lab\n<sprite name=\"chips\" tint=1> {FormatNumber(cost)}"
+                        : "Modifiers Lab\nLocked");
+                    modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
                 }
             }
 
@@ -7533,14 +7765,103 @@ namespace StackMerge
             {
                 int level = progression.IncomeLevel;
                 int maxLevel = progression.MaxIncomeLevel;
+                int percentPerLevel = (int)Math.Round(StackMergeProgression.IncomeBonusPerLevel * 100.0);
                 if (progression.IsMaxIncome)
                 {
-                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{level * 35}% yield ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{level * percentPerLevel}% yield ({level}/{maxLevel})", "Maxed", false);
                 }
                 else
                 {
                     long cost = progression.GetIncomeUpgradeCost();
-                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * 35}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * percentPerLevel}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Combo Engine: shows the per-streak-step bonus buying grants.
+            if (comboEngineUpgradeButton != null)
+            {
+                int level = progression.ComboEngineLevel;
+                int maxLevel = progression.MaxComboEngineLevel;
+                if (progression.IsMaxComboEngine)
+                {
+                    SetUpgradeButtonLabels(comboEngineUpgradeButton, $"+{StackMergeProgression.GetComboEffectPercentPerStreak(level):0.0}%/streak ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetComboEngineUpgradeCost();
+                    SetUpgradeButtonLabels(comboEngineUpgradeButton, $"+{StackMergeProgression.GetComboEffectPercentPerStreak(level + 1):0.0}%/streak ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Salvage Protocol: shows the game-over score conversion share.
+            if (salvageProtocolUpgradeButton != null)
+            {
+                int level = progression.SalvageProtocolLevel;
+                int maxLevel = progression.MaxSalvageProtocolLevel;
+                if (progression.IsMaxSalvageProtocol)
+                {
+                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, $"{StackMergeProgression.GetSalvageEffectPercent(level):0}% salvage ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetSalvageProtocolUpgradeCost();
+                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, $"{StackMergeProgression.GetSalvageEffectPercent(level + 1):0}% salvage ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // Token Dividend: shows the per-√(held tokens) income bonus.
+            if (tokenDividendUpgradeButton != null)
+            {
+                int level = progression.TokenDividendLevel;
+                int maxLevel = progression.MaxTokenDividendLevel;
+                if (progression.IsMaxTokenDividend)
+                {
+                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, $"+{StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level):0.0}%/√token ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetTokenDividendUpgradeCost();
+                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, $"+{StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level + 1):0.0}%/√token ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // PPO Curriculum (amount): shaves the training frame requirement per tick. Gated on owning PPO.
+            if (curriculumAmountUpgradeButton != null)
+            {
+                int level = progression.CurriculumAmountLevel;
+                int maxLevel = progression.MaxCurriculumAmountLevel;
+                if (!progression.CurriculumUnlocked)
+                {
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, "PPO Curriculum", "Needs PPO", false);
+                }
+                else if (progression.IsMaxCurriculumAmount)
+                {
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, $"-{StackMergeProgression.GetCurriculumReductionPerTick(level)} frames/tick ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetCurriculumAmountUpgradeCost();
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, $"-{StackMergeProgression.GetCurriculumReductionPerTick(level + 1)} frames/tick ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                }
+            }
+
+            // PPO Curriculum (rate): tick interval. Gated on owning at least Curriculum L1.
+            if (curriculumRateUpgradeButton != null)
+            {
+                int level = progression.CurriculumRateLevel;
+                int maxLevel = progression.MaxCurriculumRateLevel;
+                if (!progression.CurriculumRateUnlocked)
+                {
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, "Curriculum Rate", "Needs Curriculum", false);
+                }
+                else if (progression.IsMaxCurriculumRate)
+                {
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, $"Every {StackMergeProgression.GetCurriculumTickInterval(level):0.00}s ({level}/{maxLevel})", "Maxed", false);
+                }
+                else
+                {
+                    long cost = progression.GetCurriculumRateUpgradeCost();
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, $"Every {StackMergeProgression.GetCurriculumTickInterval(level + 1):0.00}s ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
                 }
             }
         }
@@ -7559,17 +7880,11 @@ namespace StackMerge
 
             if (prestigeButton != null)
             {
+                // Static label — the adjacent prestigeSummaryText already spells out the gain/status,
+                // so the button no longer duplicates it dynamically. Colour still reflects readiness.
                 long gain = progression.PreviewPrestigeInsightGain();
-                if (gain > 0)
-                {
-                    SetButtonText(prestigeButton, $"Prestige\n+{FormatNumber(gain)} Insight");
-                    SetButtonColor(prestigeButton, HexColor("#7C3AED"));
-                }
-                else
-                {
-                    SetButtonText(prestigeButton, progression.PrestigeAvailable ? "Prestige\nRun Normal PPO" : "Prestige\nNeeds Training");
-                    SetButtonColor(prestigeButton, HexColor("#334155"));
-                }
+                SetButtonText(prestigeButton, "Prestige");
+                SetButtonColor(prestigeButton, HexColor(gain > 0 ? "#7C3AED" : "#334155"));
 
                 // Always clickable: the button opens the Prestige Reset Modal, which shows training
                 // progress and the exact payout — only the modal's Buy button gates the reset.
@@ -7707,11 +8022,21 @@ namespace StackMerge
             int level = progression.GetResearchLevel(selectedResearchId);
             bool maxed = progression.IsResearchMaxed(selectedResearchId);
             bool canBuy = progression.CanBuyResearch(selectedResearchId);
-            string effect = progression.GetResearchEffectSummary(selectedResearchId);
+            string effect = progression.GetResearchEffectSummary(selectedResearchId, level);
+            // Show current → next so the value is meaningful even at level 0 (e.g. "x1.00 -> x2.00").
+            string effectDisplay = effect;
+            if (!maxed)
+            {
+                string next = progression.GetResearchEffectSummary(selectedResearchId, level + 1);
+                if (!string.IsNullOrEmpty(next) && next != effect)
+                {
+                    effectDisplay = $"{effect} -> {next}";
+                }
+            }
             string reason = progression.GetResearchUnavailableReason(selectedResearchId);
 
             SetText(researchDetailNameText, definition.DisplayName);
-            SetText(researchDetailStatusText, $"Level {level}/{definition.MaxLevel} | {effect}");
+            SetText(researchDetailStatusText, $"Level {level}/{definition.MaxLevel}");
 
             string availability = maxed
                 ? "This research is maxed."
@@ -7720,7 +8045,7 @@ namespace StackMerge
                     : reason;
 
             SetText(researchDetailInfoText,
-                $"{definition.Description}\n\nCurrent effect: {effect}\n\n{availability}\n\nInsight: {FormatNumber(progression.ResearchInsight)}");
+                $"{definition.Description}\n\nEffect: {effectDisplay}\n\n{availability}");
 
             if (researchDetailActionButton != null)
             {
@@ -8204,7 +8529,7 @@ namespace StackMerge
                 stats.AppendLine($"Policy loss {metrics.LastPolicyLoss:0.000}   Entropy {metrics.LastEntropy:0.000}");
                 stats.AppendLine(progression.MachineLearningPlayingModeUnlocked
                     ? "Playing mode: unlocked"
-                    : $"Playing mode unlocks at {FormatNumber(progression.MachineLearningPlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
+                    : $"Playing mode unlocks at {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
             }
 
             SetText(solverInfoStatsText, stats.ToString());
@@ -9489,9 +9814,36 @@ namespace StackMerge
                 return "When the run ends, a new one starts automatically.";
             }
 
+            // Must be checked before the generic token-pack match below.
+            if (lookup.Contains("tokendividend") || lookup.Contains("dividend"))
+            {
+                return "Held <sprite name=\"token\" tint=1> pay +1% <sprite name=\"chips\" tint=1> per level times the square root of the hoard.";
+            }
+
             if (lookup.Contains("tokenpack") || lookup.Contains("tokens"))
             {
-                return "The currency for Auto restart.";
+                return "The currency for Auto restart. Pack price rises with the <sprite name=\"token\" tint=1> you hold.";
+            }
+
+            if (lookup.Contains("comboengine") || lookup.Contains("combo"))
+            {
+                return "Consecutive merges give +1% <sprite name=\"chips\" tint=1> per level.";
+            }
+
+            if (lookup.Contains("salvageprotocol") || lookup.Contains("salvage"))
+            {
+                return "The run's final score is converted into +4% <sprite name=\"chips\" tint=1> per level.";
+            }
+
+            // Check the Rate variant before the generic "curriculum" match below.
+            if (lookup.Contains("curriculumrate"))
+            {
+                return "Each level shortens how often Curriculum ticks while training.";
+            }
+
+            if (lookup.Contains("curriculum"))
+            {
+                return "Lowers the frames needed to unlock Normal Mode (while in Training Mode).";
             }
 
             if (lookup.Contains("solvertuning"))
