@@ -689,12 +689,13 @@ namespace StackMerge.Tests
             });
 
             Assert.That(progression.PrestigeAvailable, Is.True);
-            Assert.That(progression.PreviewPrestigeInsightGain(), Is.EqualTo(1));
+            long preview = progression.PreviewPrestigeInsightGain();
+            Assert.That(preview, Is.GreaterThan(1));
 
             long gained = progression.ExecutePrestige();
 
-            Assert.That(gained, Is.EqualTo(1));
-            Assert.That(progression.ResearchInsight, Is.EqualTo(1));
+            Assert.That(gained, Is.EqualTo(preview));
+            Assert.That(progression.ResearchInsight, Is.EqualTo(preview));
             Assert.That(progression.PrestigeCount, Is.EqualTo(1));
             Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
             Assert.That(progression.MachineLearningFrames, Is.EqualTo(0));

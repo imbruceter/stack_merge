@@ -91,6 +91,7 @@ namespace StackMerge
         public int[] researchLevels;
         public double passiveResearchProgress;
         public double researchInsightEarnedThisPrestige;
+        public long offlineChipsEarned;
         public long lastSaveUnixSeconds;
         public long lastOfflineChips;
         public long lastOfflineInsight;
@@ -402,6 +403,9 @@ namespace StackMerge
         private const long DebugMinimumPlayingModeFrameRequirement = 500L;
         private const long MinimumTrainingRequirementBeforeBootcampCapstone = 50000L;
         private const int DatacenterTrainingFrameBudgetPerTick = 96;
+        private const int OfflinePerformanceSampleRuns = 40;
+        private const double OfflineMinimumRunSeconds = 1.0;
+        private const double OfflineMaximumRunsPerHour = 1200.0;
         // Global income calibration knob. Lower = chips accrue slower. Tuned against the progression
         // simulator to hit the intended run-count curve (manual runs ~150 chips each, etc.).
         private const double IncomeScale = 0.25;
@@ -619,7 +623,7 @@ namespace StackMerge
             new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger blocks instead of only safer runs.", 1, 4, 1200, 3000, 7500, 18000, 42000),
             new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.InsightExtractor, "Insight Extractor", "+50% <sprite name=\"insight\" tint=1> from PPO Normal Mode performance per level. This is the late neural payoff node.", 1, 6, 5000, 12000, 30000, 72000, 170000),
-            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts <sprite name=\"insight\" tint=1> earned directly from PPO Normal Mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 2, 90, 240, 600, 1500, 3600),
+            new(ResearchId.PassiveInsight, "Passive Insight", "Boosts <sprite name=\"insight\" tint=1> earned directly from PPO Normal Mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 2, 500, 2500, 5000, 8000, 15000),
             new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1> continue at a reduced rate based on your current prestige strength.", 2, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1>.", 2, 4, 1200, 3000, 7500),
             new(ResearchId.AgentSynergy, "Agent Synergy", "Every hired Agent's bonus effect is 25% stronger per level. Agents become a core engine of faster replays.", 0, 3, 300, 800, 2000, 5000, 12000),
@@ -1283,14 +1287,6 @@ namespace StackMerge
                 return 0;
             }
 
-            // The first prestige always yields exactly 1 Insight once PPO is trained (that is what
-            // Seed Capital L1 costs) — it must NOT require a Normal-mode run first. This check has to
-            // come before the normal-runs guard below, or a freshly-trained PPO previews 0.
-            if (data.prestigeCount <= 0)
-            {
-                return 1;
-            }
-
             if (data.machineLearningNormalRuns <= 0)
             {
                 return 0;
@@ -1302,13 +1298,8 @@ namespace StackMerge
             int normalRuns = Math.Max(0, data.machineLearningNormalRuns);
 
             double performance = ComputeInsightValue(bestScore, bestHigh, normalRuns, bestScore, bestHigh);
-            double usage = 1.0
-                + 1.55 * (1.0 - Math.Exp(-normalRuns / 160.0))
-                + 1.10 * (1.0 - Math.Exp(-normalRuns / 1100.0))
-                + Math.Log10(1.0 + frames / 120000.0) * 0.35;
-            double cycleCarry = Math.Log(1.0 + Math.Max(0.0, data.researchInsightEarnedThisPrestige)) * 0.42;
-            double raw = (1.0 + performance * 1.25 + cycleCarry) * usage;
-            double multiplier = GetNormalModeInsightMultiplier();
+            double raw = (1.0 + performance * 1.25) * ComputeNormalModeUsage(normalRuns, frames);
+            double multiplier = GetPrestigeResetInsightMultiplier();
             return Math.Max(1, (long)Math.Round(raw * multiplier, MidpointRounding.AwayFromZero));
         }
 
@@ -3292,10 +3283,30 @@ namespace StackMerge
         {
             return GetResearchLevel(ResearchId.PassiveInsight) <= 0
                 ? 0.0
-                : 0.03 + GetResearchLevel(ResearchId.PassiveInsight) * 0.035;
+                : 0.015 + GetResearchLevel(ResearchId.PassiveInsight) * 0.015;
         }
 
-        private double GetNormalModeInsightMultiplier()
+        private static double ComputeNormalModeUsage(int normalRuns, long frames)
+        {
+            return 1.0
+                + 1.55 * (1.0 - Math.Exp(-Math.Max(0, normalRuns) / 160.0))
+                + 1.10 * (1.0 - Math.Exp(-Math.Max(0, normalRuns) / 1100.0))
+                + Math.Log10(1.0 + Math.Max(0, frames) / 120000.0) * 0.35;
+        }
+
+        private double GetPrestigeResetInsightMultiplier()
+        {
+            int ordinal = Math.Max(1, data.prestigeCount + 1);
+            double prestigeMomentum = 0.45 * Math.Pow(ordinal, 3.10);
+            double researchMomentum = GetPrestigeInsightMultiplier() * GetInsightExtractorMultiplier();
+            double ppoMomentum = 1.0
+                + GetResearchLevel(ResearchId.PpoMemory) * 0.08
+                + GetResearchLevel(ResearchId.PpoHighFocus) * 0.10
+                + GetResearchLevel(ResearchId.PpoStability) * 0.07;
+            return Math.Min(260.0, prestigeMomentum * researchMomentum * ppoMomentum);
+        }
+
+        private double GetPassiveInsightRunMultiplier()
         {
             if (data.prestigeCount <= 0)
             {
@@ -3303,14 +3314,13 @@ namespace StackMerge
             }
 
             double prestigeMomentum = 1.0 + Math.Log(1.0 + data.prestigeCount, 2.0) * 0.55;
-            double researchMomentum = GetPrestigeInsightMultiplier()
-                * GetInsightExtractorMultiplier()
-                * (1.0 + GetResearchLevel(ResearchId.PassiveInsight) * 0.45);
-            double ppoMomentum = 1.0
-                + GetResearchLevel(ResearchId.PpoMemory) * 0.08
-                + GetResearchLevel(ResearchId.PpoHighFocus) * 0.10
-                + GetResearchLevel(ResearchId.PpoStability) * 0.07;
-            return Math.Min(26.0, prestigeMomentum * researchMomentum * ppoMomentum);
+            double researchMomentum = GetPrestigeInsightMultiplier() * GetInsightExtractorMultiplier();
+            return Math.Min(8.0, prestigeMomentum * researchMomentum);
+        }
+
+        private double GetNormalModeInsightMultiplier()
+        {
+            return GetPassiveInsightRunMultiplier();
         }
 
         private double GetInsightCycleSoftCap()
@@ -3645,6 +3655,7 @@ namespace StackMerge
             data.runHistory = Array.Empty<RunHistoryEntry>();
             data.totalChipsEarned = 0;
             data.totalChipsSpent = 0;
+            data.offlineChipsEarned = 0;
             data.manualRunsCompleted = 0;
             data.totalBlocksDropped = 0;
             data.totalMerges = 0;
@@ -3677,7 +3688,7 @@ namespace StackMerge
                 return;
             }
 
-            double multiplier = GetNormalModeInsightMultiplier();
+            double multiplier = GetPassiveInsightRunMultiplier();
             if (multiplier <= 0.0)
             {
                 return;
@@ -3810,20 +3821,23 @@ namespace StackMerge
 
             LastOfflineHours = cappedHours;
             long offlineChips = ComputeOfflineChips(cappedHours, efficiency);
-            long offlineInsight = ComputeOfflineInsight(cappedHours, efficiency);
+            double offlineInsight = ComputeOfflineInsight(cappedHours, efficiency);
             if (offlineChips > 0)
             {
                 data.chips += offlineChips;
                 data.totalChipsEarned += offlineChips;
                 data.lifetimeChipsEarned += offlineChips;
+                data.offlineChipsEarned += offlineChips;
                 data.lastOfflineChips = offlineChips;
                 RecordIncome(IncomeSource.Offline, offlineChips);
             }
 
             if (offlineInsight > 0)
             {
-                AddResearchInsight(offlineInsight, true);
-                data.lastOfflineInsight = offlineInsight;
+                long beforeInsight = data.researchInsight;
+                data.passiveResearchProgress += offlineInsight;
+                FlushPassiveResearchProgress();
+                data.lastOfflineInsight = Math.Max(0, data.researchInsight - beforeInsight);
             }
 
             data.lastSaveUnixSeconds = now;
@@ -3840,27 +3854,93 @@ namespace StackMerge
                 return 0;
             }
 
-            double averageRunIncome = data.totalChipsEarned / (double)Math.Max(1, data.runsCompleted);
-            double offlineRunsPerHour = 10.0 + data.speedLevel * 3.0;
-            return Math.Max(0, (long)Math.Floor(averageRunIncome * offlineRunsPerHour * cappedHours * efficiency));
+            double activeChipsEarned = Math.Max(0.0, data.totalChipsEarned - data.offlineChipsEarned);
+            double averageRunIncome = activeChipsEarned / Math.Max(1, data.runsCompleted);
+            double activeRunsPerHour = EstimateActiveRunsPerHour();
+            return Math.Max(0, (long)Math.Floor(averageRunIncome * activeRunsPerHour * cappedHours * efficiency));
         }
 
-        private long ComputeOfflineInsight(double cappedHours, double efficiency)
+        private double ComputeOfflineInsight(double cappedHours, double efficiency)
         {
             if (GetResearchLevel(ResearchId.PassiveInsight) <= 0 || data.machineLearningNormalRuns <= 0)
             {
-                return 0;
+                return 0.0;
             }
 
-            double hourly = ComputeInsightValue(
+            double activeRunsPerHour = EstimateActiveRunsPerHour();
+            double passiveInsightPerRun = EstimatePassiveInsightPerNormalRun();
+            return Math.Max(0.0, passiveInsightPerRun * activeRunsPerHour * cappedHours * efficiency);
+        }
+
+        private double EstimateActiveRunsPerHour()
+        {
+            RunHistoryEntry[] history = RunHistory;
+            if (history.Length > 0)
+            {
+                double seconds = 0.0;
+                int count = 0;
+                foreach (RunHistoryEntry entry in history.Take(OfflinePerformanceSampleRuns))
+                {
+                    if (entry == null)
+                    {
+                        continue;
+                    }
+
+                    SolverId solverId = entry.solverId >= 0 && entry.solverId < StackMergeSolverCatalog.Definitions.Length
+                        ? (SolverId)entry.solverId
+                        : SelectedSolver;
+                    int moves = Math.Max(1, entry.moves);
+                    seconds += Math.Max(OfflineMinimumRunSeconds, moves * GetMoveInterval(solverId));
+                    count++;
+                }
+
+                if (count > 0 && seconds > 0.0)
+                {
+                    return Math.Min(OfflineMaximumRunsPerHour, Math.Max(1.0, count * 3600.0 / seconds));
+                }
+            }
+
+            if (data.runsCompleted <= 0 || data.totalBlocksDropped <= 0)
+            {
+                return 0.0;
+            }
+
+            double averageMoves = data.totalBlocksDropped / (double)Math.Max(1, data.runsCompleted);
+            double estimatedSeconds = Math.Max(OfflineMinimumRunSeconds, averageMoves * MoveInterval);
+            return Math.Min(OfflineMaximumRunsPerHour, Math.Max(1.0, 3600.0 / estimatedSeconds));
+        }
+
+        private double EstimatePassiveInsightPerNormalRun()
+        {
+            double passiveMultiplier = GetPassiveInsightMultiplier();
+            double runMultiplier = GetPassiveInsightRunMultiplier();
+            if (passiveMultiplier <= 0.0 || runMultiplier <= 0.0 || data.machineLearningNormalRuns <= 0)
+            {
+                return 0.0;
+            }
+
+            int currentRuns = Math.Max(1, data.machineLearningNormalRuns);
+            int sampleRuns = Math.Min(OfflinePerformanceSampleRuns, currentRuns);
+            int firstRun = Math.Max(1, currentRuns - sampleRuns + 1);
+            double total = 0.0;
+            double earned = Math.Max(0.0, data.researchInsightEarnedThisPrestige);
+            double softCap = GetInsightCycleSoftCap();
+
+            for (int run = firstRun; run <= currentRuns; run++)
+            {
+                double value = ComputeInsightValue(
                     data.machineLearningNormalBestScore,
                     data.machineLearningNormalBestHigh,
-                    data.machineLearningNormalRuns,
+                    run,
                     data.machineLearningNormalBestScore,
-                    data.machineLearningNormalBestHigh)
-                * GetPassiveInsightMultiplier()
-                * 4.0;
-            return Math.Max(0, (long)Math.Floor(hourly * cappedHours * efficiency));
+                    data.machineLearningNormalBestHigh);
+                double fatigue = 1.0 / Math.Sqrt(1.0 + earned / softCap);
+                double gained = value * passiveMultiplier * runMultiplier * fatigue;
+                total += gained;
+                earned += gained;
+            }
+
+            return total / sampleRuns;
         }
 
         private static double ComputeInsightValue(long score, int highestBlock, int normalRuns, long bestScore, int bestHighestBlock)
@@ -4291,6 +4371,7 @@ namespace StackMerge
             data.lastSaveUnixSeconds = Math.Max(0, data.lastSaveUnixSeconds);
             data.lastOfflineChips = Math.Max(0, data.lastOfflineChips);
             data.lastOfflineInsight = Math.Max(0, data.lastOfflineInsight);
+            data.offlineChipsEarned = Math.Min(Math.Max(0, data.offlineChipsEarned), Math.Max(0, data.totalChipsEarned));
             data.machineLearningPermanentFrames = Math.Max(0, data.machineLearningPermanentFrames);
             if (data.machineLearningPermanentFrames <= 0)
             {
