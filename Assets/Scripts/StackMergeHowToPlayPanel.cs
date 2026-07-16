@@ -347,8 +347,9 @@ namespace StackMerge
                 "Final <sprite name=\"chips\" tint=1> formula:\n" +
                 "<b>ceil((placement + merge + newHigh) x 0.25) x stage multiplier x income multiplier</b>\n\n" +
 
-                "Block odds are weighted by tier:\n" +
-                "<b>spawnWeight(tier) = 0.56^tier x (1 + 0.09 x ScalingFrequencyLevel x tier)</b>"),
+                "Difficulty spawns use a safe ceiling and paired opportunities:\n" +
+                "<b>regularWeight(tier) = 0.56^tier x (1 + 0.025 x ScalingFrequencyLevel x tier)</b>\n" +
+                "<b>highPairChance = min(16%, 1.2% x DifficultyLevel + 0.8% x ScalingFrequencyLevel)</b>"),
             new(
                 "Algorithms",
                 "Algorithms (solvers) decide how the game is played when Auto Solve is on. It is about choosing a decision style, comparing solvers, and tuning owned solvers once tuning is unlocked.\n\n" +
@@ -369,18 +370,19 @@ namespace StackMerge
                 "Upgrades are the <sprite name=\"chips\" tint=1> based progression layer. They unlock automation, make runs larger, unlock new layers, and multiply the income earned by normal play.\n\n" +
 
                 "Main income multiplier:\n" +
-                "<b>incomeMultiplier = (1 + 0.35 x ChipYieldLevel) x YieldTheoryMultiplier x MarketBotsMultiplier</b>\n\n" +
+                "<b>incomeMultiplier = (1 + ChipYieldBonus) x YieldTheoryMultiplier x MarketBotsMultiplier</b>\n\n" +
 
                 "Run-end <sprite name=\"chips\" tint=1> :\n" +
-                "<b>runEnd = ceil((scoreBonus + moveBonus + speedBonus) x (1 + 0.08 x ProfitableEndingLevel) x 0.25)</b>, then stage and income multipliers apply.\n\n" +
+                "<b>runEnd = ceil((scoreBonus + moveBonus + speedBonus) x (1 + 0.15 x ProfitableEndingLevel) x 0.25)</b>, then stage and income multipliers apply.\n\n" +
 
                 "Passive Production:\n" +
-                "<b>baseTick = 3 x PassiveYieldLevel</b>\n" +
-                "<b>activeTick = ceil(baseTick x (1 + 0.40 x ActiveMultiplierLevel))</b> while actively playing\n\n" +
+                "<b>baseTick = PassiveYield table value</b>\n" +
+                "<b>activeTick = ceil(baseTick x (1 + ActiveMultiplierBonus))</b> while actively* playing\n" +
+                "*Actively means a placement happened in the last 4 seconds.\n\n" +
 
                 "Tick interval is improved by Passive Tick Rate.\n\n" +
 
-                "Difficulty Scaling raises the maximum tier that can appear; Scaling Frequency changes how often the higher unlocked tiers appear."),
+                "Difficulty Scaling raises the maximum paired tier that can appear. Scaling Frequency makes those paired high-tier opportunities appear more often and nudges them toward higher tiers."),
             new(
                 "Agents",
                 "Agents are a loadout system. You own many, but only the equipped slots are active, so this layer is about choosing which part of your economy or automation you want to emphasize.\n\n" +
@@ -392,8 +394,8 @@ namespace StackMerge
 
                 "Examples:\n" +
                 "Merge income with Merge Broker = <b>baseMerge x (1 + 0.75 x agentSynergy)</b>\n" +
-                "New-high reward with Highwater Analyst = <b>baseHigh x (1 + 1.40 x agentSynergy)</b>\n" +
-                "Run-end score reward with Score Auditor = <b>baseScore x (1 + 0.60 x agentSynergy)</b>\n" +
+                "New-high reward with Highwater Analyst = <b>baseHigh x (1 + 2.00 x agentSynergy)</b>\n" +
+                "Run-end score reward with Score Auditor = <b>baseScore x (1 + 2.00 x agentSynergy)</b>\n" +
                 "Overclocker changes solver interval to 75% of normal."),
             new(
                 "Modifiers",
@@ -447,8 +449,9 @@ namespace StackMerge
                 "Végső <sprite name=\"chips\" tint=1> képlet:\n" +
                 "<b>ceil((placement + merge + newHigh) x 0.25) x stage multiplier x income multiplier</b>\n\n" +
 
-                "A blokk esélyek szintek (tier) szerint súlyozottak:\n" +
-                "<b>spawnWeight(tier) = 0.56^tier x (1 + 0.09 x ScalingFrequencyLevel x tier)</b>"),
+                "A Difficulty spawn biztonságos plafont és párosított lehetőségeket használ:\n" +
+                "<b>regularWeight(tier) = 0.56^tier x (1 + 0.025 x ScalingFrequencyLevel x tier)</b>\n" +
+                "<b>highPairChance = min(16%, 1.2% x DifficultyLevel + 0.8% x ScalingFrequencyLevel)</b>"),
             new(
                 "Algoritmusok",
                 "Az algoritmusok (solverek) döntik el, hogyan játszik a játék Auto Megoldás mellett. Ez a réteg a döntési stílus kiválasztásáról, solverek összehasonlításáról és a megvett solverek hangolásáról szól.\n\n" +
@@ -469,18 +472,19 @@ namespace StackMerge
                 "Az Upgrades a <sprite name=\"chips\" tint=1>-ből vásárolt fejlődési réteg. Automatizációt nyit, nagyobb runokat tesz lehetővé, későbbi rétegeket old fel, és megszorozza a normál játékból szerezhető bevételt.\n\n" +
 
                 "Fő bevétel szorzó:\n" +
-                "<b>incomeMultiplier = (1 + 0.35 x ChipYieldLevel) x YieldTheoryMultiplier x MarketBotsMultiplier</b>\n\n" +
+                "<b>incomeMultiplier = (1 + ChipYieldBonus) x YieldTheoryMultiplier x MarketBotsMultiplier</b>\n\n" +
 
                 "Run végi <sprite name=\"chips\" tint=1> :\n" +
-                "<b>runEnd = ceil((scoreBonus + moveBonus + speedBonus) x (1 + 0.08 x ProfitableEndingLevel) x 0.25)</b>, majd szakasz (stage) és bevétel szorzók jönnek rá.\n\n" +
+                "<b>runEnd = ceil((scoreBonus + moveBonus + speedBonus) x (1 + 0.15 x ProfitableEndingLevel) x 0.25)</b>, majd szakasz (stage) és bevétel szorzók jönnek rá.\n\n" +
 
                 "Passive Production:\n" +
-                "<b>baseTick = 3 x PassiveYieldLevel</b>\n" +
-                "<b>activeTick = ceil(baseTick x (1 + 0.40 x ActiveMultiplierLevel)) aktív játék közben</b>\n\n" +
+                "<b>baseTick = PassiveYield table value</b>\n" +
+                "<b>activeTick = ceil(baseTick x (1 + ActiveMultiplierBonus)) aktív* játék közben</b>\n" +
+                "*Aktívnak az számít, ha az elmúlt 4 másodpercben volt lerakás.\n\n" +
 
                 "A tick gyakoriságát a Passive Tick Rate javítja.\n\n" +
 
-                "A Difficulty Scaling azt módosítja, mi a megjelenhető maximum tier. A Scaling Frequency azt, milyen gyakran jelennek meg a magasabb tierek."),
+                "A Difficulty Scaling azt módosítja, mekkora párosított high-tier lehetőség jelenhet meg. A Scaling Frequency gyakoribbá teszi ezeket a high-tier párokat, és magasabb tierek felé tolja őket."),
             new(
                 "Ügynökök",
                 "Az Ügynökök (Agents) egy loadout rendszer. Több Agentet is birtokolhatsz, de csak az aktív slotok számítanak, ezért itt azt választod ki, melyik gazdasági vagy automatizációs részt akarod erősíteni.\n\n" +
@@ -492,8 +496,8 @@ namespace StackMerge
 
                 "Példák:\n" +
                 "Merge Broker mellett merge bevétel = <b>baseMerge x (1 + 0.75 x agentSynergy)</b>\n" +
-                "Highwater Analyst mellett high jutalom = <b>baseHigh x (1 + 1.40 x agentSynergy)</b>\n" +
-                "Score Auditor mellett run végi score jutalom = <b>baseScore x (1 + 0.60 x agentSynergy)</b>\n" +
+                "Highwater Analyst mellett high jutalom = <b>baseHigh x (1 + 2.00 x agentSynergy)</b>\n" +
+                "Score Auditor mellett run végi score jutalom = <b>baseScore x (1 + 2.00 x agentSynergy)</b>\n" +
                 "Overclocker a solver intervallumot a normál 75%-ára állítja."),
             new(
                 "Módifikációk",

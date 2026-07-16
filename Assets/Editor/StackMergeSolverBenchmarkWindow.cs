@@ -52,7 +52,9 @@ namespace StackMerge.Editor
         /// Headless entry point for weight/tuning iteration:
         /// Unity -batchmode -quit -executeMethod StackMerge.Editor.StackMergeSolverBenchmarkWindow.RunSolverBenchmarkBatch
         ///   [-benchSolver STALL|all] [-benchRuns 100] [-benchMaxMods] [-benchMoveCap 1500]
-        ///   [-benchSolverSecs 300] [-benchRunSecs 3] [-benchSeed 12345] [-benchTuning 0,0,3,0,0,0]
+        ///   [-benchSolverSecs 300] [-benchRunSecs 3] [-benchSeed 12345] [-benchDifficulty 5]
+        ///   [-benchScalingFrequency 10] [-benchPlanningDepthLimit 5] [-benchFull]
+        ///   [-benchTuning 0,0,3,0,0,0]
         /// Single-solver runs draw the same run seeds for a given seed, so before/after weight
         /// changes compare on identical boards. Summary TSV goes to BenchmarkResults/.
         /// </summary>
@@ -82,6 +84,10 @@ namespace StackMerge.Editor
                 // capacity would silently benchmark a different game.
                 runner.stackCapacity = Mathf.Clamp(GetBatchInt(args, "-benchStackCap", 10), 2, StackMergeGameState.MaxStackCapacity);
                 runner.queueLength = Mathf.Clamp(GetBatchInt(args, "-benchQueue", runner.queueLength), 1, StackMergeGameState.DefaultQueueLength + 2);
+                runner.difficultyLevel = Mathf.Clamp(GetBatchInt(args, "-benchDifficulty", runner.difficultyLevel), 0, 5);
+                runner.scalingFrequencyLevel = Mathf.Clamp(GetBatchInt(args, "-benchScalingFrequency", runner.scalingFrequencyLevel), 0, 10);
+                runner.planningDepthLimit = Mathf.Clamp(GetBatchInt(args, "-benchPlanningDepthLimit", runner.planningDepthLimit), 1, 5);
+                runner.fastBenchmarkMode = Array.IndexOf(args, "-benchFull") < 0;
                 runner.maxMovesPerRun = Mathf.Clamp(GetBatchInt(args, "-benchMoveCap", 1500), 100, 10000);
                 runner.maxSecondsPerSolver = Mathf.Clamp(GetBatchInt(args, "-benchSolverSecs", 300), 5, 36000);
                 runner.maxSecondsPerRun = Mathf.Clamp(GetBatchInt(args, "-benchRunSecs", 3), 1, 60);

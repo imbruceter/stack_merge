@@ -298,6 +298,77 @@ namespace StackMerge
             }
         }
 
+        public int TrainBackgroundFrames(
+            int frameBudget,
+            int stackCapacity,
+            int queueLength,
+            int difficultyLevel,
+            int scalingFrequencyLevel,
+            StackMergeRunModifiers modifiers,
+            int seed)
+        {
+            frameBudget = Math.Max(0, frameBudget);
+            if (frameBudget <= 0)
+            {
+                return 0;
+            }
+
+            var localRandom = new Random(seed);
+            int startingSteps = Math.Max(0, data.steps);
+            StackMergeGameState state = CreateBackgroundTrainingState(
+                stackCapacity,
+                queueLength,
+                difficultyLevel,
+                scalingFrequencyLevel,
+                modifiers,
+                localRandom);
+            int trainedFrames = 0;
+            while (trainedFrames < frameBudget)
+            {
+                if (state.IsGameOver || state.GetLegalMoveIndices().Length == 0)
+                {
+                    state = CreateBackgroundTrainingState(
+                        stackCapacity,
+                        queueLength,
+                        difficultyLevel,
+                        scalingFrequencyLevel,
+                        modifiers,
+                        localRandom);
+                }
+
+                SolverDecision decision = ChooseMove(state, localRandom, trainingMode: true);
+                if (!SolverScoring.CanApplyDecision(state, decision))
+                {
+                    hasPendingTransition = false;
+                    decision = ChooseFallbackDecision(state, localRandom);
+                }
+
+                if (!decision.HasMove)
+                {
+                    state.ForceGameOver();
+                    continue;
+                }
+
+                MoveResult result = SolverScoring.ApplyDecision(state, decision);
+                if (!result.Accepted)
+                {
+                    hasPendingTransition = false;
+                    state.ForceGameOver();
+                    continue;
+                }
+
+                if (hasPendingTransition)
+                {
+                    Observe(result, state, trainingMode: true);
+                }
+
+                trainedFrames++;
+            }
+
+            ForceUpdate(trainingMode: true);
+            return Math.Max(0, data.steps - startingSteps);
+        }
+
         public void ResetForPrestige(int seed = 24681357)
         {
             rng = new Random(seed);
@@ -332,6 +403,35 @@ namespace StackMerge
             data.criticW2 = null;
             data.criticB2 = null;
             EnsureInitialized(rng);
+        }
+
+        private static StackMergeGameState CreateBackgroundTrainingState(
+            int stackCapacity,
+            int queueLength,
+            int difficultyLevel,
+            int scalingFrequencyLevel,
+            StackMergeRunModifiers modifiers,
+            Random random)
+        {
+            return new StackMergeGameState(
+                stackCapacity: Math.Max(StackMergeGameState.DefaultStackCapacity, stackCapacity),
+                queueLength: Math.Max(1, queueLength),
+                difficultyLevel: Math.Max(0, difficultyLevel),
+                scalingFrequencyLevel: Math.Max(0, scalingFrequencyLevel),
+                modifiers: modifiers,
+                seed: random.Next());
+        }
+
+        private static SolverDecision ChooseFallbackDecision(StackMergeGameState state, Random random)
+        {
+            int[] legalMoves = state.GetLegalMoveIndices();
+            if (legalMoves.Length <= 0)
+            {
+                return SolverDecision.NoMove;
+            }
+
+            int stackIndex = legalMoves[random.Next(legalMoves.Length)];
+            return new SolverDecision(true, stackIndex, 0.0, "Background fallback");
         }
 
         public void LoadSnapshot(StackMergePpoTrainingData snapshot)

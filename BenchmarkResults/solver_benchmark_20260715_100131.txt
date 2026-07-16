@@ -1,0 +1,20 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-15 10:01:31
+Total time: 188,41s
+Tuning: Planning depth +2, Future weight Default, Queue fit Default, Empty cells Default, Danger penalty Default
+Modifiers: Unstable Stack L0, Catalyst Stack L0, Mirror Stack L0, Joker L0, Miner's Pickaxe L0, Queue Scrubber L0, Neural Accelerator L0
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+PLAN	100/100	3656	6024	6207	10314	20,0%	434,1	394,1	0,91	166	256	20,5	1,8	6,2	1381	4,34	100%	0%	0%	188,4	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: PLAN (6024)
+  Best peak score: PLAN (10314)
+  Most merges/run: PLAN (394,1)
+  Highest merge density: PLAN (0,91/move)
+  Longest runs (moves): PLAN (434,1)
+  Highest avg block: PLAN (166)
+  Most new-high events: PLAN (20,5/run)
+  Best combo streak: PLAN (1,8 avg)
+  Most consistent (lowest CV): PLAN (20,0%)
+  Cheapest CPU (ms/move): PLAN (4,34 ms)

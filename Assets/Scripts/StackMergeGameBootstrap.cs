@@ -20,9 +20,11 @@ namespace StackMerge
         private const float StackBlockMaxHeight = 90f;
         private const float StackBlockPadding = 10f;
         private const float StackBlockSpacing = 10f;
-        private const float StackInternalPadding = StackBlockPadding * 4f;
+        private const float StackInternalPadding = StackBlockPadding * 2f;
         private const float NextPanelChromeHeight = 64f;
         private const float SmallestEmergencyBlockHeight = 58f;
+        private const float EmergencyFitBlockMinHeight = 1f;
+        private const float GameplayModifiersSectionHeight = 80f;
         private const float GameOverOverlayDelay = 0.24f;
         private const int StartupGameplayLayoutWarmupFrames = 90;
         private const int TabGameplayLayoutWarmupFrames = 18;
@@ -30,6 +32,8 @@ namespace StackMerge
         private const int TrainingMatrixCellWidth = 6;
         private const string ShowFpsSettingKey = "StackMerge.Settings.ShowFps";
         private const string SuppressAchievementNotificationSettingKey = "StackMerge.Settings.SuppressAchievementNotification";
+        private const string TestingPpoFramesSettingKey = "StackMerge.Settings.TestingPpoFrames";
+        private const string TestingTripleIncomeSettingKey = "StackMerge.Settings.TestingTripleIncome";
         private const string LanguageSettingKey = "StackMerge.Settings.Language";
         private const string BlockNumeralSettingKey = "StackMerge.Settings.BlockNumerals";
         private static readonly Color DropdownSelectedBackgroundColor = HexColor("#F2EEE6");
@@ -92,6 +96,10 @@ namespace StackMerge
         [SerializeField] private Toggle showFpsToggle;
         [SerializeField] private TMP_Text fpsText;
         [SerializeField] private Toggle suppressAchievementNotificationToggle;
+        [Tooltip("Testing only: lowers the PPO Normal Mode frame requirement so late-game flow can be checked quickly.")]
+        [SerializeField] private Toggle testingPpoFramesToggle;
+        [Tooltip("Testing only: multiplies chip income by 3. Default off; intended for local balance testing.")]
+        [SerializeField] private Toggle x3IncomeToggle;
         [SerializeField] private TMP_Dropdown languageDropdown;
         [Tooltip("Block numeral style dropdown in Settings. Auto-found by a name containing 'Numeral'. Locked styles show '(Locked)' and snap back to the previous choice.")]
         [SerializeField] private TMP_Dropdown blockNumeralDropdown;
@@ -406,6 +414,8 @@ namespace StackMerge
         private int armedGameplayModifier = NoArmedGameplayModifier;
         private bool showFps;
         private bool suppressAchievementNotifications;
+        private bool testingPpoFrames;
+        private bool testingTripleIncome;
         private StackMergeLanguage currentLanguage = StackMergeLanguage.English;
         private bool syncingSettingsControls;
         private int lastLanguageDropdownValue = -1;
@@ -821,6 +831,21 @@ namespace StackMerge
             {
                 LayoutRebuilder.ForceRebuildLayoutImmediate(rectTransform);
             }
+        }
+
+        private void FlushDynamicUiLayout()
+        {
+            if (canvas == null)
+            {
+                return;
+            }
+
+            Canvas.ForceUpdateCanvases();
+            RebuildLayout(canvas.transform as RectTransform);
+            RebuildLayout(achievementListRoot);
+            RebuildLayout(historyRecentRunsRoot);
+            RebuildLayout(historySolverTableRoot);
+            Canvas.ForceUpdateCanvases();
         }
 
         private void StartGameOverOverlayDelay()
@@ -1453,17 +1478,17 @@ namespace StackMerge
 
             if (scalingFrequencyUpgradeButton == null)
             {
-                scalingFrequencyUpgradeButton = FindButtonByLooseName("Scaling Frequency");
+                scalingFrequencyUpgradeButton = FindButtonByLooseName("Scaling Frequency", "Higher Frequency");
             }
 
             if (profitableEndingUpgradeButton == null)
             {
-                profitableEndingUpgradeButton = FindButtonByLooseName("Profitable Ending");
+                profitableEndingUpgradeButton = FindButtonByLooseName("Profitable Ending", "Ending Profit");
             }
 
             if (passiveYieldUpgradeButton == null)
             {
-                passiveYieldUpgradeButton = FindButtonByLooseName("Passive Yield");
+                passiveYieldUpgradeButton = FindButtonByLooseName("Passive Yield", "Passive Chips Tick");
             }
 
             if (passiveTickRateUpgradeButton == null)
@@ -1478,22 +1503,22 @@ namespace StackMerge
 
             if (computeSpeedUpgradeButton == null)
             {
-                computeSpeedUpgradeButton = FindButtonByLooseName("Compute Speed");
+                computeSpeedUpgradeButton = FindButtonByLooseName("Compute Speed", "Solver Delay");
             }
 
             if (comboEngineUpgradeButton == null)
             {
-                comboEngineUpgradeButton = FindButtonByLooseName("Combo Engine");
+                comboEngineUpgradeButton = FindButtonByLooseName("Combo Engine", "Merge Streak");
             }
 
             if (salvageProtocolUpgradeButton == null)
             {
-                salvageProtocolUpgradeButton = FindButtonByLooseName("Salvage Protocol");
+                salvageProtocolUpgradeButton = FindButtonByLooseName("Salvage Protocol", "Score Salvage");
             }
 
             if (tokenDividendUpgradeButton == null)
             {
-                tokenDividendUpgradeButton = FindButtonByLooseName("Token Dividend");
+                tokenDividendUpgradeButton = FindButtonByLooseName("Token Dividend", "Sqrt Chips");
             }
 
             if (curriculumRateUpgradeButton == null)
@@ -1512,9 +1537,17 @@ namespace StackMerge
             }
         }
 
-        private Button FindButtonByLooseName(string expectedName)
+        private Button FindButtonByLooseName(params string[] expectedNames)
         {
-            string normalizedExpected = NormalizeLookupName(expectedName);
+            if (expectedNames == null || expectedNames.Length == 0)
+            {
+                return null;
+            }
+
+            string[] normalizedExpectedNames = expectedNames
+                .Select(NormalizeLookupName)
+                .Where(name => !string.IsNullOrEmpty(name))
+                .ToArray();
             foreach (Button button in canvas.GetComponentsInChildren<Button>(true))
             {
                 if (button == null)
@@ -1523,14 +1556,14 @@ namespace StackMerge
                 }
 
                 string normalizedButtonName = NormalizeLookupName(button.name);
-                if (normalizedButtonName == normalizedExpected || normalizedButtonName.Contains(normalizedExpected))
+                if (normalizedExpectedNames.Any(expected => normalizedButtonName == expected || normalizedButtonName.Contains(expected)))
                 {
                     return button;
                 }
 
                 StackMergeButtonLabelPair labels = button.GetComponent<StackMergeButtonLabelPair>();
                 string normalizedLabel = labels?.nameText != null ? NormalizeLookupName(labels.nameText.text) : string.Empty;
-                if (normalizedLabel == normalizedExpected || normalizedLabel.Contains(normalizedExpected))
+                if (normalizedExpectedNames.Any(expected => normalizedLabel == expected || normalizedLabel.Contains(expected)))
                 {
                     return button;
                 }
@@ -2114,6 +2147,18 @@ namespace StackMerge
                 "AchievementNotification",
                 "HideAchievementPopup",
                 "DisableAchievementPopup");
+            testingPpoFramesToggle ??= FindComponentByNormalizedName<Toggle>(
+                settingsRoot,
+                "TestingPpoFrames",
+                "TestingPPOFrames",
+                "PpoFramesTesting",
+                "PPOFramesTesting");
+            x3IncomeToggle ??= FindComponentByNormalizedName<Toggle>(
+                settingsRoot,
+                "X3Income",
+                "TripleIncome",
+                "TestingIncome",
+                "TestingTripleIncome");
             languageDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Language", "LanguageDropdown");
             blockNumeralDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Numeral", "BlockNumeral", "NumeralDropdown");
             fpsText ??= FindComponentByNormalizedName<TMP_Text>(canvasRoot, "FPSText", "FpsText", "FPS");
@@ -2151,6 +2196,10 @@ namespace StackMerge
         {
             showFps = PlayerPrefs.GetInt(ShowFpsSettingKey, 0) == 1;
             suppressAchievementNotifications = PlayerPrefs.GetInt(SuppressAchievementNotificationSettingKey, 0) == 1;
+            testingPpoFrames = PlayerPrefs.GetInt(TestingPpoFramesSettingKey, 0) == 1;
+            testingTripleIncome = PlayerPrefs.GetInt(TestingTripleIncomeSettingKey, 0) == 1;
+            StackMergeProgression.DebugFastPpoFrames = testingPpoFrames;
+            StackMergeProgression.DebugTripleIncome = testingTripleIncome;
             currentLanguage = PlayerPrefs.GetInt(LanguageSettingKey, 0) == 1
                 ? StackMergeLanguage.Magyar
                 : StackMergeLanguage.English;
@@ -2173,6 +2222,18 @@ namespace StackMerge
             {
                 suppressAchievementNotificationToggle.onValueChanged.RemoveAllListeners();
                 suppressAchievementNotificationToggle.onValueChanged.AddListener(SetSuppressAchievementNotifications);
+            }
+
+            if (testingPpoFramesToggle != null)
+            {
+                testingPpoFramesToggle.onValueChanged.RemoveAllListeners();
+                testingPpoFramesToggle.onValueChanged.AddListener(SetTestingPpoFrames);
+            }
+
+            if (x3IncomeToggle != null)
+            {
+                x3IncomeToggle.onValueChanged.RemoveAllListeners();
+                x3IncomeToggle.onValueChanged.AddListener(SetTestingTripleIncome);
             }
 
             if (languageDropdown != null)
@@ -2201,6 +2262,16 @@ namespace StackMerge
             if (suppressAchievementNotificationToggle != null)
             {
                 suppressAchievementNotificationToggle.SetIsOnWithoutNotify(suppressAchievementNotifications);
+            }
+
+            if (testingPpoFramesToggle != null)
+            {
+                testingPpoFramesToggle.SetIsOnWithoutNotify(testingPpoFrames);
+            }
+
+            if (x3IncomeToggle != null)
+            {
+                x3IncomeToggle.SetIsOnWithoutNotify(testingTripleIncome);
             }
 
             RefreshBlockNumeralDropdown();
@@ -2399,6 +2470,8 @@ namespace StackMerge
         private void ApplyPlayerSettings()
         {
             StackMergeLocalization.CurrentLanguage = currentLanguage;
+            StackMergeProgression.DebugFastPpoFrames = testingPpoFrames;
+            StackMergeProgression.DebugTripleIncome = testingTripleIncome;
             ApplyFpsVisibility();
             ApplySettingsPanelLocalization();
             ApplyStaticSceneLocalization();
@@ -2435,6 +2508,35 @@ namespace StackMerge
             {
                 HideAchievementNotificationImmediate(clearQueue: true);
             }
+        }
+
+        private void SetTestingPpoFrames(bool value)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            testingPpoFrames = value;
+            StackMergeProgression.DebugFastPpoFrames = testingPpoFrames;
+            PlayerPrefs.SetInt(TestingPpoFramesSettingKey, testingPpoFrames ? 1 : 0);
+            PlayerPrefs.Save();
+            RefreshEverything();
+        }
+
+        private void SetTestingTripleIncome(bool value)
+        {
+            if (syncingSettingsControls)
+            {
+                return;
+            }
+
+            testingTripleIncome = value;
+            StackMergeProgression.DebugTripleIncome = testingTripleIncome;
+            PlayerPrefs.SetInt(TestingTripleIncomeSettingKey, testingTripleIncome ? 1 : 0);
+            PlayerPrefs.Save();
+            RefreshHud();
+            RefreshProgressionUi();
         }
 
         private void SetLanguageFromDropdown(int index)
@@ -3896,6 +3998,7 @@ namespace StackMerge
             currentRunManualMoves = 0;
             currentRunElapsed = 0f;
             currentRunChipsEarned = 0L;
+            timeSinceLastAcceptedMove = float.MaxValue;
             gameOverOverlayTimer = 0f;
             boardLayoutDirty = true;
             lastRenderedCapacity = -1;
@@ -4032,7 +4135,7 @@ namespace StackMerge
             }
 
             bool playingUnlocked = progression.MachineLearningPlayingModeUnlocked;
-            long frames = progression.MachineLearningFrames;
+            long frames = progression.MachineLearningCycleFrames;
 
             SetButtonText(ppoTrainingButton, "Training Mode");
             if (ppoNormalButton != null)
@@ -4045,7 +4148,7 @@ namespace StackMerge
             {
                 SetText(ppoModeHintText, playingUnlocked
                     ? "Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."
-                    : $"Normal mode unlocks after {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} trained frames.\n{FormatNumber(frames)} / {FormatNumber(progression.EffectivePlayingModeFrameRequirement)}");
+                    : $"Normal mode unlocks after {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} cycle frames.\n{FormatNumber(frames)} / {FormatNumber(progression.EffectivePlayingModeFrameRequirement)}");
             }
 
             SetActive(ppoModeOverlay, true);
@@ -4735,9 +4838,7 @@ namespace StackMerge
                 {
                     case DatacenterAllocationId.TrainingCluster:
                         double framesPerSecond = progression.DatacenterTrainingFramesPerSecond;
-                        SetText(row.prodText, progression.DatacenterTrainingHasTarget || framesPerSecond <= 0
-                            ? $"{framesPerSecond:N0} fr/s"
-                            : $"{framesPerSecond:N0} fr/s (idle)");
+                        SetText(row.prodText, $"{framesPerSecond:N0} fr/s permanent");
                         break;
                     case DatacenterAllocationId.AnalysisNode:
                         SetText(row.prodText, $"{progression.DatacenterInsightPerSecond:0.00} ips");
@@ -4988,14 +5089,14 @@ namespace StackMerge
                 return;
             }
 
-            long frames = progression.MachineLearningFrames;
+            long frames = progression.MachineLearningCycleFrames;
             long required = Math.Max(1, progression.EffectivePlayingModeFrameRequirement);
             bool trained = progression.MachineLearningPlayingModeUnlocked;
             long gain = progression.PreviewPrestigeInsightGain();
 
             SetText(prestigeResetTrainingText, trained
                 ? "PPO Training complete — prestige reset unlocked."
-                : $"You have to finish PPO Training to unlock prestige.\n<b>{frames:N0} / {required:N0} frames</b>");
+                : $"You have to finish PPO Training to unlock prestige.\n<b>{frames:N0} / {required:N0} cycle frames</b>");
 
             if (prestigeResetSlider != null)
             {
@@ -5742,6 +5843,7 @@ namespace StackMerge
             RefreshGameView();
             RefreshProgressionUi();
             QueueAchievementNotificationsForNewCompletions();
+            FlushDynamicUiLayout();
         }
 
         /// <summary>
@@ -6210,6 +6312,11 @@ namespace StackMerge
             {
                 bool wasActive = gameplayModifiersSection.activeSelf;
                 SetActive(gameplayModifiersSection, showSection);
+                if (showSection && gameplayModifiersSection.transform is RectTransform modifierRect)
+                {
+                    modifierRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, GameplayModifiersSectionHeight);
+                }
+
                 if (wasActive != showSection)
                 {
                     boardLayoutDirty = true;
@@ -6741,6 +6848,8 @@ namespace StackMerge
                     y += height + 6f;
                 }
             }
+
+            SetManualContentHeight(root, y);
         }
 
         // Refreshes values/labels on already-built rows without destroying anything. Safe to call
@@ -7456,16 +7565,16 @@ namespace StackMerge
             {
                 int level = progression.SpeedLevel;
                 int maxLevel = progression.MaxSpeedLevel;
+                float percent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level);
                 if (progression.IsMaxSpeed)
                 {
-                    float percent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level);
-                    SetUpgradeButtonLabels(speedUpgradeButton, $"{percent:0}% faster ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(speedUpgradeButton, UpgradeName("Faster solver", level, maxLevel), "Maxed", false, effect: BonusPercent(percent));
                 }
                 else
                 {
                     float nextPercent = StackMergeProgression.GetSpeedUpgradeEffectPercent(level + 1);
                     long cost = progression.GetSpeedUpgradeCost();
-                    SetUpgradeButtonLabels(speedUpgradeButton, $"{nextPercent:0}% faster ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(speedUpgradeButton, UpgradeName("Faster solver", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(percent), BonusPercent(nextPercent), false));
                 }
             }
 
@@ -7476,16 +7585,16 @@ namespace StackMerge
             {
                 int level = progression.ComputeSpeedLevel;
                 int maxLevel = progression.MaxComputeSpeedLevel;
+                float percent = StackMergeProgression.GetComputeSpeedEffectPercent(level);
                 if (progression.IsMaxComputeSpeed)
                 {
-                    float percent = StackMergeProgression.GetComputeSpeedEffectPercent(level);
-                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{percent:0}% delay ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, UpgradeName("Solver delay", level, maxLevel), "Maxed", false, effect: ReductionPercent(percent));
                 }
                 else
                 {
                     float nextPercent = StackMergeProgression.GetComputeSpeedEffectPercent(level + 1);
                     long cost = progression.GetComputeSpeedUpgradeCost();
-                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, $"-{nextPercent:0}% delay ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(computeSpeedUpgradeButton, UpgradeName("Solver delay", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(ReductionPercent(percent), ReductionPercent(nextPercent), false));
                 }
             }
 
@@ -7594,10 +7703,11 @@ namespace StackMerge
                 {
                     SetUpgradeButtonLabels(
                         stackCapacityUpgradeButton,
-                        $"{progression.StackCapacity} row ({level}/{maxLevel})",
+                        UpgradeName("Stack rows", level, maxLevel),
                         "Maxed",
                         false,
-                        "Increases the capacity of each stack by 1 per level.");
+                        "Increases the capacity of each stack by 1 per level.",
+                        $"{progression.StackCapacity}");
                 }
                 else
                 {
@@ -7605,10 +7715,11 @@ namespace StackMerge
                     long cost = progression.GetStackCapacityUpgradeCost();
                     SetUpgradeButtonLabels(
                         stackCapacityUpgradeButton,
-                        $"{nextCapacity} row ({level}/{maxLevel})",
+                        UpgradeName("Stack rows", level, maxLevel),
                         $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
                         progression.Chips >= cost,
-                        "Increases the capacity of each stack by 1 per level.");
+                        "Increases the capacity of each stack by 1 per level.",
+                        EffectRange($"{progression.StackCapacity}", $"{nextCapacity}", false));
                 }
             }
 
@@ -7622,20 +7733,22 @@ namespace StackMerge
                 {
                     SetUpgradeButtonLabels(
                         queuePreviewUpgradeButton,
-                        $"+{level} block ({level}/{maxLevel})",
+                        UpgradeName("Visible blocks", level, maxLevel),
                         "Maxed",
                         false,
-                        "Shows 1 more upcoming block per level.");
+                        "Shows 1 more upcoming block per level.",
+                        $"{progression.QueueLength}");
                 }
                 else
                 {
                     long cost = progression.GetQueuePreviewUpgradeCost();
                     SetUpgradeButtonLabels(
                         queuePreviewUpgradeButton,
-                        $"+{level + 1} block ({level}/{maxLevel})",
+                        UpgradeName("Visible blocks", level, maxLevel),
                         $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
                         progression.Chips >= cost,
-                        "Shows 1 more upcoming block per level.");
+                        "Shows 1 more upcoming block per level.",
+                        EffectRange($"{progression.QueueLength}", $"{progression.QueueLength + 1}", false));
                 }
             }
 
@@ -7648,14 +7761,15 @@ namespace StackMerge
                 int maxLevel = progression.MaxDifficultyLevel;
                 if (progression.IsMaxDifficulty)
                 {
-                    string name = $"+{StackMergeProgression.GetDifficultyMaxTierBonus(level):0.0} max tier ({level}/{maxLevel})";
-                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, "Maxed", false);
+                    float current = StackMergeProgression.GetDifficultyMaxTierBonus(level);
+                    SetUpgradeButtonLabels(difficultyUpgradeButton, UpgradeName("Higher chance", level, maxLevel), "Maxed", false, effect: $"+{current:0.#} max tier");
                 }
                 else
                 {
-                    string name = $"+{StackMergeProgression.GetDifficultyMaxTierBonus(level + 1):0.0} max tier ({level}/{maxLevel})";
+                    float current = StackMergeProgression.GetDifficultyMaxTierBonus(level);
+                    float next = StackMergeProgression.GetDifficultyMaxTierBonus(level + 1);
                     long cost = progression.GetDifficultyUpgradeCost();
-                    SetUpgradeButtonLabels(difficultyUpgradeButton, name, $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(difficultyUpgradeButton, UpgradeName("Higher chance", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange($"+{current:0.#} max tier", $"+{next:0.#}", false));
                 }
             }
 
@@ -7663,18 +7777,21 @@ namespace StackMerge
             {
                 int level = progression.ScalingFrequencyLevel;
                 int maxLevel = progression.MaxScalingFrequencyLevel;
+                float current = StackMergeProgression.GetScalingFrequencyEffectPercent(level);
                 if (!progression.ScalingFrequencyPurchasable)
                 {
-                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", "Needs Difficulty L1", false);
+                    float next = StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1);
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, UpgradeName("Higher frequency", level, maxLevel), "Needs Difficulty L1", false, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
                 else if (progression.IsMaxScalingFrequency)
                 {
-                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level):0}% high odds ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, UpgradeName("Higher frequency", level, maxLevel), "Maxed", false, effect: BonusPercent(current));
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1);
                     long cost = progression.GetScalingFrequencyUpgradeCost();
-                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, $"+{StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1):0}% high odds ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, UpgradeName("Higher frequency", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
             }
 
@@ -7682,14 +7799,16 @@ namespace StackMerge
             {
                 int level = progression.ProfitableEndingLevel;
                 int maxLevel = progression.MaxProfitableEndingLevel;
+                float current = StackMergeProgression.GetProfitableEndingEffectPercent(level);
                 if (progression.IsMaxProfitableEnding)
                 {
-                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level):0}% ending ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, UpgradeName("Ending profit", level, maxLevel), "Maxed", false, effect: BonusPercent(current));
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetProfitableEndingEffectPercent(level + 1);
                     long cost = progression.GetProfitableEndingUpgradeCost();
-                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, $"+{StackMergeProgression.GetProfitableEndingEffectPercent(level + 1):0}% ending ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(profitableEndingUpgradeButton, UpgradeName("Ending profit", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
             }
 
@@ -7702,13 +7821,14 @@ namespace StackMerge
                 if (progression.IsMaxPassiveYield)
                 {
                     long perTick = StackMergeProgression.GetPassiveYieldPerTick(level);
-                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{perTick} <sprite name=\"chips\" tint=1> / tick ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, UpgradeName("Passive <sprite name=\"chips\" tint=1> / tick", level, maxLevel), "Maxed", false, effect: $"{FormatNumber(perTick)}");
                 }
                 else
                 {
+                    long perTick = StackMergeProgression.GetPassiveYieldPerTick(level);
                     long nextPerTick = StackMergeProgression.GetPassiveYieldPerTick(level + 1);
                     long cost = progression.GetPassiveYieldUpgradeCost();
-                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, $"+{nextPerTick} <sprite name=\"chips\" tint=1> / tick ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(passiveYieldUpgradeButton, UpgradeName("Passive <sprite name=\"chips\" tint=1> / tick", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange($"{FormatNumber(perTick)}", $"{FormatNumber(nextPerTick)}", false));
                 }
             }
 
@@ -7718,21 +7838,21 @@ namespace StackMerge
             {
                 int level = progression.PassiveTickRateLevel;
                 int maxLevel = progression.MaxPassiveTickRateLevel;
+                float interval = StackMergeProgression.GetPassiveTickInterval(level);
                 if (!progression.PassiveSupportUpgradesUnlocked)
                 {
                     float nextInterval = StackMergeProgression.GetPassiveTickInterval(level + 1);
-                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", "Needs Passive Yield L1", false);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), "Needs Passive Yield L1", false, effect: EffectRange(SecondsValue(interval), SecondsValue(nextInterval), false));
                 }
                 else if (progression.IsMaxPassiveTickRate)
                 {
-                    float interval = StackMergeProgression.GetPassiveTickInterval(level);
-                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {interval:0.#}s ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), "Maxed", false, effect: SecondsValue(interval));
                 }
                 else
                 {
                     float nextInterval = StackMergeProgression.GetPassiveTickInterval(level + 1);
                     long cost = progression.GetPassiveTickRateUpgradeCost();
-                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, $"Every {nextInterval:0.#}s ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(passiveTickRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(SecondsValue(interval), SecondsValue(nextInterval), false));
                 }
             }
 
@@ -7742,18 +7862,21 @@ namespace StackMerge
             {
                 int level = progression.ActiveMultiplierLevel;
                 int maxLevel = progression.MaxActiveMultiplierLevel;
+                float current = StackMergeProgression.GetActiveMultiplierEffectPercent(level);
                 if (!progression.PassiveSupportUpgradesUnlocked)
                 {
-                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", "Needs Passive Yield L1", false);
+                    float next = StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1);
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, UpgradeName("Active multiplier", level, maxLevel), "Needs Passive Yield L1", false, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
                 else if (progression.IsMaxActiveMultiplier)
                 {
-                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level):0}% while active ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, UpgradeName("Active multiplier", level, maxLevel), "Maxed", false, effect: BonusPercent(current));
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1);
                     long cost = progression.GetActiveMultiplierUpgradeCost();
-                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, $"+{StackMergeProgression.GetActiveMultiplierEffectPercent(level + 1):0}% while active ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(activeMultiplierUpgradeButton, UpgradeName("Active multiplier", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
             }
 
@@ -7765,15 +7888,16 @@ namespace StackMerge
             {
                 int level = progression.IncomeLevel;
                 int maxLevel = progression.MaxIncomeLevel;
-                int percentPerLevel = (int)Math.Round(StackMergeProgression.IncomeBonusPerLevel * 100.0);
+                float current = StackMergeProgression.GetIncomeEffectPercent(level);
                 if (progression.IsMaxIncome)
                 {
-                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{level * percentPerLevel}% yield ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(incomeUpgradeButton, UpgradeName("Base <sprite name=\"chips\" tint=1> income", level, maxLevel), "Maxed", false, effect: BonusPercent(current));
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetIncomeEffectPercent(level + 1);
                     long cost = progression.GetIncomeUpgradeCost();
-                    SetUpgradeButtonLabels(incomeUpgradeButton, $"+{(level + 1) * percentPerLevel}% yield ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(incomeUpgradeButton, UpgradeName("Base <sprite name=\"chips\" tint=1> income", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
             }
 
@@ -7782,14 +7906,16 @@ namespace StackMerge
             {
                 int level = progression.ComboEngineLevel;
                 int maxLevel = progression.MaxComboEngineLevel;
+                float current = StackMergeProgression.GetComboEffectPercentPerStreak(level);
                 if (progression.IsMaxComboEngine)
                 {
-                    SetUpgradeButtonLabels(comboEngineUpgradeButton, $"+{StackMergeProgression.GetComboEffectPercentPerStreak(level):0.0}%/streak ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(comboEngineUpgradeButton, UpgradeName("Merge streak", level, maxLevel), "Maxed", false, effect: $"{BonusPercent(current)} / streak");
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetComboEffectPercentPerStreak(level + 1);
                     long cost = progression.GetComboEngineUpgradeCost();
-                    SetUpgradeButtonLabels(comboEngineUpgradeButton, $"+{StackMergeProgression.GetComboEffectPercentPerStreak(level + 1):0.0}%/streak ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(comboEngineUpgradeButton, UpgradeName("Merge streak", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: $"{EffectRange(BonusPercent(current), BonusPercent(next), false)} / streak");
                 }
             }
 
@@ -7798,14 +7924,16 @@ namespace StackMerge
             {
                 int level = progression.SalvageProtocolLevel;
                 int maxLevel = progression.MaxSalvageProtocolLevel;
+                float current = StackMergeProgression.GetSalvageEffectPercent(level);
                 if (progression.IsMaxSalvageProtocol)
                 {
-                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, $"{StackMergeProgression.GetSalvageEffectPercent(level):0}% salvage ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, UpgradeName("Score salvage", level, maxLevel), "Maxed", false, effect: BonusPercent(current));
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetSalvageEffectPercent(level + 1);
                     long cost = progression.GetSalvageProtocolUpgradeCost();
-                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, $"{StackMergeProgression.GetSalvageEffectPercent(level + 1):0}% salvage ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(salvageProtocolUpgradeButton, UpgradeName("Score salvage", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
             }
 
@@ -7814,14 +7942,16 @@ namespace StackMerge
             {
                 int level = progression.TokenDividendLevel;
                 int maxLevel = progression.MaxTokenDividendLevel;
+                float current = StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level);
                 if (progression.IsMaxTokenDividend)
                 {
-                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, $"+{StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level):0.0}%/√token ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, UpgradeName("\u221a<sprite name=\"token\" tint=1> = <sprite name=\"chips\" tint=1>", level, maxLevel), "Maxed", false, effect: $"{BonusPercent(current)} / \u221atoken");
                 }
                 else
                 {
+                    float next = StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level + 1);
                     long cost = progression.GetTokenDividendUpgradeCost();
-                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, $"+{StackMergeProgression.GetTokenDividendPercentPerSqrtToken(level + 1):0.0}%/√token ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(tokenDividendUpgradeButton, UpgradeName("\u221a<sprite name=\"token\" tint=1> = <sprite name=\"chips\" tint=1>", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: $"{EffectRange(BonusPercent(current), BonusPercent(next), false)} / \u221atoken");
                 }
             }
 
@@ -7830,18 +7960,21 @@ namespace StackMerge
             {
                 int level = progression.CurriculumAmountLevel;
                 int maxLevel = progression.MaxCurriculumAmountLevel;
+                long current = StackMergeProgression.GetCurriculumReductionPerTick(level);
                 if (!progression.CurriculumUnlocked)
                 {
-                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, "PPO Curriculum", "Needs PPO", false);
+                    long next = StackMergeProgression.GetCurriculumReductionPerTick(level + 1);
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, UpgradeName("frames / tick", level, maxLevel), "Needs PPO or Bootcamp L5", false, effect: EffectRange(FrameReduction(current), FrameReduction(next), false));
                 }
                 else if (progression.IsMaxCurriculumAmount)
                 {
-                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, $"-{StackMergeProgression.GetCurriculumReductionPerTick(level)} frames/tick ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, UpgradeName("frames / tick", level, maxLevel), "Maxed", false, effect: FrameReduction(current));
                 }
                 else
                 {
+                    long next = StackMergeProgression.GetCurriculumReductionPerTick(level + 1);
                     long cost = progression.GetCurriculumAmountUpgradeCost();
-                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, $"-{StackMergeProgression.GetCurriculumReductionPerTick(level + 1)} frames/tick ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(curriculumAmountUpgradeButton, UpgradeName("frames / tick", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(FrameReduction(current), FrameReduction(next), false));
                 }
             }
 
@@ -7850,18 +7983,21 @@ namespace StackMerge
             {
                 int level = progression.CurriculumRateLevel;
                 int maxLevel = progression.MaxCurriculumRateLevel;
+                float interval = StackMergeProgression.GetCurriculumTickInterval(level);
                 if (!progression.CurriculumRateUnlocked)
                 {
-                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, "Curriculum Rate", "Needs Curriculum", false);
+                    float nextInterval = StackMergeProgression.GetCurriculumTickInterval(level + 1);
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), "Needs Curriculum", false, effect: EffectRange(SecondsValue(interval), SecondsValue(nextInterval), false));
                 }
                 else if (progression.IsMaxCurriculumRate)
                 {
-                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, $"Every {StackMergeProgression.GetCurriculumTickInterval(level):0.00}s ({level}/{maxLevel})", "Maxed", false);
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), "Maxed", false, effect: SecondsValue(interval));
                 }
                 else
                 {
+                    float nextInterval = StackMergeProgression.GetCurriculumTickInterval(level + 1);
                     long cost = progression.GetCurriculumRateUpgradeCost();
-                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, $"Every {StackMergeProgression.GetCurriculumTickInterval(level + 1):0.00}s ({level}/{maxLevel})", $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost);
+                    SetUpgradeButtonLabels(curriculumRateUpgradeButton, UpgradeName("Passive tick rate", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(SecondsValue(interval), SecondsValue(nextInterval), false));
                 }
             }
         }
@@ -8030,7 +8166,7 @@ namespace StackMerge
                 string next = progression.GetResearchEffectSummary(selectedResearchId, level + 1);
                 if (!string.IsNullOrEmpty(next) && next != effect)
                 {
-                    effectDisplay = $"{effect} -> {next}";
+                    effectDisplay = $"{effect} >> {next}";
                 }
             }
             string reason = progression.GetResearchUnavailableReason(selectedResearchId);
@@ -8041,7 +8177,7 @@ namespace StackMerge
             string availability = maxed
                 ? "This research is maxed."
                 : string.IsNullOrEmpty(reason)
-                    ? $"Ready to buy for {FormatNumber(progression.GetResearchCost(selectedResearchId))} Insight."
+                    ? $"Ready to buy for <sprite name=\"insight\" tint=1> {FormatNumber(progression.GetResearchCost(selectedResearchId))}."
                     : reason;
 
             SetText(researchDetailInfoText,
@@ -8155,6 +8291,8 @@ namespace StackMerge
                 SetText(row.highText, FormatNumber(entry.highestMergedBlock));
                 y += rowHeight + 3f;
             }
+
+            SetManualContentHeight(root, y);
         }
 
         // Instantiates one solverStatRowPrefab per solver under historySolverTableRoot.
@@ -8203,6 +8341,8 @@ namespace StackMerge
 
                 y += rowHeight + 3f;
             }
+
+            SetManualContentHeight(root, y);
         }
 
         // Destroys only the rows this code instantiated (children carrying the row component),
@@ -8250,6 +8390,28 @@ namespace StackMerge
             rt.pivot = new Vector2(0.5f, 1f);
             rt.offsetMin = new Vector2(0f, -y - height);
             rt.offsetMax = new Vector2(0f, -y);
+        }
+
+        private static void SetManualContentHeight(RectTransform root, float height)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            float contentHeight = Mathf.Max(0f, height);
+            root.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, contentHeight);
+            LayoutElement layoutElement = EnsureComponent<LayoutElement>(root.gameObject);
+            layoutElement.minHeight = contentHeight;
+            layoutElement.preferredHeight = -1f;
+
+            LayoutRebuilder.MarkLayoutForRebuild(root);
+            RebuildLayout(root);
+            if (root.parent is RectTransform parent)
+            {
+                LayoutRebuilder.MarkLayoutForRebuild(parent);
+                RebuildLayout(parent);
+            }
         }
 
         private void RefreshAchievements()
@@ -8336,6 +8498,8 @@ namespace StackMerge
 
                 y += rowHeight + 4f;
             }
+
+            SetManualContentHeight(root, y);
         }
 
         // Simple runtime line chart: connects the values with rotated thin segments, draws dots for
@@ -8529,7 +8693,7 @@ namespace StackMerge
                 stats.AppendLine($"Policy loss {metrics.LastPolicyLoss:0.000}   Entropy {metrics.LastEntropy:0.000}");
                 stats.AppendLine(progression.MachineLearningPlayingModeUnlocked
                     ? "Playing mode: unlocked"
-                    : $"Playing mode unlocks at {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} frames ({FormatNumber(progression.MachineLearningFrames)} so far)");
+                    : $"Playing mode unlocks at {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} cycle frames ({FormatNumber(progression.MachineLearningCycleFrames)} so far)");
             }
 
             SetText(solverInfoStatsText, stats.ToString());
@@ -8801,10 +8965,13 @@ namespace StackMerge
             // every move. Between layout changes, layer.rect already holds valid dimensions.
             if (boardLayoutDirty)
             {
-                ResizeBoardToCapacity();
+                bool sectionLayoutApplied = ResizeBoardToCapacity();
                 Canvas.ForceUpdateCanvases();
                 boardLayoutDirty = false;
-                PositionRunInfoPanel();
+                if (!sectionLayoutApplied)
+                {
+                    PositionRunInfoPanel();
+                }
             }
 
             for (int stackIndex = 0; stackIndex < stackBlockLayers.Length; stackIndex++)
@@ -8959,16 +9126,16 @@ namespace StackMerge
             }
         }
 
-        private void ResizeBoardToCapacity()
+        private bool ResizeBoardToCapacity()
         {
             if (gameState == null)
             {
-                return;
+                return false;
             }
 
             if (TryLayoutGameplaySections())
             {
-                return;
+                return true;
             }
 
             RectTransform board = boardRoot;
@@ -8979,7 +9146,7 @@ namespace StackMerge
 
             if (board == null)
             {
-                return;
+                return false;
             }
 
             const float top = 470f;
@@ -8989,6 +9156,7 @@ namespace StackMerge
             board.pivot = new Vector2(0.5f, 1f);
             board.offsetMin = new Vector2(0f, -top - height);
             board.offsetMax = new Vector2(0f, -top);
+            return false;
         }
 
         private bool TryLayoutGameplaySections()
@@ -9024,14 +9192,17 @@ namespace StackMerge
                 && !achievementsOpen;
             float gap = GetGameplaySectionGap(parent);
             float footerHeight = GetSectionHeight(footerRoot, 80f);
-            float runInfoHeight = Mathf.Clamp(GetSectionHeight(runInfoPanel, 96f), 56f, 128f);
+            float runInfoMaxHeight = Mathf.Clamp(parentHeight * 0.26f, 128f, 220f);
+            float runInfoHeight = Mathf.Clamp(GetSectionHeight(runInfoPanel, 96f), 56f, runInfoMaxHeight);
             RectTransform modifierSection = gameplayModifiersSection != null ? gameplayModifiersSection.transform as RectTransform : null;
             bool modifierSectionVisible = modifierSection != null
                 && modifierSection.parent == parent
                 && gameplayModifiersSection.activeSelf;
-            float modifierHeight = modifierSectionVisible
-                ? Mathf.Clamp(GetSectionHeight(modifierSection, 58f), 44f, 76f)
-                : 0f;
+            float modifierHeight = modifierSectionVisible ? GameplayModifiersSectionHeight : 0f;
+            if (modifierSectionVisible)
+            {
+                modifierSection.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, GameplayModifiersSectionHeight);
+            }
 
             if (trainingLayout)
             {
@@ -9075,7 +9246,7 @@ namespace StackMerge
             float rawBlockHeight = availableForBlocks / (capacity + 1f);
             float blockHeight = rawBlockHeight >= StackBlockMinHeight
                 ? Mathf.Clamp(rawBlockHeight, StackBlockMinHeight, StackBlockMaxHeight)
-                : Mathf.Clamp(rawBlockHeight, SmallestEmergencyBlockHeight, StackBlockMinHeight);
+                : Mathf.Max(EmergencyFitBlockMinHeight, rawBlockHeight);
 
             float nextHeight = NextPanelChromeHeight + blockHeight;
             float boardHeight = CalculateBoardHeightForBlockHeight(capacity, blockHeight);
@@ -9629,9 +9800,24 @@ namespace StackMerge
 
         private static void SetText(TMP_Text target, string value)
         {
-            if (target != null)
+            if (target == null)
             {
-                target.text = StackMergeLocalization.Translate(value);
+                return;
+            }
+
+            string translated = StackMergeLocalization.Translate(value);
+            if (target.text == translated)
+            {
+                return;
+            }
+
+            target.text = translated;
+            target.SetVerticesDirty();
+            target.SetLayoutDirty();
+            LayoutRebuilder.MarkLayoutForRebuild(target.rectTransform);
+            if (target.rectTransform.parent is RectTransform parent)
+            {
+                LayoutRebuilder.MarkLayoutForRebuild(parent);
             }
         }
 
@@ -9762,7 +9948,7 @@ namespace StackMerge
         // children via a StackMergeButtonLabelPair component. Looked up per-call (not cached) since
         // this only runs during UI refreshes, never per-frame. Falls back to the button's own combined
         // text if no label-pair component is present yet, so nothing breaks while wiring is in progress.
-        private static void SetUpgradeButtonLabels(Button button, string name, string cost, bool interactable, string description = null)
+        private static void SetUpgradeButtonLabels(Button button, string name, string cost, bool interactable, string description = null, string effect = null)
         {
             if (button == null)
             {
@@ -9777,12 +9963,44 @@ namespace StackMerge
             {
                 SetText(labels.nameText, name);
                 SetText(labels.descText, description);
+                SetText(labels.effectText, effect);
                 SetText(labels.costText, cost);
             }
             else
             {
-                SetButtonText(button, string.IsNullOrEmpty(description) ? $"{name}\n{cost}" : $"{name}\n{description}\n{cost}");
+                string effectLine = string.IsNullOrEmpty(effect) ? string.Empty : $"\n{effect}";
+                SetButtonText(button, string.IsNullOrEmpty(description) ? $"{name}{effectLine}\n{cost}" : $"{name}\n{description}{effectLine}\n{cost}");
             }
+        }
+
+        private static string UpgradeName(string displayName, int level, int maxLevel)
+        {
+            return $"{displayName} ({level}/{maxLevel})";
+        }
+
+        private static string EffectRange(string current, string next, bool maxed)
+        {
+            return maxed ? current : $"{current} >> {next}";
+        }
+
+        private static string BonusPercent(float percent)
+        {
+            return $"+{percent:0.#}%";
+        }
+
+        private static string ReductionPercent(float percent)
+        {
+            return percent <= 0.0001f ? "0%" : $"-{percent:0.#}%";
+        }
+
+        private static string SecondsValue(float seconds)
+        {
+            return $"{seconds:0.##}s";
+        }
+
+        private static string FrameReduction(long frames)
+        {
+            return frames <= 0 ? "0" : $"-{frames}";
         }
 
         private static string GetUpgradeButtonDescription(Button button, string name)
@@ -9801,7 +10019,7 @@ namespace StackMerge
 
             if (lookup.Contains("computespeed"))
             {
-                return "Shrinks the delay of Planning and Monte Carlo solvers.";
+                return "Shrinks the delay of MOCA and PLAN solvers.";
             }
 
             if (lookup.Contains("autosolve"))
@@ -9817,33 +10035,38 @@ namespace StackMerge
             // Must be checked before the generic token-pack match below.
             if (lookup.Contains("tokendividend") || lookup.Contains("dividend"))
             {
-                return "Held <sprite name=\"token\" tint=1> pay +1% <sprite name=\"chips\" tint=1> per level times the square root of the hoard.";
+                return "Held <sprite name=\"token\" tint=1> pay <sprite name=\"chips\" tint=1> times the square root of the hoard.";
             }
 
             if (lookup.Contains("tokenpack") || lookup.Contains("tokens"))
             {
-                return "The currency for Auto restart. Pack price rises with the <sprite name=\"token\" tint=1> you hold.";
+                return "The currency for Auto restart. Price rises the more <sprite name=\"token\" tint=1> you hold.";
             }
 
             if (lookup.Contains("comboengine") || lookup.Contains("combo"))
             {
-                return "Consecutive merges give +1% <sprite name=\"chips\" tint=1> per level.";
+                return "Consecutive merges multiply move income.";
             }
 
             if (lookup.Contains("salvageprotocol") || lookup.Contains("salvage"))
             {
-                return "The run's final score is converted into +4% <sprite name=\"chips\" tint=1> per level.";
+                return "Converts part of the run's score into <sprite name=\"chips\" tint=1>.";
+            }
+
+            if (lookup.Contains("framestick") || lookup.Contains("framespertick"))
+            {
+                return "Lowers the cycle frame requirement for PPO Normal Mode.";
             }
 
             // Check the Rate variant before the generic "curriculum" match below.
             if (lookup.Contains("curriculumrate"))
             {
-                return "Each level shortens how often Curriculum ticks while training.";
+                return "Each level shortens how often Curriculum lowers the PPO requirement.";
             }
 
             if (lookup.Contains("curriculum"))
             {
-                return "Lowers the frames needed to unlock Normal Mode (while in Training Mode).";
+                return "Lowers the cycle frame requirement for PPO Normal Mode.";
             }
 
             if (lookup.Contains("solvertuning"))
@@ -9871,7 +10094,7 @@ namespace StackMerge
                 return "Shows 1 more upcoming block per level.";
             }
 
-            if (lookup.Contains("difficultyscaling") || lookup.Contains("maxtier"))
+            if (lookup.Contains("difficultyscaling") || lookup.Contains("higherchance") || lookup.Contains("maxtier"))
             {
                 return "Increases the chance of spawning higher blocks.";
             }
@@ -9905,7 +10128,7 @@ namespace StackMerge
 
             if (lookup.Contains("chipyield") || lookup.Contains("income") || lookup.Contains("yield"))
             {
-                return "Boosts the <sprite name=\"chips\" tint=1> earned during merges and runs.";
+                return "Boosts base <sprite name=\"chips\" tint=1> income. Early levels give larger gains.";
             }
 
             return null;

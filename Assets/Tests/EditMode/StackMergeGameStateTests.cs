@@ -6,6 +6,14 @@ namespace StackMerge.Tests
 {
     public sealed class StackMergeGameStateTests
     {
+        [SetUp]
+        public void ResetDebugOverrides()
+        {
+            StackMergeProgression.DebugUnlockDatacenter = false;
+            StackMergeProgression.DebugFastPpoFrames = false;
+            StackMergeProgression.DebugTripleIncome = false;
+        }
+
         private static StackMergePpoTrainingData CreateInitializedPpoPolicy(int steps, int updates, int episodes, long bestScore, int bestHigh)
         {
             var data = new StackMergePpoTrainingData();
@@ -260,7 +268,7 @@ namespace StackMerge.Tests
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 10000000 });
 
-            Assert.That(progression.MaxScalingFrequencyLevel, Is.EqualTo(5));
+            Assert.That(progression.MaxScalingFrequencyLevel, Is.EqualTo(10));
             Assert.That(progression.MaxProfitableEndingLevel, Is.EqualTo(5));
             Assert.That(progression.BuyScalingFrequencyUpgrade(), Is.True);
             Assert.That(progression.ScalingFrequencyLevel, Is.EqualTo(1));
@@ -574,6 +582,30 @@ namespace StackMerge.Tests
         }
 
         [Test]
+        public void Progression_ActiveMultiplierIsFrontLoadedAndOnlyAppliesWhenActive()
+        {
+            Assert.That(StackMergeProgression.GetActiveMultiplierEffectPercent(0), Is.EqualTo(0f));
+            Assert.That(StackMergeProgression.GetActiveMultiplierEffectPercent(1), Is.EqualTo(40f).Within(0.001f));
+            Assert.That(StackMergeProgression.GetActiveMultiplierEffectPercent(2), Is.EqualTo(75f).Within(0.001f));
+            Assert.That(StackMergeProgression.GetActiveMultiplierEffectPercent(3), Is.EqualTo(105f).Within(0.001f));
+            Assert.That(StackMergeProgression.GetActiveMultiplierEffectPercent(10), Is.EqualTo(200f).Within(0.001f));
+
+            var inactive = new StackMergeProgression(new StackMergeProgressionData
+            {
+                passiveYieldLevel = 1,
+                activeMultiplierLevel = 1
+            });
+            var active = new StackMergeProgression(new StackMergeProgressionData
+            {
+                passiveYieldLevel = 1,
+                activeMultiplierLevel = 1
+            });
+
+            Assert.That(inactive.TickPassiveProduction(10f, false), Is.EqualTo(100));
+            Assert.That(active.TickPassiveProduction(10f, true), Is.EqualTo(140));
+        }
+
+        [Test]
         public void Progression_UnlocksSolverTuningAndModifiers()
         {
             var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 50000 });
@@ -627,7 +659,7 @@ namespace StackMerge.Tests
             int[] maxedModifiers = StackMergeProgression.Modifiers.Select(modifier => modifier.MaxLevel).ToArray();
             var unlockedProgression = new StackMergeProgression(new StackMergeProgressionData
             {
-                chips = 101_000_000,
+                chips = 10_100_000_000,
                 modifiersMenuUnlocked = true,
                 modifierLevels = maxedModifiers
             });
@@ -734,7 +766,7 @@ namespace StackMerge.Tests
         }
 
         [Test]
-        public void PpoNormalRuns_EarnInsightAfterFirstPrestige()
+        public void PpoNormalRuns_DoNotEarnInsightWithoutPassiveInsight()
         {
             bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
             unlockedSolvers[(int)SolverId.MachineLearning] = true;
@@ -747,6 +779,32 @@ namespace StackMerge.Tests
             });
 
             progression.AwardMachineLearningRun(12_000, 260, 210, 4096, trainingMode: false);
+
+            Assert.That(progression.ResearchInsight, Is.EqualTo(0));
+            Assert.That(progression.ResearchInsightEarnedThisPrestige, Is.EqualTo(0));
+            Assert.That(progression.PreviewPrestigeInsightGain(), Is.GreaterThan(1));
+        }
+
+        [Test]
+        public void PpoNormalRuns_EarnDirectInsightWithPassiveInsight()
+        {
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.MachineLearning] = true;
+            int[] researchLevels = new int[StackMergeProgression.Research.Length];
+            researchLevels[(int)ResearchId.PassiveInsight] = 1;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                solverUnlocked = unlockedSolvers,
+                selectedSolver = (int)SolverId.MachineLearning,
+                prestigeCount = 1,
+                researchLevels = researchLevels,
+                machineLearningPolicy = CreateInitializedPpoPolicy(500_000, 100, 10, 12_000, 4096)
+            });
+
+            for (int i = 0; i < 20; i++)
+            {
+                progression.AwardMachineLearningRun(12_000, 260, 210, 4096, trainingMode: false);
+            }
 
             Assert.That(progression.ResearchInsight, Is.GreaterThan(0));
             Assert.That(progression.ResearchInsightEarnedThisPrestige, Is.EqualTo(progression.ResearchInsight));
@@ -782,6 +840,55 @@ namespace StackMerge.Tests
             Assert.That(progression.MachineLearningFrames, Is.EqualTo(50_000));
             Assert.That(progression.MachineLearningRuns, Is.EqualTo(500));
             Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
+        }
+
+        [Test]
+        public void BootcampCapstone_AllowsCurriculumBeforePpoAndCanAutomateRequirement()
+        {
+            int[] researchLevels = new int[StackMergeProgression.Research.Length];
+            researchLevels[(int)ResearchId.PpoBootcamp] = StackMergeProgression.Research[(int)ResearchId.PpoBootcamp].MaxLevel;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 500_000_000_000,
+                researchLevels = researchLevels
+            });
+
+            Assert.That(progression.IsSolverUnlocked(SolverId.MachineLearning), Is.False);
+            Assert.That(progression.CurriculumUnlocked, Is.True);
+            Assert.That(progression.BuyCurriculumAmountUpgrade(), Is.True);
+
+            for (int i = 0; i < progression.MaxCurriculumAmountLevel - 1; i++)
+            {
+                Assert.That(progression.BuyCurriculumAmountUpgrade(), Is.True);
+            }
+
+            for (int i = 0; i < progression.MaxCurriculumRateLevel; i++)
+            {
+                Assert.That(progression.BuyCurriculumRateUpgrade(), Is.True);
+            }
+
+            progression.TickCurriculum(10_000f);
+
+            Assert.That(progression.EffectivePlayingModeFrameRequirement, Is.EqualTo(0));
+            Assert.That(progression.MachineLearningPlayingModeUnlocked, Is.True);
+        }
+
+        [Test]
+        public void DatacenterTrainingBuildsPermanentPpoKnowledgeWithoutCycleUnlock()
+        {
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                prestigeCount = StackMergeProgression.DatacenterUnlockPrestigeCount,
+                datacenterRackCounts = new[] { 1, 0, 0, 0 },
+                datacenterAllocation = new[] { 1f, 0f, 0f }
+            });
+
+            progression.TickDatacenter(20f);
+
+            Assert.That(progression.MachineLearningPermanentFrames, Is.GreaterThan(0));
+            Assert.That(progression.MachineLearningFrames, Is.GreaterThan(0));
+            Assert.That(progression.MachineLearningCycleFrames, Is.EqualTo(0));
+            Assert.That(progression.MachineLearningPlayingModeUnlocked, Is.False);
         }
 
         [Test]

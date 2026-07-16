@@ -14,34 +14,34 @@
 const C = {
   incomeScale: 0.25,
   autoRestartSeconds: 1.2, // fix; a Restart Sponsor tokent spórol, NEM időt
-  speedCosts: [6000, 12000, 25000, 55000, 110000, 220000, 460000, 950000, 1950000, 4000000],
+  speedCosts: [6000, 12000, 25000, 55000, 110000, 250000, 550000, 1250000, 3000000, 7000000],
   moveIntervals: [0.18, 0.146, 0.118, 0.096, 0.078, 0.063, 0.051, 0.041, 0.034, 0.027, 0.022],
-  computeCosts: [150000, 300000, 700000, 2000000, 4500000],
+  computeCosts: [150000, 300000, 900000, 2500000, 6500000],
   computeReduction: 0.11,
   stackCosts: [12000, 70000, 400000, 2200000, 11000000],
   queueCosts: [40000, 400000],
   chipYieldCosts: [4000, 10000, 25000, 62000, 155000, 390000, 970000, 2400000, 6000000, 15000000],
-  chipYieldPerLevel: 0.18,
+  chipYieldBonusByLevel: [0.45, 0.35, 0.30, 0.25, 0.20, 0.18, 0.15, 0.12, 0.10, 0.10],
   difficultyCosts: [60000, 180000, 600000, 1800000, 6000000],
   scalingFrequencyCosts: [90000, 150000, 245000, 400000, 660000, 1100000, 1800000, 2950000, 4850000, 8000000],
   profitableEndingCosts: [60000, 170000, 480000, 1350000, 3800000],
-  profitableEndingPerLevel: 0.10,
+  profitableEndingPerLevel: 0.15,
   passiveYieldCosts: [5000, 10500, 22000, 46000, 96000, 190000, 370000, 700000, 1300000, 2400000],
-  passiveYieldPerTick: [0, 8, 15, 28, 52, 95, 170, 300, 530, 930, 1600],
+  passiveYieldPerTick: [0, 100, 200, 350, 500, 800, 1200, 1500, 2000, 3000, 5000],
   passiveTickCosts: [7000, 14000, 29000, 60000, 120000, 235000, 450000, 850000, 1550000, 2800000],
-  passiveTickIntervals: [14, 11.8, 9.9, 8.4, 7, 5.9, 5, 4.2, 3.5, 3, 2.5],
-  activeMultiplierCosts: [4000, 8700, 19000, 41000, 88000, 180000, 360000, 700000, 1350000, 2500000],
-  activeMultiplierPerLevel: 0.2,
+  passiveTickIntervals: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1.5, 1],
+  activeMultiplierCosts: [4000, 10000, 20000, 45000, 88000, 180000, 400000, 750000, 1500000, 4000000],
+  activeMultiplierBonusByLevel: [0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.10, 0.10, 0.05],
   comboCosts: [15000, 30000, 60000, 125000, 250000, 500000, 1000000, 2000000, 4000000, 8000000],
-  comboPerStreakPerLevel: 0.01,
+  comboBonusPerStreakByLevel: [0.05, 0.04, 0.03, 0.025, 0.02, 0.015, 0.01, 0.0075, 0.005, 0.0025],
   comboStreakCap: 20,
   salvageCosts: [25000, 50000, 100000, 200000, 400000, 800000, 1600000, 3200000, 6400000, 12800000],
-  salvageSharePerLevel: 0.04, // run-score bázison (a stranded-board bázis kivezetve)
+  salvageShareByLevel: [0.25, 0.20, 0.15, 0.10, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05], // run-score bazison
   tokenDividendCosts: [50000, 200000, 800000, 3200000, 12800000],
   tokenDividendPerSqrtTokenPerLevel: 0.01, // +1%/szint × √token, cap nélkül
   tokenProspectorMergeTarget: 8,
   tokenPackCost: 10000, // alapár; a tényleges ár ×(1 + tartott token/100)
-  tokenPackSize: 10,
+  tokenPackSize: 20,
 };
 
 // GetSolverPacingMultiplier tükör — a játékkóddal ellenőrizve.
@@ -52,38 +52,38 @@ const solverPacing = {
 const heavySolvers = new Set(["PLAN-3", "PLAN-5", "MOCA", "MOCA+", "MCTS"]);
 
 const agents = [
-  ["quartermaster", "Quartermaster", 60000, "eco", "+4 chip minden lerakásra"],
-  ["restartSponsor", "Restart Sponsor", 120000, "eco", "Ingyen restart (token-megtakarítás)"],
-  ["highwaterAnalyst", "Highwater Analyst", 200000, "eco", "+140% new-high jutalom"],
-  ["scoreAuditor", "Score Auditor", 300000, "eco", "+60% run-végi score bónusz"],
-  ["overclocker", "Overclocker", 400000, "eco", "-25% move-intervallum"],
-  ["mergeBroker", "Merge Broker", 500000, "eco", "+75% merge-bevétel"],
-  ["tokenProspector", "Token Prospector", 2000000, "eco", "+1 token / 8 merge"],
-  ["moveDividend", "Move Dividend", 2200000, "eco", "Run-végi bónusz a lépésszámból"],
-  ["velocityTrader", "Velocity Trader", 3000000, "eco", "Run-végi bónusz a tempóból"],
+  ["restartSponsor", "Restart Sponsor", 100000, "eco", "Ingyen restart (token-megtakarítás)"],
+  ["highwaterAnalyst", "Highwater Analyst", 250000, "eco", "+200% new-high jutalom"],
+  ["quartermaster", "Quartermaster", 500000, "eco", "+10 chip minden lerakásra"],
+  ["scoreAuditor", "Score Auditor", 800000, "eco", "+200% run-végi score bónusz"],
+  ["overclocker", "Overclocker", 1500000, "eco", "-25% move-intervallum"],
+  ["velocityTrader", "Velocity Trader", 4000000, "eco", "Run-végi bónusz a tempóból"],
+  ["moveDividend", "Move Dividend", 6000000, "eco", "Run-végi bónusz a lépésszámból"],
+  ["mergeBroker", "Merge Broker", 12000000, "eco", "+75% merge-bevétel"],
+  ["tokenProspector", "Token Prospector", 20000000, "eco", "+1 token / 8 merge"],
 ];
 
 const modifiers = [
-  ["unstableStack", "Unstable Stack", [800000, 1600000, 3200000, 6400000, 12800000], "stat", "Mentés/run — hosszabb runok"],
-  ["catalystStack", "Catalyst Stack", [3000000], "eco", "Merge-bevétel ×2"],
-  ["mirrorStack", "Mirror Stack", [3000000], "stat", "Extra merge-lehetőség"],
-  ["joker", "Joker", [4500000], "stat", "Wild blokkok a sorban"],
-  ["minersPickaxe", "Miner's Pickaxe", [2000000, 4000000, 8000000, 16000000, 32000000], "stat", "Blokk-törlés / run"],
-  ["queueScrubber", "Queue Scrubber", [1800000, 3600000, 7200000, 14400000, 28800000], "stat", "Sor-átugrás / run"],
-  ["neuralAccelerator", "Neural Accelerator", [6000000], "eco", "MOCA/MOCA+/MCTS ~2× gyorsabb (közelítés)"],
+  ["unstableStack", "Unstable Stack", [3000000, 5000000, 10000000, 20000000, 40000000], "stat", "Mentés/run — hosszabb runok"],
+  ["catalystStack", "Catalyst Stack", [10000000], "eco", "Merge-bevétel ×2"],
+  ["mirrorStack", "Mirror Stack", [25000000], "stat", "Extra merge-lehetőség"],
+  ["joker", "Joker", [80000000], "stat", "Wild blokkok a sorban"],
+  ["minersPickaxe", "Miner's Pickaxe", [5000000, 8000000, 15000000, 30000000, 50000000], "stat", "Blokk-törlés / run"],
+  ["queueScrubber", "Queue Scrubber", [5000000, 8000000, 15000000, 30000000, 50000000], "stat", "Sor-átugrás / run"],
+  ["neuralAccelerator", "Neural Accelerator", [2500000], "eco", "MOCA/MOCA+ ~2× gyorsabb (közelítés)"],
 ];
 
 // Gazdasági (képlettel számolható) és stat-formáló (benchmark-ot igénylő) szintek.
 const levelDefs = [
   ["speed", "Solver Speed", C.speedCosts, "eco", "Move-intervallum csökken"],
   ["compute", "Compute Speed", C.computeCosts, "eco", "Nehéz solverek pacing-je csökken"],
-  ["chipYield", "Chip Yield", C.chipYieldCosts, "eco", `+${C.chipYieldPerLevel * 100}% minden bevételre`],
-  ["profitableEnding", "Profitable Ending", C.profitableEndingCosts, "eco", "+10%/szint a run-végi bónuszra"],
+  ["chipYield", "Chip Yield", C.chipYieldCosts, "eco", "Front-loaded global chip multiplier"],
+  ["profitableEnding", "Profitable Ending", C.profitableEndingCosts, "eco", "+15%/szint a run-végi bónuszra"],
   ["passiveYield", "Passive Yield", C.passiveYieldCosts, "eco", "Chips/tick"],
   ["passiveTick", "Passive Tick Rate", C.passiveTickCosts, "eco", "Sűrűbb tickek"],
-  ["activeMultiplier", "Active Multiplier", C.activeMultiplierCosts, "eco", "+20%/szint passzívra játék közben"],
-  ["combo", "Combo Engine", C.comboCosts, "eco", "+1%/streak-fok/szint"],
-  ["salvage", "Salvage Protocol", C.salvageCosts, "eco", "Run-score 4%/szint game overkor"],
+  ["activeMultiplier", "Active Multiplier", C.activeMultiplierCosts, "eco", "Front-loaded passzív szorzó aktív játék közben"],
+  ["combo", "Combo Engine", C.comboCosts, "eco", "Front-loaded %/streak-fok"],
+  ["salvage", "Salvage Protocol", C.salvageCosts, "eco", "Front-loaded run-score share game overkor"],
   ["tokenDividend", "Token Dividend", C.tokenDividendCosts, "eco", "+1%×√token/szint bevétel, cap nélkül"],
   ["stack", "Stack Capacity", C.stackCosts, "stat", "Hosszabb runok — benchmarkból mérhető"],
   ["queue", "Next Preview", C.queueCosts, "stat", "Jobb solver-döntések — benchmarkból mérhető"],
@@ -153,6 +153,12 @@ function num(id) { return Number($(id).value || 0); }
 function clampIdx(v, arr) { return Math.min(Math.max(0, v), arr.length - 1); }
 function cloneState(s) { return JSON.parse(JSON.stringify(s)); }
 function pct(delta, base) { return base <= 0 ? 0 : (delta / base) * 100; }
+function levelBonus(arr, level) {
+  const count = Math.min(Math.max(0, level), arr.length);
+  let total = 0;
+  for (let i = 0; i < count; i++) total += arr[i];
+  return total;
+}
 
 // GetHighestBlockRewardMultiplier tükör (játékkóddal egyeztetve).
 function hmOf(high) {
@@ -209,7 +215,7 @@ function solverInterval(s) {
 
 function globalMultiplier(s) {
   const stage = s.layer === "modifiers" ? 24 : s.layer === "agents" ? 5 : 1;
-  const chip = 1 + s.levels.chipYield * C.chipYieldPerLevel;
+  const chip = 1 + levelBonus(C.chipYieldBonusByLevel, s.levels.chipYield);
   const token = 1 + Math.sqrt(Math.max(0, s.tokens)) * s.levels.tokenDividend * C.tokenDividendPerSqrtTokenPerLevel;
   return stage * chip * s.researchIncome * s.datacenterMarket * token;
 }
@@ -231,11 +237,11 @@ function computeEconomy(s) {
   const hmMerge = (hmTop + hmOf(Math.max(1, s.bestHigh / 2))) / 2;
 
   const mergeAgent = s.agents.mergeBroker ? 1.75 : 1;
-  const highAgent = s.agents.highwaterAnalyst ? 2.4 : 1;
-  const scoreAgent = s.agents.scoreAuditor ? 1.6 : 1;
-  const flatPlacement = s.agents.quartermaster ? 4 : 0;
+  const highAgent = s.agents.highwaterAnalyst ? 3.0 : 1;
+  const scoreAgent = s.agents.scoreAuditor ? 3.0 : 1;
+  const flatPlacement = s.agents.quartermaster ? 10 : 0;
   const catalyst = s.modifiers.catalystStack > 0 ? 2 : 1;
-  const comboMultiplier = 1 + Math.min(C.comboStreakCap, s.comboStreak) * s.levels.combo * C.comboPerStreakPerLevel;
+  const comboMultiplier = 1 + Math.min(C.comboStreakCap, s.comboStreak) * levelBonus(C.comboBonusPerStreakByLevel, s.levels.combo);
 
   const placement = s.moves * (2 + flatPlacement);
   const merge = s.merges * avgMergeTile * hmMerge * 0.55 * mergeAgent * catalyst;
@@ -258,18 +264,18 @@ function computeEconomy(s) {
 
   // Run-végi bónusz (AwardRunCompleted tükör). A Velocity a JÁTÉKidőt használja.
   const scoreBonus = Math.max(1, s.avgScore) * 0.22 * hmTop * scoreAgent;
-  const moveDividend = s.agents.moveDividend ? s.moves * Math.max(1, hmTop * 0.35) * 4 : 0;
+  const moveDividend = s.agents.moveDividend ? s.moves * Math.max(1, hmTop * 0.35) * 18 : 0;
   const movesPerSecond = s.moves / playSeconds;
-  const velocity = s.agents.velocityTrader ? scoreBonus * Math.min(2.5, Math.max(0, movesPerSecond - 1) * 0.18) : 0;
+  const velocity = s.agents.velocityTrader ? scoreBonus * Math.min(7.5, Math.max(0, movesPerSecond - 1) * 0.54) : 0;
   const runBonus = (scoreBonus + moveDividend + velocity) * (1 + s.levels.profitableEnding * C.profitableEndingPerLevel) * C.incomeScale * global;
 
   // Salvage a run-végi score-ból fizet (AwardSalvage tükör, score-bázisú rework után).
-  const salvage = Math.max(0, s.avgScore) * s.levels.salvage * C.salvageSharePerLevel * C.incomeScale * global;
+  const salvage = Math.max(0, s.avgScore) * levelBonus(C.salvageShareByLevel, s.levels.salvage) * C.incomeScale * global;
 
   // Passzív: játék közben Active Multiplierrel, a restart 1,2 mp alatt anélkül.
   const passiveBase = C.passiveYieldPerTick[clampIdx(s.levels.passiveYield, C.passiveYieldPerTick)] || 0;
   const passiveInterval = C.passiveTickIntervals[clampIdx(s.levels.passiveTick, C.passiveTickIntervals)] || 14;
-  const activeMult = 1 + s.levels.activeMultiplier * C.activeMultiplierPerLevel;
+  const activeMult = 1 + levelBonus(C.activeMultiplierBonusByLevel, s.levels.activeMultiplier);
   const passive = passiveBase > 0
     ? (passiveBase * activeMult / passiveInterval * playSeconds + passiveBase / passiveInterval * C.autoRestartSeconds) * global
     : 0;

@@ -48,6 +48,7 @@ namespace StackMerge
 
         private readonly List<int>[] stacks;
         private readonly List<int> nextBlocks = new();
+        private readonly Queue<int> pairedHighTierEchoes = new();
         private readonly StackMergeRunModifiers startingModifiers;
         private Random random;
         private int unstableSavesRemaining;
@@ -156,6 +157,7 @@ namespace StackMerge
             queueSkipsRemaining = startingModifiers.QueueSkips;
             mirrorStackEnabled = startingModifiers.MirrorStack;
             jokerBlocksEnabled = startingModifiers.JokerBlocks;
+            pairedHighTierEchoes.Clear();
             nextBlocks.Clear();
 
             for (int i = 0; i < QueueLength; i++)
@@ -402,7 +404,8 @@ namespace StackMerge
                 HighestBlock,
                 HighestMergedBlock,
                 IsGameOver,
-                ActiveModifiers);
+                ActiveModifiers,
+                pairedHighTierEchoes.ToArray());
         }
 
         public StackMergeGameState CreateSimulationCopy(int? seed = null)
@@ -443,6 +446,7 @@ namespace StackMerge
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
             HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
             RestoreModifierState(snapshot.Modifiers);
+            RestorePendingSpawnEchoes(snapshot.PendingSpawnEchoes);
             IsGameOver = snapshot.IsGameOver || !HasAvailableAction();
         }
 
@@ -470,6 +474,7 @@ namespace StackMerge
             HighestBlock = Math.Max(2, snapshot.HighestBlock);
             HighestMergedBlock = Math.Max(0, snapshot.HighestMergedBlock);
             RestoreModifierState(snapshot.Modifiers);
+            RestorePendingSpawnEchoes(snapshot.PendingSpawnEchoes);
 
             nextBlocks.Clear();
             int preservedBlocks = Math.Min(snapshot.NextBlocks.Length, QueueLength);
@@ -495,6 +500,7 @@ namespace StackMerge
 
             nextBlocks.Clear();
             nextBlocks.AddRange(blocks);
+            pairedHighTierEchoes.Clear();
             HighestBlock = Math.Max(HighestBlock, blocks.Where(block => block > 0).DefaultIfEmpty(1).Max());
             IsGameOver = !HasAvailableAction();
         }
@@ -621,6 +627,11 @@ namespace StackMerge
 
         private int GenerateNextBlock()
         {
+            if (pairedHighTierEchoes.Count > 0)
+            {
+                return pairedHighTierEchoes.Dequeue();
+            }
+
             if (jokerBlocksEnabled)
             {
                 double jokerChance = 0.025 + Math.Min(0.012, (DifficultyLevel + ScalingFrequencyLevel) * 0.002);
@@ -630,6 +641,26 @@ namespace StackMerge
                 }
             }
 
+            int unlockedMaxExponent = ComputeUnlockedMaxSpawnExponent();
+            if (DifficultyLevel <= 0 && ScalingFrequencyLevel <= 0)
+            {
+                return RollWeightedSpawn(unlockedMaxExponent, 0.045);
+            }
+
+            int safeSpawnExponent = ComputeSafeRegularSpawnExponent(unlockedMaxExponent);
+            if (TryCreatePairedHighTierOpportunity(safeSpawnExponent, unlockedMaxExponent, out int pairedExponent))
+            {
+                int pairedValue = 1 << pairedExponent;
+                pairedHighTierEchoes.Enqueue(pairedValue);
+                return pairedValue;
+            }
+
+            return RollWeightedSpawn(safeSpawnExponent, 0.025);
+
+        }
+
+        private int ComputeUnlockedMaxSpawnExponent()
+        {
             double maxTierPressure = DifficultyLevel * 3.0 / 5.0;
             int tierBonus = (int)Math.Floor(maxTierPressure);
             double fractionalTier = maxTierPressure - tierBonus;
@@ -650,16 +681,76 @@ namespace StackMerge
             }
 
             int capBonus = Math.Min(2, (int)Math.Floor(maxTierPressure * 2.0 / 3.0));
-            maxSpawnExponent = Math.Min(maxSpawnExponent, 7 + capBonus);
+            return Math.Min(maxSpawnExponent, 7 + capBonus);
+        }
 
+        private int ComputeSafeRegularSpawnExponent(int maxSpawnExponent)
+        {
+            int currentHighExponent = FloorLog2(HighestBlock);
+            int safeExponent = Math.Max(1, currentHighExponent - 2);
+            if (DifficultyLevel >= 3)
+            {
+                safeExponent++;
+            }
+
+            safeExponent = Math.Min(safeExponent, Math.Max(1, currentHighExponent - 1));
+            return Math.Min(maxSpawnExponent, Math.Max(1, safeExponent));
+        }
+
+        private bool TryCreatePairedHighTierOpportunity(int safeSpawnExponent, int maxSpawnExponent, out int exponent)
+        {
+            exponent = 0;
+            if (DifficultyLevel <= 0 || maxSpawnExponent <= safeSpawnExponent)
+            {
+                return false;
+            }
+
+            double opportunityChance = Math.Min(0.16, DifficultyLevel * 0.012 + ScalingFrequencyLevel * 0.008);
+            if (random.NextDouble() >= opportunityChance)
+            {
+                return false;
+            }
+
+            exponent = RollHighTierOpportunityExponent(safeSpawnExponent + 1, maxSpawnExponent);
+            return true;
+        }
+
+        private int RollHighTierOpportunityExponent(int minExponent, int maxExponent)
+        {
+            double upwardBias = 1.0 + ScalingFrequencyLevel * 0.08;
+            double totalWeight = 0.0;
+            double[] weights = new double[maxExponent - minExponent + 1];
+
+            for (int exponent = minExponent; exponent <= maxExponent; exponent++)
+            {
+                double weight = Math.Pow(upwardBias, exponent - minExponent);
+                weights[exponent - minExponent] = weight;
+                totalWeight += weight;
+            }
+
+            double roll = random.NextDouble() * totalWeight;
+            double cumulative = 0.0;
+            for (int i = 0; i < weights.Length; i++)
+            {
+                cumulative += weights[i];
+                if (roll <= cumulative)
+                {
+                    return minExponent + i;
+                }
+            }
+
+            return maxExponent;
+        }
+
+        private int RollWeightedSpawn(int maxSpawnExponent, double scalingPressurePerLevel)
+        {
+            maxSpawnExponent = Math.Max(1, maxSpawnExponent);
             double totalWeight = 0;
             double[] weights = new double[maxSpawnExponent + 1];
 
             for (int exponent = 0; exponent <= maxSpawnExponent; exponent++)
             {
-                // 0.045/level — halved when the Scaling Frequency ladder went 5 → 10 levels (keep
-                // in sync with StackMergeProgression.ScalingFrequencyPressurePerLevel).
-                double pressure = 1.0 + ScalingFrequencyLevel * 0.045 * exponent;
+                double pressure = 1.0 + ScalingFrequencyLevel * scalingPressurePerLevel * exponent;
                 double weight = Math.Pow(0.56, exponent) * pressure;
                 weights[exponent] = weight;
                 totalWeight += weight;
@@ -678,6 +769,23 @@ namespace StackMerge
             }
 
             return 1 << maxSpawnExponent;
+        }
+
+        private void RestorePendingSpawnEchoes(IReadOnlyList<int> echoes)
+        {
+            pairedHighTierEchoes.Clear();
+            if (echoes == null)
+            {
+                return;
+            }
+
+            foreach (int echo in echoes)
+            {
+                if (echo > 0)
+                {
+                    pairedHighTierEchoes.Enqueue(echo);
+                }
+            }
         }
 
         private static int FloorLog2(int value)
@@ -781,6 +889,21 @@ namespace StackMerge
             int highestMergedBlock,
             bool isGameOver,
             StackMergeRunModifiers modifiers = default)
+            : this(stacks, nextBlocks, score, blocksDropped, totalMerges, highestBlock, highestMergedBlock, isGameOver, modifiers, Array.Empty<int>())
+        {
+        }
+
+        public StackMergeSnapshot(
+            int[][] stacks,
+            int[] nextBlocks,
+            long score,
+            int blocksDropped,
+            int totalMerges,
+            int highestBlock,
+            int highestMergedBlock,
+            bool isGameOver,
+            StackMergeRunModifiers modifiers,
+            int[] pendingSpawnEchoes)
         {
             Stacks = stacks;
             NextBlocks = nextBlocks;
@@ -791,6 +914,7 @@ namespace StackMerge
             HighestMergedBlock = highestMergedBlock;
             IsGameOver = isGameOver;
             Modifiers = modifiers;
+            PendingSpawnEchoes = pendingSpawnEchoes ?? Array.Empty<int>();
         }
 
         public int[][] Stacks { get; }
@@ -810,5 +934,7 @@ namespace StackMerge
         public bool IsGameOver { get; }
 
         public StackMergeRunModifiers Modifiers { get; }
+
+        public int[] PendingSpawnEchoes { get; }
     }
 }

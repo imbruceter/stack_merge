@@ -1,0 +1,27 @@
+﻿Stack Merge Solver Benchmark
+Completed: 2026-07-15 09:52:22
+Total time: 28,50s
+Tuning: neutral for all solvers
+Modifiers: Unstable Stack L0, Catalyst Stack L0, Mirror Stack L0, Joker L0, Miner's Pickaxe L0, Queue Scrubber L0, Neural Accelerator L0
+
+Solver	Runs	Min	Median	Avg	Max	CV%	AvgMoves	AvgMerges	Mrg/Move	AvgHigh	BestHigh	NewHighs	AvgStreak	MaxStreak	Stranded	ms/Move	Ended%	Timed%	MoveCap%	Secs	Notes
+MOCA	100/100	1106	2234	2374	4174	29,4%	204,8	184,8	0,90	100	128	15,9	1,7	5,1	518	0,54	100%	0%	0%	11,1	
+LOOK	100/100	917	1982	2042	3457	27,4%	191,0	171,0	0,90	84	128	17,4	1,7	5,3	453	0,17	100%	0%	0%	3,3	
+PLAN	100/100	1066	1878	1905	3691	25,9%	183,5	163,5	0,89	81	128	17,4	1,7	5,3	427	0,16	100%	0%	0%	2,9	
+COMBO	100/100	639	1776	1892	3787	32,6%	181,2	161,2	0,89	80	128	16,8	1,8	5,5	427	0,12	100%	0%	0%	2,1	
+HEUR	100/100	519	1304	1349	3459	35,5%	150,9	130,9	0,87	60	128	16,9	1,7	5,0	318	0,04	100%	0%	0%	0,6	
+BAL	100/100	553	1208	1242	2433	30,7%	143,5	123,5	0,86	53	128	17,3	1,7	4,8	296	0,04	100%	0%	0%	0,6	
+PPO	100/100	98	262	270	572	36,1%	59,3	39,3	0,66	17	32	7,7	1,4	3,2	90	1,34	100%	0%	0%	7,9	
+RAND	100/100	82	228	237	505	38,1%	56,2	36,2	0,64	14	32	8,6	1,4	3,2	81	0,00	100%	0%	0%	0,0	
+
+Stat champions (specialization check — runner-up in parentheses):
+  Best median score: MOCA (2234) — 2. LOOK (1982)
+  Best peak score: MOCA (4174) — 2. COMBO (3787)
+  Most merges/run: MOCA (184,8) — 2. LOOK (171,0)
+  Highest merge density: MOCA (0,90/move) — 2. LOOK (0,90/move)
+  Longest runs (moves): MOCA (204,8) — 2. LOOK (191,0)
+  Highest avg block: MOCA (100) — 2. LOOK (84)
+  Most new-high events: LOOK (17,4/run) — 2. PLAN (17,4/run)
+  Best combo streak: COMBO (1,8 avg) — 2. PLAN (1,7 avg)
+  Most consistent (lowest CV): PLAN (25,9%) — 2. LOOK (27,4%)
+  Cheapest CPU (ms/move): RAND (0,00 ms) — 2. BAL (0,04 ms)

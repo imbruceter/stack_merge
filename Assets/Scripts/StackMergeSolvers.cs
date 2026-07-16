@@ -289,8 +289,8 @@ namespace StackMerge
             // LOOK repriced above COMBO to match the intended quality ladder (RAND<BAL<HEUR<COMBO<LOOK<MOCA<PLAN).
             new(SolverId.Look, "LOOK", 500000, "Plans one move deeper.", "Tests each move, then estimates the best follow-up move before deciding."),
             // MOCA & PLAN repriced high — they double as the mid-late ("agents phase") chip sinks.
-            new(SolverId.Moca, "MOCA", 4000000, "Runs simulations.", "Rolls out multiple futures, judging each by the surviving board and the peak tier it reaches."),
-            new(SolverId.Plan3, "PLAN", 15000000, "Reads the visible queue.", "Queue planner. Searches lines through the visible next blocks; tune its planning depth (3–5) for patience vs practicality."),
+            new(SolverId.Moca, "MOCA", 5000000, "Runs simulations.", "Rolls out multiple futures, judging each by the surviving board and the peak tier it reaches."),
+            new(SolverId.Plan3, "PLAN", 15000000, "Reads the visible queue.", "Queue planner. Searches lines through the visible next blocks. Planning depth (3–5) can be tuned for patience vs practicality."),
             // PLAN-5 removed (2026-07-12): merged into PLAN via its Planning depth tuning (up to 5). Class kept; unavailable.
             new(SolverId.Plan5, "PLAN-5", 400000, "Uses the extended queue.", "Deep queue planner. Searches lines through up to 5 visible next blocks. Stronger once next preview upgrades are unlocked.", available: false),
             // MOCA+ removed (2026-07-12): its smart-rollout params fold into MOCA's tuning (Stage B). Class kept; unavailable.
@@ -300,7 +300,7 @@ namespace StackMerge
             // STALL removed (2026-07-12): run-length niche not worth a slot. Class kept (ScoreAntiStall is a shared static); unavailable.
             new(SolverId.AntiStall, "STALL", 18000, "Avoids dead boards.", "Anti-stall solver. Heavily protects legal moves, semi-empty stacks, and escape routes over greedy merges.", available: false),
             new(SolverId.Combo, "COMBO", 250000, "Sets up chain merges.", "Combo-focused solver. Reads the queue and rewards positions that can cascade over the next 2-3 turns."),
-            new(SolverId.MachineLearning, "PPO", 250000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
+            new(SolverId.MachineLearning, "PPO", 10000000000, "Endgame learner. Requires every Modifier to be fully purchased.", "Proximal Policy Optimization is a lightweight actor-critic neural network that learns its policy from run trajectories, clipped policy updates, value estimates, and entropy-driven exploration.")
         };
 
         public static readonly SolverTuningDefinition[] TuningDefinitions =
