@@ -8207,6 +8207,14 @@ namespace StackMerge
                 return;
             }
 
+            // Same guard as the achievements list: the recent-run / solver-stat rows are re-instantiated,
+            // so only rebuild them while the History panel is visible (it's refreshed on open and when a
+            // run completes while open). Rebuilding on every action was destroying/recreating the rows.
+            if (!historyOpen)
+            {
+                return;
+            }
+
             RunHistoryEntry[] history = progression.RunHistory;
             if (history.Length == 0)
             {
@@ -8417,6 +8425,16 @@ namespace StackMerge
         private void RefreshAchievements()
         {
             if (progression == null)
+            {
+                return;
+            }
+
+            // Only touch the (re-instantiated) goal rows while the panel is actually visible. It's
+            // rebuilt from scratch when opened (OpenAchievementsPanel calls this after setting the
+            // flag), so refreshing it on every gameplay action — which destroyed and re-created every
+            // row each time — was the source of the layout flicker and the "prefab keeps reloading"
+            // behaviour. Notifications for newly completed goals run separately and are unaffected.
+            if (!achievementsOpen)
             {
                 return;
             }
@@ -10055,7 +10073,7 @@ namespace StackMerge
 
             if (lookup.Contains("framestick") || lookup.Contains("framespertick"))
             {
-                return "Lowers the cycle frame requirement for PPO Normal Mode.";
+                return "Lowers the frame requirement for PPO Normal Mode.";
             }
 
             // Check the Rate variant before the generic "curriculum" match below.
@@ -10066,7 +10084,7 @@ namespace StackMerge
 
             if (lookup.Contains("curriculum"))
             {
-                return "Lowers the cycle frame requirement for PPO Normal Mode.";
+                return "Lowers the frame requirement for PPO Normal Mode.";
             }
 
             if (lookup.Contains("solvertuning"))

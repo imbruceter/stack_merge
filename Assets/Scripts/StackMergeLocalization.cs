@@ -143,7 +143,7 @@ namespace StackMerge
             ["Chips trickle in on a timer, on top of your normal play."] = "A normál játék mellett időzítve is termelődik <sprite name=\"chips\" tint=1>.",
             ["Passive Production ticks more often."] = "Gyakrabban termelődik a <sprite name=\"chips\" tint=1>/tick.",
             ["Lowers the frame needed in Training Mode."] = "Csökkenti a szükséges frame-et Tréning Módban.",
-            ["Lowers the cycle frame requirement for PPO Normal Mode."] = "Csökkenti a PPO Normál mód ciklus-frame követelményét.",
+            ["Lowers the frame requirement for PPO Normal Mode."] = "Csökkenti a PPO Normál mód frame követelményét.",
             ["Each level shortens how often Curriculum lowers the PPO requirement."] = "Minden szint gyorsítja, milyen gyakran csökkenti a Curriculum a PPO követelményt.",
             ["Needs PPO or Bootcamp L5"] = "PPO vagy Bootcamp 5. szint szükséges",
             ["Boosts Passive Production while you're actively playing."] = "Növeli a <sprite name=\"chips\" tint=1>/tick-et a runok alatt.",

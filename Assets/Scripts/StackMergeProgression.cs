@@ -2491,7 +2491,9 @@ namespace StackMerge
                 return "Modifier Lab unlocked";
             }
 
-            return $"Requires: Agents {FormatGate(data.agentsMenuUnlocked)}, All agents {FormatGate(AllAgentsUnlocked)}, Solvers {UnlockedSolverCount}/{ModifierGateSolvers}, Runs {data.runsCompleted}/{GatedModifierRuns}, Merges {data.totalMerges}/{GatedModifierMerges}, Best {data.bestRunScore}/{ModifierGateBestScore}, High {data.highestBlockEver}/{ModifierGateHighestBlock}";
+            return $"Requires: " +
+                // $"Agents {FormatGate(data.agentsMenuUnlocked)}" +
+                $"All agents {FormatGate(AllAgentsUnlocked)}, Solvers {UnlockedSolverCount}/{ModifierGateSolvers}, Runs {data.runsCompleted}/{GatedModifierRuns}, Merges {data.totalMerges}/{GatedModifierMerges}, Best {data.bestRunScore}/{ModifierGateBestScore}, High {data.highestBlockEver}/{ModifierGateHighestBlock}";
         }
 
         public bool BuyModifiersMenuUnlock()
