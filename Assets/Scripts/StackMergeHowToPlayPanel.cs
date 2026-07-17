@@ -390,7 +390,7 @@ namespace StackMerge
                 "Most Agent bonuses affect one reward component instead of everything, which makes combinations matter.\n\n" +
 
                 "Agent Synergy from Research scales the bonus part of Agents:\n" +
-                "<b>agentSynergy = 1 + 0.25 x AgentSynergyLevel</b>\n\n" +
+                "<b>agentSynergy = 1 + 0.40 x AgentSynergyLevel</b>\n\n" +
 
                 "Examples:\n" +
                 "Merge income with Merge Broker = <b>baseMerge x (1 + 0.75 x agentSynergy)</b>\n" +
@@ -422,14 +422,14 @@ namespace StackMerge
 
                 "Rack output:\n" +
                 "<b>unitGF/s = baseGF/s x facilityBonus x interconnectBonus x prestigeBonus</b>\n" +
-                "<b>facilityBonus = 1 + 0.06 x PowerGridLevel + 0.04 x CoolingLoopLevel</b>\n" +
-                "<b>interconnectBonus = 1 + 0.05 x FabricInterconnectLevel for TPU Pod and Neural Fabric</b>\n" +
+                "<b>facilityBonus = 1 + 0.05 x PowerGridLevel + 0.10 x CoolingLoopLevel</b>\n" +
+                "<b>interconnectBonus = 1 + 0.18 x FabricInterconnectLevel for TPU Pod and Neural Fabric</b>\n" +
                 "<b>prestigeBonus = 1 + 0.05 x PrestigeCount</b>\n\n" +
 
                 "Allocation effects:\n" +
-                "<b>Training frames/sec = totalGF/s x trainingAllocation x 0.50</b>\n" +
-                "<b>Analysis Insight/sec = totalGF/s x analysisAllocation x 0.002 x fatigue</b>\n" +
-                "<b>Market income multiplier = 1 + 0.25 x log10(1 + marketAllocatedGF/s)</b>")
+                "<b>Training frames/sec = totalGF/s x trainingAllocation x 0.60</b>\n" +
+                "<b>Analysis Insight/sec = totalGF/s x analysisAllocation x 0.0012 x fatigue</b>\n" +
+                "<b>Market income multiplier = 1 + 0.20 x log10(1 + marketAllocatedGF/s)</b>")
         };
 
         private static readonly HowToPlaySection[] HungarianSections =
@@ -492,7 +492,7 @@ namespace StackMerge
                 "A legtöbb Agent nem mindent szoroz, hanem egy konkrét jutalomrészt, emiatt a kombináció számít.\n\n" +
 
                 "A Researchben lévő Agent Synergy az Agentek bónusz részét skálázza:\n" +
-                "<b>agentSynergy = 1 + 0.25 x AgentSynergyLevel</b>\n\n" +
+                "<b>agentSynergy = 1 + 0.40 x AgentSynergyLevel</b>\n\n" +
 
                 "Példák:\n" +
                 "Merge Broker mellett merge bevétel = <b>baseMerge x (1 + 0.75 x agentSynergy)</b>\n" +
@@ -524,14 +524,14 @@ namespace StackMerge
 
                 "Rack output:\n" +
                 "<b>unitGF/s = baseGF/s x facilityBonus x interconnectBonus x prestigeBonus</b>\n" +
-                "<b>facilityBonus = 1 + 0.06 x PowerGridLevel + 0.04 x CoolingLoopLevel</b>\n" +
-                "<b>interconnectBonus = 1 + 0.05 x FabricInterconnectLevel TPU Pod és Neural Fabric esetén</b>\n" +
+                "<b>facilityBonus = 1 + 0.05 x PowerGridLevel + 0.10 x CoolingLoopLevel</b>\n" +
+                "<b>interconnectBonus = 1 + 0.18 x FabricInterconnectLevel TPU Pod és Neural Fabric esetén</b>\n" +
                 "<b>prestigeBonus = 1 + 0.05 x PrestigeCount</b>\n\n" +
 
                 "Allocation hatások:\n" +
-                "<b>Training frames/sec = totalGF/s x trainingAllocation x 0.50</b>\n" +
-                "<b>Analysis Insight/sec = totalGF/s x analysisAllocation x 0.002 x fatigue</b>\n" +
-                "<b>Market income multiplier = 1 + 0.25 x log10(1 + marketAllocatedGF/s)</b>")
+                "<b>Training frames/sec = totalGF/s x trainingAllocation x 0.60</b>\n" +
+                "<b>Analysis Insight/sec = totalGF/s x analysisAllocation x 0.0012 x fatigue</b>\n" +
+                "<b>Market income multiplier = 1 + 0.20 x log10(1 + marketAllocatedGF/s)</b>")
         };
     }
 }

@@ -515,7 +515,13 @@ namespace StackMerge.Tests
         [Test]
         public void Progression_AgentsUnlockEquipAndExtraSlotUpgradeAddsSlot()
         {
-            var progression = new StackMergeProgression(new StackMergeProgressionData { chips = 5000000 });
+            bool[] unlockedSolvers = new bool[StackMergeSolverCatalog.Definitions.Length];
+            unlockedSolvers[(int)SolverId.Combo] = true;
+            var progression = new StackMergeProgression(new StackMergeProgressionData
+            {
+                chips = 5000000,
+                solverUnlocked = unlockedSolvers
+            });
             AgentDefinition quartermaster = progression.GetAgentDefinition(AgentId.Quartermaster);
 
             Assert.That(progression.ActiveAgentSlots, Is.EqualTo(2));
@@ -573,6 +579,8 @@ namespace StackMerge.Tests
             Assert.That(progression.TryConsumeAutoRestartToken(), Is.True);
             Assert.That(progression.Tokens, Is.EqualTo(progression.GetTokenPackSize() - 1));
 
+            Assert.That(progression.BuyAgentsMenuUnlock(), Is.False);
+            Assert.That(progression.SelectOrUnlockSolver(SolverId.Combo), Is.True);
             Assert.That(progression.BuyAgentsMenuUnlock(), Is.True);
             Assert.That(progression.BuyAgent(AgentId.RestartSponsor), Is.True);
             Assert.That(progression.EquipAgent(AgentId.RestartSponsor), Is.True);

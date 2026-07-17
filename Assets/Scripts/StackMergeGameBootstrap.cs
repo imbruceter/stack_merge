@@ -103,6 +103,8 @@ namespace StackMerge
         [SerializeField] private TMP_Dropdown languageDropdown;
         [Tooltip("Block numeral style dropdown in Settings. Auto-found by a name containing 'Numeral'. Locked styles show '(Locked)' and snap back to the previous choice.")]
         [SerializeField] private TMP_Dropdown blockNumeralDropdown;
+        [Tooltip("Optional How To Play panel controller. Auto-found if left empty.")]
+        [SerializeField] private StackMergeHowToPlayPanel howToPlayPanel;
         [SerializeField] private Button[] tabButtons = Array.Empty<Button>();
         [Tooltip("Optional lock icon used by locked bottom-menu tabs. Drag your lock sprite here in the Inspector.")]
         [SerializeField] private Sprite lockedTabIcon;
@@ -302,6 +304,8 @@ namespace StackMerge
         [SerializeField] private TMP_Text achievementHighestText;
         [SerializeField] private TMP_Text achievementEarnedText;
         [SerializeField] private TMP_Text achievementCompletedGoalsText;
+        [SerializeField] private TMP_Text achievementResetsText;
+        [SerializeField] private TMP_Text achievementPlaytimeText;
         [SerializeField] private RectTransform achievementListRoot;
         [SerializeField] private Button achievementBackButton;
         [SerializeField] private Button[] agentButtons = Array.Empty<Button>();
@@ -380,6 +384,7 @@ namespace StackMerge
         private float trainingEvalTimer;
         private float datacenterUiRefreshTimer;
         private float autoBuyTimer;
+        private float playtimeTickAccumulator;
         private BlockNumeralStyle blockNumeralStyle = BlockNumeralStyle.Standard;
         // Captured once from the panel's own designed height, then reused every reposition so the
         // panel doesn't grow/shrink as it gets moved around.
@@ -401,6 +406,9 @@ namespace StackMerge
         private int currentRunManualMoves;
         private float currentRunElapsed;
         private long currentRunChipsEarned;
+        private long lastObservedChips = long.MinValue;
+        private long lastObservedInsight = long.MinValue;
+        private long lastObservedTokens = long.MinValue;
         // Drives the Active Multiplier upgrade: "actively playing" means a move (manual or
         // solver) happened recently, not literally this frame — otherwise the bonus would flicker
         // off between individual solver moves at slow Speed levels.
@@ -443,6 +451,8 @@ namespace StackMerge
         private Coroutine gameplayLayoutWarmupCoroutine;
         private float gameOverOverlayTimer;
         private readonly HashSet<int> completedAchievementIds = new();
+        private readonly Dictionary<int, StackMergeGoalRow> achievementRowsById = new();
+        private StackMergeLanguage achievementRowsLanguage = (StackMergeLanguage)(-1);
         private readonly Queue<(string Description, string Reward)> achievementNotificationQueue = new();
         private bool achievementCompletionStateInitialized;
         private RectTransform achievementNotificationRect;
@@ -533,7 +543,7 @@ namespace StackMerge
             ScheduleGameplayLayoutWarmup(StartupGameplayLayoutWarmupFrames);
             if (progression.LastOfflineChips > 0 || progression.LastOfflineInsight > 0)
             {
-                SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} chips, +{FormatNumber(progression.LastOfflineInsight)} Insight");
+                SetText(feedbackText, $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} <sprite name=\"chips\" tint=1>, +{FormatNumber(progression.LastOfflineInsight)} <sprite name=\"insight\" tint=1>");
             }
 
             ShowOfflineProgressOverlayIfEarned();
@@ -621,6 +631,8 @@ namespace StackMerge
             TickPassiveProduction();
             TickDatacenterProduction();
             TickAutoBuy();
+            TickPlaytime();
+            RefreshEconomyUiIfChanged();
             if (gameState != null && !gameState.IsGameOver)
             {
                 currentRunElapsed += Time.deltaTime;
@@ -643,12 +655,14 @@ namespace StackMerge
         {
             if (pauseStatus)
             {
+                FlushPlaytime();
                 progression?.FlushIfDirty();
             }
         }
 
         private void OnApplicationQuit()
         {
+            FlushPlaytime();
             progression?.FlushIfDirty();
         }
 
@@ -660,7 +674,37 @@ namespace StackMerge
                 gameplayLayoutWarmupCoroutine = null;
             }
 
+            FlushPlaytime();
             progression?.FlushIfDirty();
+        }
+
+        private void TickPlaytime()
+        {
+            if (progression == null)
+            {
+                playtimeTickAccumulator = 0f;
+                return;
+            }
+
+            playtimeTickAccumulator += Time.unscaledDeltaTime;
+            if (playtimeTickAccumulator < 1f)
+            {
+                return;
+            }
+
+            progression.TickPlaytime(playtimeTickAccumulator);
+            playtimeTickAccumulator = 0f;
+        }
+
+        private void FlushPlaytime()
+        {
+            if (progression == null || playtimeTickAccumulator <= 0f)
+            {
+                return;
+            }
+
+            progression.TickPlaytime(playtimeTickAccumulator);
+            playtimeTickAccumulator = 0f;
         }
 
         private void TickBlockAnimations()
@@ -1943,7 +1987,7 @@ namespace StackMerge
             if (modifiersMenuUnlockButton != null)
             {
                 modifiersMenuUnlockButton.onClick.RemoveAllListeners();
-                modifiersMenuUnlockButton.onClick.AddListener(BuyModifiersMenuUnlock);
+                modifiersMenuUnlockButton.onClick.AddListener(BuyStageProgressionUnlock);
             }
 
             for (int i = 0; i < modifierButtons.Length; i++)
@@ -1961,7 +2005,7 @@ namespace StackMerge
             if (agentsMenuUnlockButton != null)
             {
                 agentsMenuUnlockButton.onClick.RemoveAllListeners();
-                agentsMenuUnlockButton.onClick.AddListener(BuyAgentsMenuUnlock);
+                SetActive(agentsMenuUnlockButton.gameObject, false);
             }
 
             WirePrestigeResearchButtons();
@@ -2162,6 +2206,7 @@ namespace StackMerge
             languageDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Language", "LanguageDropdown");
             blockNumeralDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Numeral", "BlockNumeral", "NumeralDropdown");
             fpsText ??= FindComponentByNormalizedName<TMP_Text>(canvasRoot, "FPSText", "FpsText", "FPS");
+            howToPlayPanel ??= FindAnyObjectByType<StackMergeHowToPlayPanel>(FindObjectsInactive.Include);
         }
 
         private static T FindComponentByNormalizedName<T>(Transform root, params string[] names) where T : Component
@@ -2813,6 +2858,7 @@ namespace StackMerge
 
         private void SelectTab(int tabIndex)
         {
+            CloseHowToPlayPanel();
             historyOpen = false;
             achievementsOpen = false;
             solverTuneOpen = false;
@@ -2886,6 +2932,7 @@ namespace StackMerge
             // Update the board / training-overlay visibility immediately on tab change so the
             // PPO matrix view appears/disappears at once instead of lagging until the next move.
             RefreshGameView();
+            RefreshProgressionUi();
             if (selectedTabIndex == 0)
             {
                 ForceGameplayLayoutPass();
@@ -2895,6 +2942,7 @@ namespace StackMerge
 
         private void OpenHistoryPanel()
         {
+            CloseHowToPlayPanel();
             historyOpen = true;
             achievementsOpen = false;
             solverTuneOpen = false;
@@ -2927,6 +2975,7 @@ namespace StackMerge
 
         private void OpenAchievementsPanel()
         {
+            CloseHowToPlayPanel();
             achievementsOpen = true;
             historyOpen = false;
             solverTuneOpen = false;
@@ -2947,6 +2996,16 @@ namespace StackMerge
             RefreshAchievements();
             RefreshTabButtons();
             RefreshGameView();
+        }
+
+        private void CloseHowToPlayPanel()
+        {
+            if (howToPlayPanel == null)
+            {
+                howToPlayPanel = FindAnyObjectByType<StackMergeHowToPlayPanel>(FindObjectsInactive.Include);
+            }
+
+            howToPlayPanel?.Close();
         }
 
         private void CloseAchievementsPanel()
@@ -3006,8 +3065,8 @@ namespace StackMerge
                 StackMergeHowToPlayLayer.Gameplay => true,
                 StackMergeHowToPlayLayer.Algorithms => true,
                 StackMergeHowToPlayLayer.Upgrades => true,
-                StackMergeHowToPlayLayer.Agents => progression.AgentsMenuUnlocked,
-                StackMergeHowToPlayLayer.Modifiers => progression.ModifiersMenuUnlocked,
+                StackMergeHowToPlayLayer.Agents => progression.LifetimeAgentsUnlocked,
+                StackMergeHowToPlayLayer.Modifiers => progression.LifetimeModifiersUnlocked,
                 StackMergeHowToPlayLayer.Research => IsResearchMenuUnlocked(),
                 StackMergeHowToPlayLayer.Datacenter => progression.DatacenterUnlocked,
                 _ => true
@@ -3858,14 +3917,14 @@ namespace StackMerge
 
             string chipText = machineLearningTraining
                 ? "training: +0 chips"
-                : runBonus > 0 ? $"+{chipsGained + runBonus} chips" : $"+{chipsGained} chips";
+                : $"+{FormatNumber(chipsGained + runBonus)} <sprite name=\"chips\" tint=1>";
             string moveText = result.ActionKind switch
             {
-                SolverActionKind.Pickaxe => $"Pickaxe -{FormatNumber(result.RemovedValue)}",
-                SolverActionKind.QueueSkip => $"Scrubbed {FormatNumber(result.RemovedValue)}",
+                SolverActionKind.Pickaxe => $"Pickaxe -{FormatBlockValue(result.RemovedValue)}",
+                SolverActionKind.QueueSkip => $"Scrubbed {FormatBlockValue(result.RemovedValue)}",
                 _ => result.MergeCount > 0
-                    ? $"Merge x{result.MergeCount}: {FormatNumber(result.ResultingTopValue)}"
-                    : $"+{FormatNumber(result.PlacedValue)}"
+                    ? $"Merge x{result.MergeCount}: {FormatBlockValue(result.ResultingTopValue)}"
+                    : $"+{FormatBlockValue(result.PlacedValue)}"
             };
 
             // Combo Engine: surface the running streak so the multiplier is visible in play.
@@ -4432,7 +4491,7 @@ namespace StackMerge
                 boughtThisPass |= TryBuy(!progression.AutoSolveUnlocked && progression.HasPurchasedSolver, progression.GetAutoSolveCost(), progression.ToggleOrBuyAutoSolve);
                 boughtThisPass |= TryBuy(!progression.AutoRestartUnlocked && progression.HasPurchasedSolver, progression.GetAutoRestartCost(), progression.ToggleOrBuyAutoRestart);
                 boughtThisPass |= TryBuy(!progression.SolverTuningUnlocked, progression.GetSolverTuningUnlockCost(), progression.BuySolverTuningUnlock);
-                boughtThisPass |= TryBuy(!progression.AgentsMenuUnlocked, progression.GetAgentsMenuUnlockCost(), progression.BuyAgentsMenuUnlock);
+                boughtThisPass |= TryBuy(progression.CanUnlockAgentsMenu && !progression.AgentsMenuUnlocked, progression.GetAgentsMenuUnlockCost(), progression.BuyAgentsMenuUnlock);
                 boughtThisPass |= TryBuy(progression.AgentsMenuUnlocked && !progression.ExtraAgentSlotUnlocked, progression.GetExtraAgentSlotUpgradeCost(), progression.BuyExtraAgentSlotUpgrade);
                 boughtThisPass |= TryBuy(progression.CanUnlockModifiersMenu && !progression.ModifiersMenuUnlocked, progression.GetModifiersMenuUnlockCost(), progression.BuyModifiersMenuUnlock);
                 boughtThisPass |= TryBuy(!progression.IsMaxSpeed, progression.GetSpeedUpgradeCost(), progression.BuySpeedUpgrade);
@@ -4772,6 +4831,66 @@ namespace StackMerge
             }
         }
 
+        private void RefreshEconomyUiIfChanged()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            long chips = progression.Chips;
+            long insight = progression.ResearchInsight;
+            long tokens = progression.Tokens;
+            if (chips == lastObservedChips && insight == lastObservedInsight && tokens == lastObservedTokens)
+            {
+                return;
+            }
+
+            lastObservedChips = chips;
+            lastObservedInsight = insight;
+            lastObservedTokens = tokens;
+
+            RefreshHud();
+            RefreshCurrencyDependentUi();
+        }
+
+        private void RefreshCurrencyDependentUi()
+        {
+            switch (selectedTabIndex)
+            {
+                case 1:
+                    RefreshSolverButtons();
+                    RefreshSolverDetails();
+                    RefreshAlgorithmCards();
+                    break;
+                case 2:
+                    RefreshUpgradeButtons();
+                    RefreshAutoBuyButtons();
+                    break;
+                case 3:
+                    RefreshAgentButtons();
+                    RefreshAgentDetails();
+                    RefreshAgentCards();
+                    RefreshAgentSlotCards();
+                    break;
+                case 4:
+                    RefreshModifierButtons();
+                    RefreshModifierDetails();
+                    RefreshModifierCards();
+                    break;
+                case 5:
+                    RefreshResearchMenu();
+                    break;
+                case 7:
+                    RefreshDatacenterPanel();
+                    break;
+            }
+
+            RefreshTabButtons();
+            RefreshGameplayModifiers();
+            RefreshButtonVisualStates();
+        }
+
         private void RefreshDatacenterPanel()
         {
             if (progression == null)
@@ -4887,9 +5006,9 @@ namespace StackMerge
                 bool maxed = progression.IsDatacenterFacilityMaxed(facilityId);
                 SetText(row.prodText, facilityId switch
                 {
-                    DatacenterFacilityId.PowerGrid => $"+{level * 6}% rack FLOPS",
-                    DatacenterFacilityId.CoolingLoop => $"+{level * 4}% rack FLOPS",
-                    _ => $"×{1.0 + level * 0.05:0.00} TPU / Fabric output"
+                    DatacenterFacilityId.PowerGrid => $"+{level * 5}% rack FLOPS",
+                    DatacenterFacilityId.CoolingLoop => $"+{level * 10}% rack FLOPS",
+                    _ => $"×{1.0 + level * 0.18:0.00} TPU / Fabric output"
                 });
                 SetText(row.unitsText, $"{level}/{maxLevel}");
                 if (row.buyButton != null)
@@ -5416,6 +5535,22 @@ namespace StackMerge
             RefreshEverything();
         }
 
+        private void BuyStageProgressionUnlock()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            if (!progression.AgentsMenuUnlocked)
+            {
+                BuyAgentsMenuUnlock();
+                return;
+            }
+
+            BuyModifiersMenuUnlock();
+        }
+
         private void BuyModifiersMenuUnlock()
         {
             if (progression == null)
@@ -5760,7 +5895,8 @@ namespace StackMerge
             }
 
             bool bought = progression.BuyAgentsMenuUnlock();
-            SetText(feedbackText, bought ? "Agents menu unlocked" : "Not enough chips");
+            string reason = progression.GetAgentsGateStatus();
+            SetText(feedbackText, bought ? "Agents menu unlocked" : !string.IsNullOrEmpty(reason) ? reason : "Not enough chips");
             progression.Save();
             RefreshEverything();
         }
@@ -6129,7 +6265,7 @@ namespace StackMerge
                     int exponent = ExactPowerOfTwoExponent(value);
                     if (exponent < 1)
                     {
-                        return FormatNumber(value);
+                        return value.ToString();
                     }
 
                     return allowRichText ? $"2<sup>{exponent}</sup>" : $"2^{exponent}";
@@ -6139,7 +6275,7 @@ namespace StackMerge
                 {
                     // Roman shows the TIER (the power-of-two exponent): 1024 = X, 32768 = XV.
                     int exponent = ExactPowerOfTwoExponent(value);
-                    return exponent >= 1 ? ToRoman(exponent) : FormatNumber(value);
+                    return exponent >= 1 ? ToRoman(exponent) : value.ToString();
                 }
 
                 case BlockNumeralStyle.Scientific:
@@ -6155,7 +6291,7 @@ namespace StackMerge
                 }
 
                 default:
-                    return FormatNumber(value);
+                    return value.ToString();
             }
         }
 
@@ -7062,7 +7198,7 @@ namespace StackMerge
                     builder.AppendLine($"Run score: {FormatNumber(gameState.Score)}");
                     builder.AppendLine($"Moves: {FormatNumber(gameState.BlocksDropped)}");
                     builder.AppendLine($"Merges: {FormatNumber(gameState.TotalMerges)}");
-                    builder.AppendLine($"Current next: {(gameState.NextBlocks.Count > 0 ? FormatNumber(gameState.NextBlocks[0]) : "-")}");
+                    builder.AppendLine($"Current next: {(gameState.NextBlocks.Count > 0 ? FormatBlockValue(gameState.NextBlocks[0]) : "-")}");
                     builder.AppendLine($"Available actions: Pickaxe {gameState.PickaxeUsesRemaining}, Queue Scrubber {gameState.QueueSkipsRemaining}");
                 }
 
@@ -7535,26 +7671,40 @@ namespace StackMerge
                     ? "Train PPO, then prestige from the Research menu."
                     : progression.ModifiersMenuUnlocked
                     ? progression.AllModifiersMaxed ? "PPO is ready to unlock in Algorithms." : "Max every Modifier to open the Machine Learning layer."
-                    : progression.GetModifiersGateStatus();
+                    : progression.AgentsMenuUnlocked
+                    ? progression.GetModifiersGateStatus()
+                    : progression.CanUnlockAgentsMenu ? "Open Agents to start the next stage." : "Unlock COMBO or LOOK solver to open Agents.";
                 SetText(progressionStageText, $"{stageName}\n{nextGoal}");
             }
 
             if (modifiersMenuUnlockButton != null)
             {
-                // Single short two-line label so it fits: "Modifiers Lab\n{Locked | <chips> 3M | Unlocked}".
-                if (progression.ModifiersMenuUnlocked)
+                if (!progression.AgentsMenuUnlocked)
                 {
-                    SetButtonText(modifiersMenuUnlockButton, "Modifiers Lab\nUnlocked");
-                    modifiersMenuUnlockButton.interactable = false;
+                    long cost = progression.GetAgentsMenuUnlockCost();
+                    bool gateReady = progression.CanUnlockAgentsMenu;
+                    SetButtonText(modifiersMenuUnlockButton, gateReady
+                        ? $"Agents Lab\n<sprite name=\"chips\" tint=1> {FormatNumber(cost)}"
+                        : "Agents Lab\nLocked");
+                    modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
                 }
                 else
                 {
-                    long cost = progression.GetModifiersMenuUnlockCost();
-                    bool gateReady = progression.CanUnlockModifiersMenu;
-                    SetButtonText(modifiersMenuUnlockButton, gateReady
-                        ? $"Modifiers Lab\n<sprite name=\"chips\" tint=1> {FormatNumber(cost)}"
-                        : "Modifiers Lab\nLocked");
-                    modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
+                    // Single short two-line label so it fits: "Modifiers Lab\n{Locked | <chips> 3M | Unlocked}".
+                    if (progression.ModifiersMenuUnlocked)
+                    {
+                        SetButtonText(modifiersMenuUnlockButton, "Modifiers Lab\nUnlocked");
+                        modifiersMenuUnlockButton.interactable = false;
+                    }
+                    else
+                    {
+                        long cost = progression.GetModifiersMenuUnlockCost();
+                        bool gateReady = progression.CanUnlockModifiersMenu;
+                        SetButtonText(modifiersMenuUnlockButton, gateReady
+                            ? $"Modifiers Lab\n<sprite name=\"chips\" tint=1> {FormatNumber(cost)}"
+                            : "Modifiers Lab\nLocked");
+                        modifiersMenuUnlockButton.interactable = gateReady && progression.Chips >= cost;
+                    }
                 }
             }
 
@@ -7671,25 +7821,7 @@ namespace StackMerge
 
             if (agentsMenuUnlockButton != null)
             {
-                if (progression.AgentsMenuUnlocked)
-                {
-                    SetUpgradeButtonLabels(
-                        agentsMenuUnlockButton,
-                        "Agents",
-                        "Unlocked",
-                        false,
-                        "They give you extra bonuses when you unlock them.");
-                }
-                else
-                {
-                    long cost = progression.GetAgentsMenuUnlockCost();
-                    SetUpgradeButtonLabels(
-                        agentsMenuUnlockButton,
-                        "Agents",
-                        $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}",
-                        progression.Chips >= cost,
-                        "They give you extra bonuses when you unlock them.");
-                }
+                SetActive(agentsMenuUnlockButton.gameObject, false);
             }
 
             // Stack Capacity: single button, always targets the next level. Name shows the
@@ -8215,32 +8347,36 @@ namespace StackMerge
                 return;
             }
 
-            RunHistoryEntry[] history = progression.RunHistory;
-            if (history.Length == 0)
+            RunHistoryEntry[] recentHistory = progression.RunHistory;
+            RunHistoryEntry[] playthroughHistory = progression.PlaythroughRunHistory;
+            if (playthroughHistory.Length == 0)
             {
                 SetText(historySummaryText, "No completed runs yet. Let a run end to start collecting solver stats.");
                 SetText(historyHighestText, "-");
                 SetText(historyHighestMedianText, "-");
                 SetText(historyInsightText, "Tip: use the editor benchmark window for large balance samples without touching player progression.");
-                DrawTrendChart(history);
+                DrawTrendChart(recentHistory);
                 BuildSolverList(Array.Empty<HistorySolverStats>());
-                RefreshRecentRunsTable(history);
+                RefreshRecentRunsTable(recentHistory);
 
                 return;
             }
 
-            RunHistoryEntry latest = history[0];
-            RunHistoryEntry best = history.OrderByDescending(entry => entry.score).First();
-            HistorySolverStats[] solverStats = BuildHistorySolverStats(history);
+            RunHistoryEntry latest = recentHistory.Length > 0
+                ? recentHistory[0]
+                : playthroughHistory.OrderByDescending(entry => entry.runIndex).First();
+            RunHistoryEntry best = playthroughHistory.OrderByDescending(entry => entry.score).First();
+            HistorySolverStats[] solverStats = BuildHistorySolverStats(playthroughHistory);
             HistorySolverStats bestMedian = solverStats.OrderByDescending(stats => stats.MedianScore).First();
             HistorySolverStats bestPeak = solverStats.OrderByDescending(stats => stats.MaxScore).First();
-            int trendCount = Math.Min(history.Length, 40);
+            int trendCount = Math.Min(recentHistory.Length, 40);
 
             SetText(historyHighestText, $"{FormatNumber(best.score)} <size=75%>({SolverName(best.solverId)})</size>");
             SetText(historyHighestMedianText, $"{FormatNumber(bestMedian.MedianScore)} <size=75%>({bestMedian.SolverName})</size>");
             SetText(
                 historySummaryText,
-                $"Stored runs: {history.Length}/250\n" +
+                $"Playthrough runs: {playthroughHistory.Length}\n" +
+                $"Recent stored: {recentHistory.Length}/250\n" +
                 $"Latest: {FormatNumber(latest.score)} ({SolverName(latest.solverId)})\n" +
                 $"Highest: {FormatNumber(best.score)} ({SolverName(best.solverId)})\n" +
                 $"Highest median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)})");
@@ -8249,9 +8385,9 @@ namespace StackMerge
             //    historyInsightText,
             //    $"Best median: {bestMedian.SolverName} ({FormatNumber(bestMedian.MedianScore)}) | Best peak: {bestPeak.SolverName} ({FormatNumber(bestPeak.MaxScore)}) | Trend = last {trendCount} runs (chronological), more honest than a single aggregate median");
 
-            DrawTrendChart(history);
+            DrawTrendChart(recentHistory);
             BuildSolverList(solverStats);
-            RefreshRecentRunsTable(history);
+            RefreshRecentRunsTable(recentHistory);
         }
 
         // Recent score trend: the last runs in chronological order. This reflects how the player's
@@ -8296,7 +8432,7 @@ namespace StackMerge
                 SetText(row.scoreText, FormatNumber(entry.score));
                 SetText(row.movesText, entry.moves.ToString());
                 SetText(row.mergesText, entry.merges.ToString());
-                SetText(row.highText, FormatNumber(entry.highestMergedBlock));
+                SetText(row.highText, FormatBlockValue(entry.highestMergedBlock));
                 y += rowHeight + 3f;
             }
 
@@ -8327,12 +8463,10 @@ namespace StackMerge
                 StackMergeSolverStatRow row = Instantiate(solverStatRowPrefab, root, false);
                 PositionRow((RectTransform)row.transform, y, rowHeight);
                 SetText(row.solverText, stat.SolverName);
-                SetText(row.runsText, stat.SolverId < 0
-                    ? FormatNumber(stat.Runs)
-                    : FormatNumber(progression.GetSolverLifetimeRuns((SolverId)stat.SolverId)));
+                SetText(row.runsText, FormatNumber(stat.Runs));
                 SetText(row.medianText, FormatNumber(stat.MedianScore));
                 SetText(row.bestText, FormatNumber(stat.MaxScore));
-                SetText(row.highText, FormatNumber(stat.BestHighestMerged));
+                SetText(row.highText, FormatBlockValue(stat.BestHighestMerged));
 
                 if (row.infoButton != null)
                 {
@@ -8445,16 +8579,20 @@ namespace StackMerge
             SetText(achievementBestRunText, FormatNumber(progression.BestRunScore));
             SetText(achievementMovesText, FormatNumber(progression.LifetimeMoves));
             SetText(achievementMergesText, FormatNumber(progression.LifetimeMerges));
-            SetText(achievementHighestText, FormatNumber(progression.LifetimeHighestBlockEver));
+            SetText(achievementHighestText, progression.LifetimeHighestBlockEver.ToString());
             SetText(achievementEarnedText, FormatNumber(progression.LifetimeChipsEarned));
             SetText(achievementCompletedGoalsText, $"{completed}/{goalCount} {CompletedSuffix()}");
+            SetText(achievementResetsText, progression.PrestigeCount.ToString());
+            SetText(achievementPlaytimeText, FormatDurationCompact(progression.TotalPlaytimeSeconds));
             SetText(
                 achievementStatsText,
                 $"Completed goals: {completed}/{goalCount}\n" +
                 $"Runs: {FormatNumber(progression.LifetimeRunsCompleted)} ({FormatNumber(progression.LifetimeManualRunsCompleted)} manual)\n" +
+                $"Resets: {FormatNumber(progression.PrestigeCount)}\n" +
+                $"Playtime: {FormatDurationCompact(progression.TotalPlaytimeSeconds)}\n" +
                 $"Moves: {FormatNumber(progression.LifetimeMoves)}\n" +
                 $"Merges: {FormatNumber(progression.LifetimeMerges)}\n" +
-                $"Highest: {FormatNumber(progression.LifetimeHighestBlockEver)}\n" +
+                $"Highest: {progression.LifetimeHighestBlockEver}\n" +
                 $"Earned: {FormatNumber(progression.LifetimeChipsEarned)}\n" +
                 $"Spent: {FormatNumber(progression.LifetimeChipsSpent)}\n" +
                 $"Best run: {FormatNumber(progression.BestRunScore)}");
@@ -8476,48 +8614,65 @@ namespace StackMerge
                 return;
             }
 
-            ClearInstantiatedRows<StackMergeGoalRow>(root);
             if (goalRowPrefab == null)
             {
                 Debug.LogWarning("StackMerge: Goal row prefab not assigned — assign it on the Bootstrap in the Inspector.");
                 return;
             }
 
-            float rowHeight = RowHeightOf((RectTransform)goalRowPrefab.transform, 50f);
-            float y = 0f;
+            bool needsRebuild = achievementRowsLanguage != currentLanguage
+                || achievementRowsById.Count != StackMergeProgression.Achievements.Length
+                || achievementRowsById.Values.Any(row => row == null);
+
+            if (needsRebuild)
+            {
+                ClearInstantiatedRows<StackMergeGoalRow>(root);
+                achievementRowsById.Clear();
+                achievementRowsLanguage = currentLanguage;
+
+                float rowHeight = RowHeightOf((RectTransform)goalRowPrefab.transform, 50f);
+                float y = 0f;
+                foreach (AchievementDefinition achievement in StackMergeProgression.Achievements)
+                {
+                    StackMergeGoalRow row = Instantiate(goalRowPrefab, root, false);
+                    PositionRow((RectTransform)row.transform, y, rowHeight);
+                    SetText(row.goalText, achievement.Description);
+                    achievementRowsById[achievement.Id] = row;
+
+                    TMP_Text rewardLabel = row.rewardText != null
+                        ? row.rewardText
+                        : FindNamedDescendant(row.transform, "RewardText")?.GetComponent<TMP_Text>();
+                    if (rewardLabel != null)
+                    {
+                        string reward = GetAchievementRewardText(achievement.Id);
+                        bool hasReward = !string.IsNullOrEmpty(reward);
+                        SetActive(rewardLabel.gameObject, hasReward);
+                        if (hasReward)
+                        {
+                            SetText(rewardLabel, reward);
+                        }
+                    }
+
+                    y += rowHeight + 4f;
+                }
+
+                SetManualContentHeight(root, y);
+            }
+
             foreach (AchievementDefinition achievement in StackMergeProgression.Achievements)
             {
+                if (!achievementRowsById.TryGetValue(achievement.Id, out StackMergeGoalRow row) || row == null)
+                {
+                    continue;
+                }
+
                 long progress = progression.GetAchievementProgress(achievement);
                 long cappedProgress = Math.Min(progress, achievement.Target);
                 bool complete = progression.IsAchievementComplete(achievement);
-
-                StackMergeGoalRow row = Instantiate(goalRowPrefab, root, false);
-                PositionRow((RectTransform)row.transform, y, rowHeight);
-                SetText(row.goalText, achievement.Description);
                 SetText(row.progressText, complete
-                    ? "Completed"
+                    ? StackMergeLocalization.Translate("Completed")
                     : $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}");
-
-                // Reward line: only goals with an unlock reward show it (RewardText is disabled in
-                // the prefab by default).
-                TMP_Text rewardLabel = row.rewardText != null
-                    ? row.rewardText
-                    : FindNamedDescendant(row.transform, "RewardText")?.GetComponent<TMP_Text>();
-                if (rewardLabel != null)
-                {
-                    string reward = GetAchievementRewardText(achievement.Id);
-                    bool hasReward = !string.IsNullOrEmpty(reward);
-                    SetActive(rewardLabel.gameObject, hasReward);
-                    if (hasReward)
-                    {
-                        SetText(rewardLabel, reward);
-                    }
-                }
-
-                y += rowHeight + 4f;
             }
-
-            SetManualContentHeight(root, y);
         }
 
         // Simple runtime line chart: connects the values with rotated thin segments, draws dots for
@@ -8676,7 +8831,7 @@ namespace StackMerge
             }
 
             SolverDefinition definition = StackMergeSolverCatalog.GetDefinition(solverId);
-            RunHistoryEntry[] solverRuns = progression.RunHistory.Where(entry => entry.solverId == (int)solverId).ToArray();
+            RunHistoryEntry[] solverRuns = progression.PlaythroughRunHistory.Where(entry => entry.solverId == (int)solverId).ToArray();
             int lifetime = progression.GetSolverLifetimeRuns(solverId);
 
             SetText(solverInfoTitle, $"{definition.DisplayName} detail");
@@ -8685,7 +8840,7 @@ namespace StackMerge
             stats.AppendLine(definition.Description);
             stats.AppendLine();
             stats.AppendLine($"<b>Lifetime runs</b>\n" +
-                $"{FormatNumber(lifetime)} (stored history: {solverRuns.Length})");
+                $"{FormatNumber(lifetime)} lifetime\n{FormatNumber(solverRuns.Length)} this playthrough");
             if (solverRuns.Length > 0)
             {
                 long[] scores = solverRuns.Select(entry => entry.score).OrderBy(value => value).ToArray();
@@ -8693,7 +8848,7 @@ namespace StackMerge
                     $"Median {FormatNumber(Median(scores))}\n" +
                     $"Average {FormatNumber((long)scores.Average())}");
                 stats.AppendLine($"Range {FormatNumber(scores[0])} – {FormatNumber(scores[^1])}");
-                stats.AppendLine($"Best high tile {FormatNumber(solverRuns.Max(entry => entry.highestMergedBlock))}\n" +
+                stats.AppendLine($"Best high tile {FormatBlockValue(solverRuns.Max(entry => entry.highestMergedBlock))}\n" +
                     $"Average moves {solverRuns.Average(entry => entry.moves):0}");
             }
             else
@@ -9539,7 +9694,7 @@ namespace StackMerge
             SetText(gameOverBestText,
                 $"Moves: {FormatNumber(gameState.BlocksDropped)}\n" +
                 $"Merges: {FormatNumber(gameState.TotalMerges)}\n" +
-                $"Highest block: {FormatNumber(gameState.HighestMergedBlock)}\n" +
+                $"Highest block: {FormatBlockValue(gameState.HighestMergedBlock)}\n" +
                 $"+{FormatNumber(currentRunChipsEarned)} <sprite name=\"chips\" tint=1> earned");
             SetText(runStatusText, progression != null && progression.AutoRestartUnlocked && progression.AutoRestartEnabled
                 ? progression.AutoRestartIsTokenFree || progression.Tokens > 0 ? "Auto restart armed" : "Auto restart needs token"
@@ -10073,7 +10228,7 @@ namespace StackMerge
 
             if (lookup.Contains("framestick") || lookup.Contains("framespertick"))
             {
-                return "Lowers the frame requirement for PPO Normal Mode.";
+                return "Lowers the frames needed for PPO Normal Mode.";
             }
 
             // Check the Rate variant before the generic "curriculum" match below.
@@ -10084,7 +10239,7 @@ namespace StackMerge
 
             if (lookup.Contains("curriculum"))
             {
-                return "Lowers the frame requirement for PPO Normal Mode.";
+                return "Lowers the frames needed for PPO Normal Mode.";
             }
 
             if (lookup.Contains("solvertuning"))
@@ -10289,6 +10444,22 @@ namespace StackMerge
             return luminance > 0.62f ? HexColor("#111827") : Color.white;
         }
 
+        private static string FormatDurationCompact(double seconds)
+        {
+            TimeSpan span = TimeSpan.FromSeconds(Math.Max(0.0, seconds));
+            if (span.TotalDays >= 1.0)
+            {
+                return $"{(int)span.TotalDays}d {span.Hours}h {span.Minutes}m";
+            }
+
+            if (span.TotalHours >= 1.0)
+            {
+                return $"{(int)span.TotalHours}h {span.Minutes}m";
+            }
+
+            return $"{Math.Max(0, span.Minutes)}m";
+        }
+
         private static string FormatNumber(long value)
         {
             // Negatív számok kezelése (opcionális)
@@ -10331,7 +10502,7 @@ namespace StackMerge
             while (true)
             {
                 double d = (double)value / units[currentIndex].divisor;
-                double rounded = Math.Round(d, 2, MidpointRounding.AwayFromZero);
+                double rounded = Math.Floor(d * 100.0) / 100.0;
 
                 // Ha a kerekített érték kisebb, mint 1000, vagy már a legnagyobb egységnél vagyunk
                 if (rounded < 1000 || currentIndex == 0)

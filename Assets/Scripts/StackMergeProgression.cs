@@ -48,8 +48,10 @@ namespace StackMerge
         public bool[] agentUnlocked;
         public int[] activeAgentIds;
         public RunHistoryEntry[] runHistory;
+        public RunHistoryEntry[] playthroughRunHistory;
         public long totalChipsEarned;
         public long totalChipsSpent;
+        public double totalPlaytimeSeconds;
         public int manualRunsCompleted;
         public int totalBlocksDropped;
         public int totalMerges;
@@ -459,7 +461,7 @@ namespace StackMerge
         // Chips per tick by level, before stage/income multipliers. Geometric so late levels stay
         // relevant next to per-run income (the old linear 3/level topped out at a laughable 15).
         private static readonly long[] PassiveYieldPerTickByLevel = { 0, 100, 200, 350, 500, 800, 1200, 1500, 2000, 3000, 5000 };
-        private static readonly int[] PassiveTickRateUpgradeCosts = { 7000, 14000, 30000, 60000, 200000, 800000, 1500000, 300000, 6000000, 10000000 };
+        private static readonly int[] PassiveTickRateUpgradeCosts = { 7000, 14000, 30000, 60000, 200000, 800000, 1500000, 3000000, 6000000, 10000000 };
         // Seconds between passive ticks. Index 0 is the base rate before any Tick Rate level is bought.
         private static readonly float[] PassiveTickIntervals = { 10f, 9f, 8f, 7f, 6f, 5f, 4f, 3f, 2f, 1.5f, 1f };
         private static readonly int[] ActiveMultiplierUpgradeCosts = { 4000, 10000, 20000, 50000, 100000, 350000, 800000, 2000000, 4500000, 8000000 };
@@ -545,26 +547,26 @@ namespace StackMerge
         // meant to absorb chips forever.
         public static readonly DatacenterRackDefinition[] DatacenterRacks =
         {
-            new(DatacenterRackId.CpuRack, "CPU Rack", "Commodity silicon. Cheap, dependable, slow.", 250_000, 1.12, 1.0),
-            new(DatacenterRackId.GpuRack, "GPU Rack", "Parallel throughput for tensor math.", 3_000_000, 1.14, 6.0),
-            new(DatacenterRackId.TpuPod, "TPU Pod", "Purpose-built matrix engines.", 25_000_000, 1.16, 40.0),
-            new(DatacenterRackId.NeuralFabric, "Neural Fabric", "Experimental wafer-scale compute.", 200_000_000, 1.18, 300.0)
+            new(DatacenterRackId.CpuRack, "CPU Rack", "Commodity silicon. Cheap, dependable, slow.", 1_000_000_000, 1.18, 1.5),
+            new(DatacenterRackId.GpuRack, "GPU Rack", "Parallel throughput for tensor math.", 8_000_000_000, 1.20, 10.0),
+            new(DatacenterRackId.TpuPod, "TPU Pod", "Purpose-built matrix engines.", 50_000_000_000, 1.23, 70.0),
+            new(DatacenterRackId.NeuralFabric, "Neural Fabric", "Experimental wafer-scale compute.", 200_000_000_000, 1.27, 500.0)
         };
 
         public static readonly DatacenterFacilityDefinition[] DatacenterFacilities =
         {
-            new(DatacenterFacilityId.PowerGrid, "Power Grid", "Dedicated feeders and battery buffer.", 10, 2_000_000, 1.8),
-            new(DatacenterFacilityId.CoolingLoop, "Cooling Loop", "Immersion + rear-door heat exchangers.", 10, 8_000_000, 1.8),
-            new(DatacenterFacilityId.FabricInterconnect, "Fabric Interconnect", "Low-latency mesh between pods.", 10, 60_000_000, 2.0)
+            new(DatacenterFacilityId.PowerGrid, "Power Grid", "Dedicated feeders and battery buffer.", 10, 1_000_000_000, 1.55),
+            new(DatacenterFacilityId.CoolingLoop, "Cooling Loop", "Immersion + rear-door heat exchangers.", 10, 3_000_000_000, 1.55),
+            new(DatacenterFacilityId.FabricInterconnect, "Fabric Interconnect", "Low-latency mesh between pods.", 10, 12_000_000_000, 1.60)
         };
 
-        private const double PowerGridFlopsBonusPerLevel = 0.06;          // +6% total rack FLOPS / level
-        private const double CoolingLoopFlopsBonusPerLevel = 0.04;        // +4% total rack FLOPS / level
-        private const double FabricInterconnectBonusPerLevel = 0.05;      // +5% TPU Pod + Neural Fabric output / level
+        private const double PowerGridFlopsBonusPerLevel = 0.05;          // +5% total rack FLOPS / level
+        private const double CoolingLoopFlopsBonusPerLevel = 0.10;        // +10% total rack FLOPS / level
+        private const double FabricInterconnectBonusPerLevel = 0.18;      // +18% TPU Pod + Neural Fabric output / level
         private const double DatacenterPrestigeBonusPerPrestige = 0.05;   // +5% compute per prestige — prestiging feeds the layer
-        private const double DatacenterFramesPerSecondPerGigaflop = 0.50; // Training Cluster: PPO frames/sec per allocated GF/s
-        private const double DatacenterInsightPerSecondPerGigaflop = 0.002; // Analysis Node: Insight/sec per allocated GF/s, pre-softcap
-        private const double DatacenterMarketLogFactor = 0.25;            // Market Bots: ×(1 + 0.25·log10(1 + allocated GF/s))
+        private const double DatacenterFramesPerSecondPerGigaflop = 0.60; // Training Cluster: PPO frames/sec per allocated GF/s
+        private const double DatacenterInsightPerSecondPerGigaflop = 0.0012; // Analysis Node: Insight/sec per allocated GF/s, pre-softcap
+        private const double DatacenterMarketLogFactor = 0.20;            // Market Bots: ×(1 + 0.20·log10(1 + allocated GF/s))
 
         public static readonly AchievementDefinition[] Achievements =
         {
@@ -617,7 +619,7 @@ namespace StackMerge
             new(ResearchId.SeedCapital, "Seed Capital", "Start after each prestige reset with <sprite name=\"chips\" tint=1> already banked. This allows making purchases right at the beginning of the game.", 1, 0, 1, 45, 120, 280, 650),
             new(ResearchId.AutomationMemory, "Automation Memory", "Permanently remembers automation unlocks per level after prestige: Auto Solve, Auto Restart <sprite name=\"token\" tint=1>, then Solver Tuning.", 0, 1, 25, 70, 180),
             new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: BAL, HEUR, COMBO, then LOOK.", 0, 2, 90, 240, 600, 1500),
-            new(ResearchId.YieldTheory, "Yield Theory", "+30% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
+            new(ResearchId.YieldTheory, "Yield Theory", "+50% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.PpoBootcamp, "PPO Bootcamp", "Each level lowers the cycle frame requirement for PPO Normal Mode by 8%. At level 5, PPO Curriculum upgrades can be bought before PPO is unlocked and can fully automate the remaining cycle requirement.", 1, 1, 25, 70, 180, 450, 1100),
             new(ResearchId.PpoMemory, "PPO Memory", "Prestige banks 50000 PPO cycle frames per level. The next playthrough's PPO Training starts from that saved cycle progress, while Datacenter training remains as permanent PPO knowledge.", 1, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger blocks instead of only safer runs.", 1, 4, 1200, 3000, 7500, 18000, 42000),
@@ -626,8 +628,8 @@ namespace StackMerge
             new(ResearchId.PassiveInsight, "Passive Insight", "Boosts <sprite name=\"insight\" tint=1> earned directly from PPO Normal Mode runs. Training mode never feeds this, and long cycles softcap so prestige stays valuable.", 2, 2, 500, 2500, 5000, 8000, 15000),
             new(ResearchId.OfflineEfficiency, "Offline Engine", "While the game is closed, <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1> continue at a reduced rate based on your current prestige strength.", 2, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.OfflineTime, "Offline Buffer", "Extends how many closed-game hours can be converted into offline <sprite name=\"chips\" tint=1> and <sprite name=\"insight\" tint=1>.", 2, 4, 1200, 3000, 7500),
-            new(ResearchId.AgentSynergy, "Agent Synergy", "Every hired Agent's bonus effect is 25% stronger per level. Agents become a core engine of faster replays.", 0, 3, 300, 800, 2000, 5000, 12000),
-            new(ResearchId.BulkDiscount, "Bulk Discount", "Upgrades, Agents and Modifiers cost 5% less per level, and the Modifiers requirement needs 15% fewer runs & merges per level. Cheaper, faster shopping shortens every cycle.", 0, 4, 1200, 3000, 7500, 18000, 42000),
+            new(ResearchId.AgentSynergy, "Agent Synergy", "Every hired Agent's bonus effect is 40% stronger per level. Agents become a core engine of faster replays.", 0, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.BulkDiscount, "Bulk Discount", "Upgrades, Agents and Modifiers cost 5% less per level, and the Modifiers requirement needs 15% fewer runs & merges per level. At level 5, Datacenter costs are 20% cheaper.", 0, 4, 1200, 3000, 7500, 18000, 42000),
             new(ResearchId.EvaluationEfficiency, "Evaluation Efficiency", "Shortens the result-evaluation pause after every PPO Training run by 15% per level, so Training mode gets through its runs much faster.", 1, 2, 90, 240, 600, 1500, 3600)
         };
 
@@ -770,6 +772,8 @@ namespace StackMerge
 
         public bool CanUnlockMachineLearning => AllModifiersMaxed;
 
+        public bool CanUnlockAgentsMenu => data.agentsMenuUnlocked || IsSolverUnlocked(SolverId.Combo) || IsSolverUnlocked(SolverId.Look);
+
         public long ResearchInsight => data.researchInsight;
 
         public long LifetimeResearchInsight => data.lifetimeResearchInsight;
@@ -878,9 +882,17 @@ namespace StackMerge
 
         public RunHistoryEntry[] RunHistory => data.runHistory ?? Array.Empty<RunHistoryEntry>();
 
+        public RunHistoryEntry[] PlaythroughRunHistory => data.playthroughRunHistory ?? Array.Empty<RunHistoryEntry>();
+
         public long TotalChipsEarned => data.totalChipsEarned;
 
         public long TotalChipsSpent => data.totalChipsSpent;
+
+        public double TotalPlaytimeSeconds => Math.Max(0.0, data.totalPlaytimeSeconds);
+
+        public bool LifetimeAgentsUnlocked => data.lifetimeAgentsUnlocked || data.agentsMenuUnlocked;
+
+        public bool LifetimeModifiersUnlocked => data.lifetimeModifiersUnlocked || data.modifiersMenuUnlocked;
 
         public int ManualRunsCompleted => data.manualRunsCompleted;
 
@@ -1132,6 +1144,17 @@ namespace StackMerge
             saveDirty = true;
         }
 
+        public void TickPlaytime(float deltaSeconds)
+        {
+            if (deltaSeconds <= 0f)
+            {
+                return;
+            }
+
+            data.totalPlaytimeSeconds = Math.Max(0.0, data.totalPlaytimeSeconds + deltaSeconds);
+            Save();
+        }
+
         /// <summary>
         /// Immediately serializes and flushes the progression to PlayerPrefs.
         /// Use sparingly (quit, pause, periodic autosave) — not in the per-move loop.
@@ -1250,7 +1273,7 @@ namespace StackMerge
                     3 => "Start with BAL, HEUR, and COMBO.",
                     _ => "Start with BAL, HEUR, COMBO, and LOOK."
                 },
-                ResearchId.YieldTheory => $"x{1.0 + level * 0.30:0.00}",
+                ResearchId.YieldTheory => $"x{1.0 + level * 0.50:0.00}",
                 ResearchId.PpoBootcamp => $"PPO Normal mode at {GetPlayingModeFrameRequirementForBootcampLevel(level):N0} cycle frames",
                 ResearchId.PpoMemory => $"{GetPpoMemoryFrameAllowance(level):N0} frames retained",
                 ResearchId.PpoHighFocus => $"New-high learning x{1f + level * 0.12f:0.00}",
@@ -1259,7 +1282,7 @@ namespace StackMerge
                 ResearchId.PassiveInsight => $"<sprite name=\"insight\" tint=1> x{GetNormalModeInsightMultiplier():0.00}",
                 ResearchId.OfflineEfficiency => $"Offline efficiency {(level <= 0 ? 0.0 : 0.08 + level * 0.05) * 100:0}%",
                 ResearchId.OfflineTime => $"Offline cap {(level switch { <= 0 => 1.0, 1 => 3.0, 2 => 6.0, 3 => 12.0, 4 => 18.0, _ => 24.0 }):0.#}h",
-                ResearchId.AgentSynergy => $"x{1.0 + level * 0.25:0.00}",
+                ResearchId.AgentSynergy => $"x{1.0 + level * 0.40:0.00}",
                 ResearchId.BulkDiscount => $"x{Math.Max(0.75, 1.0 - level * 0.05):0.00}",
                 ResearchId.EvaluationEfficiency => $"{BaseTrainingEvaluationSeconds * Mathf.Max(0.25f, 1f - level * 0.15f):0.0}s",
                 _ => string.Empty
@@ -2165,8 +2188,7 @@ namespace StackMerge
         public long GetDatacenterRackCost(DatacenterRackId rackId)
         {
             DatacenterRackDefinition definition = DatacenterRacks[(int)rackId];
-            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterRackCount(rackId));
-            // No Bulk Discount here: racks are the endless late-game chip sink and must stay one.
+            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterRackCount(rackId)) * DatacenterDiscountMultiplier;
             return cost >= long.MaxValue / 4d ? long.MaxValue / 4 : (long)Math.Round(cost);
         }
 
@@ -2206,7 +2228,7 @@ namespace StackMerge
             }
 
             DatacenterFacilityDefinition definition = DatacenterFacilities[(int)facilityId];
-            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterFacilityLevel(facilityId));
+            double cost = definition.BaseCost * Math.Pow(definition.CostGrowth, GetDatacenterFacilityLevel(facilityId)) * DatacenterDiscountMultiplier;
             return cost >= long.MaxValue / 4d ? long.MaxValue / 4 : (long)Math.Round(cost);
         }
 
@@ -2427,11 +2449,26 @@ namespace StackMerge
             return data.agentsMenuUnlocked ? 0 : ApplyShopDiscount(AgentsMenuUnlockCost);
         }
 
+        public string GetAgentsGateStatus()
+        {
+            if (data.agentsMenuUnlocked)
+            {
+                return "Agents unlocked.";
+            }
+
+            return CanUnlockAgentsMenu ? string.Empty : "Unlock COMBO or LOOK solver first.";
+        }
+
         public bool BuyAgentsMenuUnlock()
         {
             if (data.agentsMenuUnlocked)
             {
                 return true;
+            }
+
+            if (!CanUnlockAgentsMenu)
+            {
+                return false;
             }
 
             if (!Spend(GetAgentsMenuUnlockCost()))
@@ -3140,10 +3177,7 @@ namespace StackMerge
 
         private void RecordRunHistory(long runScore, SolverId solverId, int moves, int merges, int highestMergedBlock)
         {
-            RunHistoryEntry[] existing = RunHistory;
-            int nextLength = Math.Min(MaxHistoryEntries, existing.Length + 1);
-            RunHistoryEntry[] updated = new RunHistoryEntry[nextLength];
-            updated[0] = new RunHistoryEntry
+            RunHistoryEntry entry = new RunHistoryEntry
             {
                 runIndex = data.runsCompleted,
                 solverId = (int)solverId,
@@ -3154,12 +3188,23 @@ namespace StackMerge
                 difficultyLevel = data.difficultyLevel
             };
 
+            RunHistoryEntry[] existing = RunHistory;
+            int nextLength = Math.Min(MaxHistoryEntries, existing.Length + 1);
+            RunHistoryEntry[] updated = new RunHistoryEntry[nextLength];
+            updated[0] = entry;
+
             for (int i = 1; i < updated.Length; i++)
             {
                 updated[i] = existing[i - 1];
             }
 
             data.runHistory = updated;
+
+            RunHistoryEntry[] playthrough = PlaythroughRunHistory;
+            RunHistoryEntry[] playthroughUpdated = new RunHistoryEntry[playthrough.Length + 1];
+            playthroughUpdated[0] = entry;
+            Array.Copy(playthrough, 0, playthroughUpdated, 1, playthrough.Length);
+            data.playthroughRunHistory = playthroughUpdated;
         }
 
         private bool TryEquipAgent(AgentId agentId)
@@ -3251,14 +3296,17 @@ namespace StackMerge
 
         private double GetResearchIncomeMultiplier()
         {
-            return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.30;
+            return 1.0 + GetResearchLevel(ResearchId.YieldTheory) * 0.50;
         }
 
         /// <summary>Agent Synergy research: scales the bonus part of every hired Agent's effect.</summary>
-        private double AgentSynergyMultiplier => 1.0 + GetResearchLevel(ResearchId.AgentSynergy) * 0.25;
+        private double AgentSynergyMultiplier => 1.0 + GetResearchLevel(ResearchId.AgentSynergy) * 0.40;
 
         /// <summary>Bulk Discount research: price multiplier for Upgrades, Agents and Modifiers (not solvers or token packs). -5%/level, -25% at max.</summary>
         private double ShopDiscountMultiplier => Math.Max(0.75, 1.0 - GetResearchLevel(ResearchId.BulkDiscount) * 0.05);
+
+        /// <summary>Bulk Discount's capstone makes the persistent Datacenter layer cheaper without trivializing its early ramp.</summary>
+        private double DatacenterDiscountMultiplier => IsResearchMaxed(ResearchId.BulkDiscount) ? 0.80 : 1.0;
 
         /// <summary>Bulk Discount also eases the Modifiers gate's Runs/Merges requirements: -15%/level, -75% at max.</summary>
         private double ModifierGateRequirementMultiplier => Math.Max(0.25, 1.0 - GetResearchLevel(ResearchId.BulkDiscount) * 0.15);
@@ -3653,6 +3701,7 @@ namespace StackMerge
             data.agentUnlocked = new bool[Agents.Length];
             data.activeAgentIds = new[] { -1, -1, -1 };
             data.runHistory = Array.Empty<RunHistoryEntry>();
+            data.playthroughRunHistory = Array.Empty<RunHistoryEntry>();
             data.totalChipsEarned = 0;
             data.totalChipsSpent = 0;
             data.offlineChipsEarned = 0;
@@ -4278,8 +4327,18 @@ namespace StackMerge
                 data.runHistory = data.runHistory.Where(entry => entry != null).ToArray();
             }
 
+            if (data.playthroughRunHistory == null)
+            {
+                data.playthroughRunHistory = data.runHistory;
+            }
+            else
+            {
+                data.playthroughRunHistory = data.playthroughRunHistory.Where(entry => entry != null).ToArray();
+            }
+
             data.totalChipsSpent = Math.Max(0, data.totalChipsSpent);
             data.totalChipsEarned = Math.Max(data.totalChipsEarned, data.chips + data.totalChipsSpent);
+            data.totalPlaytimeSeconds = Math.Max(0.0, data.totalPlaytimeSeconds);
             data.manualRunsCompleted = Mathf.Clamp(data.manualRunsCompleted, 0, Math.Max(0, data.runsCompleted));
             data.totalBlocksDropped = Math.Max(0, data.totalBlocksDropped);
             data.totalMerges = Math.Max(data.totalMerges, data.runHistory.Sum(entry => Math.Max(0, entry.merges)));
