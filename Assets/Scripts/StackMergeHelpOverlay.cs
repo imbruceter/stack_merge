@@ -22,6 +22,7 @@ namespace StackMerge
         [SerializeField] private bool bringToFrontOnShow = true;
 
         private UnityAction currentAction;
+        private bool showRequested;
 
         public event Action Hidden;
 
@@ -33,7 +34,7 @@ namespace StackMerge
             WireButtons();
             ConfigureActionButton(null, null);
 
-            if (hideOnAwake)
+            if (hideOnAwake && !showRequested)
             {
                 Hide();
             }
@@ -59,6 +60,7 @@ namespace StackMerge
 
         public void Show(string title, string body, string actionLabel, UnityAction action)
         {
+            showRequested = true;
             ResolveReferences();
             WireButtons();
 
@@ -71,6 +73,7 @@ namespace StackMerge
 
         public void Hide()
         {
+            showRequested = false;
             SetVisible(false);
             Hidden?.Invoke();
         }

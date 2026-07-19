@@ -19,6 +19,9 @@ namespace StackMerge
         [Tooltip("Optional fallback for legacy Unity UI Text description fields.")]
         public Text legacyDescText;
 
+        [Tooltip("Hide the title Text GameObject when the title is empty.")]
+        [SerializeField] private bool hideTitleWhenEmpty = true;
+
         private void Reset()
         {
             ResolveReferences();
@@ -32,7 +35,7 @@ namespace StackMerge
         public void SetContent(string title, string description)
         {
             ResolveReferences();
-            SetText(nameText, legacyNameText, title);
+            SetText(nameText, legacyNameText, title, hideTitleWhenEmpty);
             SetText(descText, legacyDescText, description);
         }
 
@@ -91,16 +94,20 @@ namespace StackMerge
                 : value.Replace(" ", string.Empty).Replace("_", string.Empty).Replace("-", string.Empty).ToLowerInvariant();
         }
 
-        private static void SetText(TMP_Text tmpText, Text legacyText, string value)
+        private static void SetText(TMP_Text tmpText, Text legacyText, string value, bool hideWhenEmpty = false)
         {
             value = StackMergeSpriteTags.ApplyTint(value ?? string.Empty);
+            bool show = !hideWhenEmpty || !string.IsNullOrWhiteSpace(value);
+
             if (tmpText != null)
             {
+                tmpText.gameObject.SetActive(show);
                 tmpText.text = value;
             }
 
             if (legacyText != null)
             {
+                legacyText.gameObject.SetActive(show);
                 legacyText.text = value;
             }
         }

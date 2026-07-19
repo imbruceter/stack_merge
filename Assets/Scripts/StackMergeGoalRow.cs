@@ -12,6 +12,9 @@ namespace StackMerge
         [Tooltip("Shows progress or \"Completed\" when the goal is done.")]
         public TMP_Text progressText;
 
+        [Tooltip("Optional. Used by secret goals to reveal the full description only after completion.")]
+        public TMP_Text descText;
+
         [Tooltip("Optional. Shows the goal's unlock reward; stays hidden for goals without one.")]
         public TMP_Text rewardText;
     }
