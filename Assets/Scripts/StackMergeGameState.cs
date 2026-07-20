@@ -64,7 +64,8 @@ namespace StackMerge
             int difficultyLevel = 0,
             int scalingFrequencyLevel = 0,
             StackMergeRunModifiers modifiers = default,
-            int? seed = null)
+            int? seed = null,
+            double scalingFrequencyRewardBonus = 0.0)
         {
             if (stackCount <= 0)
             {
@@ -85,6 +86,7 @@ namespace StackMerge
             QueueLength = queueLength;
             DifficultyLevel = Math.Max(0, difficultyLevel);
             ScalingFrequencyLevel = Math.Max(0, scalingFrequencyLevel);
+            ScalingFrequencyRewardBonus = Math.Max(0.0, scalingFrequencyRewardBonus);
             startingModifiers = modifiers;
             stacks = Enumerable.Range(0, stackCount).Select(_ => new List<int>(stackCapacity)).ToArray();
             random = seed.HasValue ? new Random(seed.Value) : new Random();
@@ -100,6 +102,8 @@ namespace StackMerge
         public int DifficultyLevel { get; }
 
         public int ScalingFrequencyLevel { get; }
+
+        public double ScalingFrequencyRewardBonus { get; }
 
         public long Score { get; private set; }
 
@@ -410,7 +414,7 @@ namespace StackMerge
 
         public StackMergeGameState CreateSimulationCopy(int? seed = null)
         {
-            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, ScalingFrequencyLevel, ActiveModifiers, seed);
+            var copy = new StackMergeGameState(StackCount, StackCapacity, QueueLength, DifficultyLevel, ScalingFrequencyLevel, ActiveModifiers, seed, ScalingFrequencyRewardBonus);
             copy.RestoreSnapshot(CreateSnapshot());
             return copy;
         }
@@ -705,7 +709,7 @@ namespace StackMerge
                 return false;
             }
 
-            double opportunityChance = Math.Min(0.16, DifficultyLevel * 0.012 + ScalingFrequencyLevel * 0.008);
+            double opportunityChance = Math.Min(0.16, DifficultyLevel * 0.012 + GetScalingFrequencyPressure());
             if (random.NextDouble() >= opportunityChance)
             {
                 return false;
@@ -717,7 +721,7 @@ namespace StackMerge
 
         private int RollHighTierOpportunityExponent(int minExponent, int maxExponent)
         {
-            double upwardBias = 1.0 + ScalingFrequencyLevel * 0.08;
+            double upwardBias = 1.0 + GetEffectiveScalingFrequencyLevel() * 0.08;
             double totalWeight = 0.0;
             double[] weights = new double[maxExponent - minExponent + 1];
 
@@ -750,7 +754,7 @@ namespace StackMerge
 
             for (int exponent = 0; exponent <= maxSpawnExponent; exponent++)
             {
-                double pressure = 1.0 + ScalingFrequencyLevel * scalingPressurePerLevel * exponent;
+                double pressure = 1.0 + GetEffectiveScalingFrequencyLevel() * scalingPressurePerLevel * exponent;
                 double weight = Math.Pow(0.56, exponent) * pressure;
                 weights[exponent] = weight;
                 totalWeight += weight;
@@ -769,6 +773,16 @@ namespace StackMerge
             }
 
             return 1 << maxSpawnExponent;
+        }
+
+        private double GetScalingFrequencyPressure()
+        {
+            return ScalingFrequencyLevel * 0.008 + ScalingFrequencyRewardBonus;
+        }
+
+        private double GetEffectiveScalingFrequencyLevel()
+        {
+            return ScalingFrequencyLevel + ScalingFrequencyRewardBonus / 0.008;
         }
 
         private void RestorePendingSpawnEchoes(IReadOnlyList<int> echoes)

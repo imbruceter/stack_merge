@@ -478,11 +478,17 @@ namespace StackMerge
         // off between individual solver moves at slow Speed levels.
         private float timeSinceLastAcceptedMove = float.MaxValue;
         private const float ActivePlayWindowSeconds = 4f;
+        private const float SolverImmediateDeselectSecretWindowSeconds = 4f;
         private SolverId selectedSolverId = SolverId.Rand;
         private AgentId selectedAgentId = AgentId.MergeBroker;
         private ModifierId selectedModifierId = ModifierId.UnstableStack;
         private ResearchId selectedResearchId = ResearchId.InsightAmplifier;
         private bool solverDeselected = false;
+        private SolverId recentlySelectedSolverForSecret = SolverId.Rand;
+        private float recentSolverSelectedAtTime;
+        private bool hasRecentSolverSelectionForSecret;
+        private double currentSessionPlaytimeSeconds;
+        private bool exitRecordedThisSession;
         private int armedGameplayModifier = NoArmedGameplayModifier;
         private bool showFps;
         private bool suppressAchievementNotifications;
@@ -515,6 +521,11 @@ namespace StackMerge
         private RectTransform[] stackSlotLayers;
         private Coroutine gameplayLayoutWarmupCoroutine;
         private float gameOverOverlayTimer;
+        private float datacenterTickAccumulator;
+        private float nextTrainingOverlayRefreshTime;
+        private float nextTrainingRunInfoRefreshTime;
+        private const float DatacenterProductionTickInterval = 0.2f;
+        private const float TrainingOverlayRefreshInterval = 0.12f;
         private readonly HashSet<int> completedAchievementIds = new();
         private readonly HashSet<SecretAchievementId> completedSecretAchievementIds = new();
         private readonly Dictionary<int, StackMergeGoalRow> achievementRowsById = new();
@@ -752,6 +763,8 @@ namespace StackMerge
         {
             if (pauseStatus)
             {
+                RecordGameExitOnceForSecret();
+                currentSessionPlaytimeSeconds = 0.0;
                 FlushPlaytime();
                 progression?.FlushIfDirty();
             }
@@ -759,6 +772,7 @@ namespace StackMerge
 
         private void OnApplicationQuit()
         {
+            RecordGameExitOnceForSecret();
             FlushPlaytime();
             progression?.FlushIfDirty();
         }
@@ -794,7 +808,9 @@ namespace StackMerge
                 return;
             }
 
-            progression.TickPlaytime(playtimeTickAccumulator);
+            float elapsed = playtimeTickAccumulator;
+            progression.TickPlaytime(elapsed);
+            TickSessionPlaytimeSecret(elapsed);
             playtimeTickAccumulator = 0f;
         }
 
@@ -805,8 +821,35 @@ namespace StackMerge
                 return;
             }
 
-            progression.TickPlaytime(playtimeTickAccumulator);
+            float elapsed = playtimeTickAccumulator;
+            progression.TickPlaytime(elapsed);
+            TickSessionPlaytimeSecret(elapsed);
             playtimeTickAccumulator = 0f;
+        }
+
+        private void TickSessionPlaytimeSecret(float elapsedSeconds)
+        {
+            if (progression == null || elapsedSeconds <= 0f)
+            {
+                return;
+            }
+
+            currentSessionPlaytimeSeconds += elapsedSeconds;
+            if (currentSessionPlaytimeSeconds >= 2.0 * 60.0 * 60.0)
+            {
+                progression.MarkSecretAchievementComplete(SecretAchievementId.OneMoreRun);
+            }
+        }
+
+        private void RecordGameExitOnceForSecret()
+        {
+            if (progression == null || exitRecordedThisSession)
+            {
+                return;
+            }
+
+            exitRecordedThisSession = true;
+            progression.RecordGameExit();
         }
 
         private void TickBlockAnimations()
@@ -1116,6 +1159,8 @@ namespace StackMerge
                 16 => "Unlocks Scientific numeral for blocks",                 // "High 32768"
                 23 => "Unlocks Auto Buy for Algos, Upgrades, Agents and Mods", // "First Prestige"
                 24 => "Unlocks Datacenter",                                    // "Prestige Loop" (5×)
+                34 => "Merge streak upgrade at max level is 5% stronger",
+                37 => "Higher frequency upgrade at max level is 2% stronger",
                 _ => null
             };
         }
@@ -1167,6 +1212,11 @@ namespace StackMerge
                 if (!completedAchievementIds.Contains(achievement.Id) && progression.IsAchievementComplete(achievement))
                 {
                     completedAchievementIds.Add(achievement.Id);
+                    if (achievement.Id == 37)
+                    {
+                        ApplyCurrentBoardSettingsToGameState();
+                    }
+
                     achievementNotificationQueue.Enqueue((achievement.Description, GetAchievementRewardText(achievement.Id)));
                 }
             }
@@ -4056,8 +4106,7 @@ namespace StackMerge
                     trainingEvalTimer += Time.deltaTime;
                     float percent = Mathf.Clamp01(trainingEvalTimer / Mathf.Max(0.01f, evalDuration)) * 100f;
                     string status = $"Evaluating {percent:0}%";
-                    SetText(runStatusText, status);
-                    RebuildTextLayout(runStatusText);
+                    UpdatePpoTrainingRunInfo(status);
                     if (selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
                     {
                         UpdateTrainingOverlay(status);
@@ -4596,7 +4645,7 @@ namespace StackMerge
             int difficulty = progression != null ? progression.DifficultyLevel : 0;
             int scalingFrequency = progression != null ? progression.ScalingFrequencyLevel : 0;
             StackMergeRunModifiers modifiers = progression != null ? progression.BuildRunModifiers() : default;
-            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, scalingFrequencyLevel: scalingFrequency, modifiers: modifiers, seed: Environment.TickCount);
+            gameState = new StackMergeGameState(stackCapacity: capacity, queueLength: queueLength, difficultyLevel: difficulty, scalingFrequencyLevel: scalingFrequency, modifiers: modifiers, seed: Environment.TickCount, scalingFrequencyRewardBonus: progression?.ScalingFrequencyRewardBonus ?? 0.0);
             autoSolveTimer = 0f;
             autoRestartTimer = 0f;
             currentRunUsedAutoSolve = false;
@@ -4605,6 +4654,8 @@ namespace StackMerge
             currentRunChipsEarned = 0L;
             timeSinceLastAcceptedMove = float.MaxValue;
             gameOverOverlayTimer = 0f;
+            nextTrainingOverlayRefreshTime = 0f;
+            nextTrainingRunInfoRefreshTime = 0f;
             boardLayoutDirty = true;
             lastRenderedCapacity = -1;
             ClearArmedGameplayModifier();
@@ -4642,6 +4693,30 @@ namespace StackMerge
 
             progression.SetSolverDeselected(deselected);
             solverDeselected = progression.SolverDeselected;
+            MaybeCompleteImmediateDeselectSecret();
+        }
+
+        private void RememberSolverSelectionForSecret(SolverId solverId)
+        {
+            recentlySelectedSolverForSecret = solverId;
+            recentSolverSelectedAtTime = Time.unscaledTime;
+            hasRecentSolverSelectionForSecret = true;
+        }
+
+        private void MaybeCompleteImmediateDeselectSecret()
+        {
+            if (progression == null || !solverDeselected || !hasRecentSolverSelectionForSecret)
+            {
+                return;
+            }
+
+            bool sameSolver = progression.SelectedSolver == recentlySelectedSolverForSecret;
+            bool immediate = Time.unscaledTime - recentSolverSelectedAtTime <= SolverImmediateDeselectSecretWindowSeconds;
+            hasRecentSolverSelectionForSecret = false;
+            if (sameSolver && immediate)
+            {
+                progression.MarkSecretAchievementComplete(SecretAchievementId.ImmediateDeselect);
+            }
         }
 
         private void HandleSelectedSolverAction()
@@ -4684,6 +4759,11 @@ namespace StackMerge
             if (progression.SelectedSolver == id && progression.IsSolverUnlocked(id))
             {
                 SetSolverDeselected(!solverDeselected);
+                if (!solverDeselected)
+                {
+                    RememberSolverSelectionForSecret(id);
+                }
+
                 ShowFeedbackModal(solverDeselected ? $"{definition.DisplayName} deselected" : $"{definition.DisplayName} selected");
                 progression.Save();
                 RefreshEverything();
@@ -4694,6 +4774,7 @@ namespace StackMerge
             if (changed)
             {
                 solverDeselected = progression.SolverDeselected;
+                RememberSolverSelectionForSecret(id);
             }
             ShowFeedbackModal(changed ? $"{definition.DisplayName} selected" : "Not enough <sprite name=\"chips\" tint=1>");
             progression.Save();
@@ -4716,6 +4797,7 @@ namespace StackMerge
             progression.SetMachineLearningTrainingMode(training);
             progression.SelectOrUnlockSolver(SolverId.MachineLearning);
             solverDeselected = progression.SolverDeselected;
+            RememberSolverSelectionForSecret(SolverId.MachineLearning);
             progression.Save();
             HidePpoModeModal();
             ShowFeedbackModal(training ? "PPO: Training mode" : "PPO: Normal mode");
@@ -5369,7 +5451,13 @@ namespace StackMerge
                 return;
             }
 
-            progression.TickDatacenter(Time.deltaTime);
+            datacenterTickAccumulator += Time.deltaTime;
+            if (datacenterTickAccumulator >= DatacenterProductionTickInterval)
+            {
+                float elapsed = datacenterTickAccumulator;
+                datacenterTickAccumulator = 0f;
+                progression.TickDatacenter(elapsed);
+            }
 
             bool panelVisible = datacenterPanel != null ? datacenterPanel.activeInHierarchy : selectedTabIndex == 7;
             if (!panelVisible)
@@ -6572,7 +6660,8 @@ namespace StackMerge
                 || (gameState.StackCapacity == progression.StackCapacity
                     && gameState.QueueLength == progression.QueueLength
                     && gameState.DifficultyLevel == progression.DifficultyLevel
-                    && gameState.ScalingFrequencyLevel == progression.ScalingFrequencyLevel))
+                    && gameState.ScalingFrequencyLevel == progression.ScalingFrequencyLevel
+                    && Math.Abs(gameState.ScalingFrequencyRewardBonus - progression.ScalingFrequencyRewardBonus) < 0.0001))
             {
                 return;
             }
@@ -6584,7 +6673,8 @@ namespace StackMerge
                 difficultyLevel: progression.DifficultyLevel,
                 scalingFrequencyLevel: progression.ScalingFrequencyLevel,
                 modifiers: snapshot.Modifiers,
-                seed: Environment.TickCount);
+                seed: Environment.TickCount,
+                scalingFrequencyRewardBonus: progression.ScalingFrequencyRewardBonus);
             resizedGame.RestoreSnapshotResized(snapshot);
             gameState = resizedGame;
         }
@@ -6647,6 +6737,7 @@ namespace StackMerge
             RectTransform nextPanel = GetNextBlocksPanel();
             bool boardVisible = boardRoot != null && boardRoot.gameObject.activeSelf;
             bool nextVisible = nextPanel != null && nextPanel.gameObject.activeSelf;
+            bool viewChanged = boardVisible == active || nextVisible == active || (trainingOverlay != null && trainingOverlay.gameObject.activeSelf != active);
 
             if (boardRoot != null)
             {
@@ -6666,8 +6757,10 @@ namespace StackMerge
             if (trainingOverlay != null)
             {
                 SetActive(trainingOverlay.gameObject, active);
-                if (active)
+                if (active && viewChanged)
                 {
+                    nextTrainingOverlayRefreshTime = 0f;
+                    nextTrainingRunInfoRefreshTime = 0f;
                     TryLayoutGameplaySections();
                     Canvas.ForceUpdateCanvases();
                     PositionTrainingOverlay();
@@ -6770,6 +6863,13 @@ namespace StackMerge
                 return;
             }
 
+            if (Time.unscaledTime < nextTrainingOverlayRefreshTime)
+            {
+                UpdatePpoTrainingRunInfo(statusLine);
+                return;
+            }
+
+            nextTrainingOverlayRefreshTime = Time.unscaledTime + TrainingOverlayRefreshInterval;
             if (trainingOverlayText != null)
             {
                 float characterWidthPercent = GetTrainingMatrixCharacterWidthPercent();
@@ -6788,7 +6888,6 @@ namespace StackMerge
             if (trainingOverlay != null && trainingOverlay.gameObject.activeInHierarchy)
             {
                 TryLayoutGameplaySections();
-                Canvas.ForceUpdateCanvases();
                 PositionTrainingOverlay();
             }
         }
@@ -6800,6 +6899,12 @@ namespace StackMerge
                 return;
             }
 
+            if (Time.unscaledTime < nextTrainingRunInfoRefreshTime)
+            {
+                return;
+            }
+
+            nextTrainingRunInfoRefreshTime = Time.unscaledTime + TrainingOverlayRefreshInterval;
             StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
             string summary = string.IsNullOrWhiteSpace(statusLine)
                 ? $"{FormatNumber(metrics.Steps)} frames"
@@ -8580,10 +8685,10 @@ namespace StackMerge
             {
                 int level = progression.ScalingFrequencyLevel;
                 int maxLevel = progression.MaxScalingFrequencyLevel;
-                float current = StackMergeProgression.GetScalingFrequencyEffectPercent(level);
+                float current = progression.GetEffectiveScalingFrequencyEffectPercent(level);
                 if (!progression.ScalingFrequencyPurchasable)
                 {
-                    float next = StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1);
+                    float next = progression.GetEffectiveScalingFrequencyEffectPercent(level + 1);
                     SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, UpgradeName("Higher frequency", level, maxLevel), "Needs Difficulty L1", false, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
                 else if (progression.IsMaxScalingFrequency)
@@ -8592,7 +8697,7 @@ namespace StackMerge
                 }
                 else
                 {
-                    float next = StackMergeProgression.GetScalingFrequencyEffectPercent(level + 1);
+                    float next = progression.GetEffectiveScalingFrequencyEffectPercent(level + 1);
                     long cost = progression.GetScalingFrequencyUpgradeCost();
                     SetUpgradeButtonLabels(scalingFrequencyUpgradeButton, UpgradeName("Higher frequency", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: EffectRange(BonusPercent(current), BonusPercent(next), false));
                 }
@@ -8709,14 +8814,14 @@ namespace StackMerge
             {
                 int level = progression.ComboEngineLevel;
                 int maxLevel = progression.MaxComboEngineLevel;
-                float current = StackMergeProgression.GetComboEffectPercentPerStreak(level);
+                float current = progression.GetEffectiveComboEffectPercentPerStreak(level);
                 if (progression.IsMaxComboEngine)
                 {
                     SetUpgradeButtonLabels(comboEngineUpgradeButton, UpgradeName("Merge streak", level, maxLevel), "Maxed", false, effect: $"{BonusPercent(current)} / streak");
                 }
                 else
                 {
-                    float next = StackMergeProgression.GetComboEffectPercentPerStreak(level + 1);
+                    float next = progression.GetEffectiveComboEffectPercentPerStreak(level + 1);
                     long cost = progression.GetComboEngineUpgradeCost();
                     SetUpgradeButtonLabels(comboEngineUpgradeButton, UpgradeName("Merge streak", level, maxLevel), $"<sprite name=\"chips\" tint=1> {FormatNumber(cost)}", progression.Chips >= cost, effect: $"{EffectRange(BonusPercent(current), BonusPercent(next), false)} / streak");
                 }

@@ -305,6 +305,7 @@ namespace StackMerge
             int difficultyLevel,
             int scalingFrequencyLevel,
             StackMergeRunModifiers modifiers,
+            double scalingFrequencyRewardBonus,
             int seed)
         {
             frameBudget = Math.Max(0, frameBudget);
@@ -321,6 +322,7 @@ namespace StackMerge
                 difficultyLevel,
                 scalingFrequencyLevel,
                 modifiers,
+                scalingFrequencyRewardBonus,
                 localRandom);
             int trainedFrames = 0;
             while (trainedFrames < frameBudget)
@@ -333,6 +335,7 @@ namespace StackMerge
                         difficultyLevel,
                         scalingFrequencyLevel,
                         modifiers,
+                        scalingFrequencyRewardBonus,
                         localRandom);
                 }
 
@@ -359,13 +362,16 @@ namespace StackMerge
 
                 if (hasPendingTransition)
                 {
-                    Observe(result, state, trainingMode: true);
+                    // Background Datacenter learning must not make the whole game run like Training
+                    // Mode. It still records real PPO transitions, but updates in the low-intensity
+                    // path (larger batch, one epoch, smaller learning rate) so passive allocation
+                    // stays playable while accumulating permanent knowledge.
+                    Observe(result, state, trainingMode: false);
                 }
 
                 trainedFrames++;
             }
 
-            ForceUpdate(trainingMode: true);
             return Math.Max(0, data.steps - startingSteps);
         }
 
@@ -411,6 +417,7 @@ namespace StackMerge
             int difficultyLevel,
             int scalingFrequencyLevel,
             StackMergeRunModifiers modifiers,
+            double scalingFrequencyRewardBonus,
             Random random)
         {
             return new StackMergeGameState(
@@ -419,7 +426,8 @@ namespace StackMerge
                 difficultyLevel: Math.Max(0, difficultyLevel),
                 scalingFrequencyLevel: Math.Max(0, scalingFrequencyLevel),
                 modifiers: modifiers,
-                seed: random.Next());
+                seed: random.Next(),
+                scalingFrequencyRewardBonus: Math.Max(0.0, scalingFrequencyRewardBonus));
         }
 
         private static SolverDecision ChooseFallbackDecision(StackMergeGameState state, Random random)
