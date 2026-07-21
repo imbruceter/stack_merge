@@ -103,8 +103,10 @@ namespace StackMerge
         private IEnumerator Animate(float totalSeconds, float riseDistance)
         {
             RectTransform rectTransform = transform as RectTransform;
-            Vector2 start = rectTransform != null ? rectTransform.anchoredPosition : Vector2.zero;
-            Vector2 end = start + Vector2.up * Mathf.Max(0f, riseDistance);
+            Vector2 home = rectTransform != null ? rectTransform.anchoredPosition : Vector2.zero;
+            Vector2 start = home + Vector2.down * 12f;
+            Vector2 end = home + Vector2.up * Mathf.Max(0f, riseDistance);
+            Vector3 baseScale = transform.localScale;
             float duration = Mathf.Max(0.05f, totalSeconds);
             float fadeIn = Mathf.Min(fadeInSeconds, duration * 0.35f);
             float fadeOut = Mathf.Min(fadeOutSeconds, duration * 0.45f);
@@ -114,8 +116,10 @@ namespace StackMerge
                 float progress = Mathf.Clamp01(elapsed / duration);
                 if (rectTransform != null)
                 {
-                    rectTransform.anchoredPosition = Vector2.LerpUnclamped(start, end, Smooth(progress));
+                    rectTransform.anchoredPosition = Vector2.LerpUnclamped(start, end, EaseOutCubic(progress));
                 }
+
+                transform.localScale = baseScale * GetPopScale(progress);
 
                 if (canvasGroup != null)
                 {
@@ -130,6 +134,7 @@ namespace StackMerge
                 canvasGroup.alpha = 0f;
             }
 
+            transform.localScale = baseScale;
             Finished?.Invoke(this);
             Destroy(gameObject);
         }
@@ -138,22 +143,53 @@ namespace StackMerge
         {
             if (elapsed < fadeIn)
             {
-                return Mathf.Clamp01(elapsed / Mathf.Max(0.001f, fadeIn));
+                return EaseOutCubic(elapsed / Mathf.Max(0.001f, fadeIn));
             }
 
             float fadeOutStart = Mathf.Max(fadeIn, duration - fadeOut);
             if (elapsed > fadeOutStart)
             {
-                return 1f - Mathf.Clamp01((elapsed - fadeOutStart) / Mathf.Max(0.001f, fadeOut));
+                return 1f - EaseInCubic((elapsed - fadeOutStart) / Mathf.Max(0.001f, fadeOut));
             }
 
             return 1f;
         }
 
-        private static float Smooth(float value)
+        private static float GetPopScale(float progress)
+        {
+            if (progress < 0.18f)
+            {
+                return Mathf.LerpUnclamped(0.96f, 1.035f, EaseOutBack(progress / 0.18f));
+            }
+
+            if (progress < 0.34f)
+            {
+                return Mathf.Lerp(1.035f, 1f, EaseOutCubic((progress - 0.18f) / 0.16f));
+            }
+
+            return 1f;
+        }
+
+        private static float EaseOutCubic(float value)
         {
             value = Mathf.Clamp01(value);
-            return value * value * (3f - 2f * value);
+            float inverse = 1f - value;
+            return 1f - inverse * inverse * inverse;
+        }
+
+        private static float EaseInCubic(float value)
+        {
+            value = Mathf.Clamp01(value);
+            return value * value * value;
+        }
+
+        private static float EaseOutBack(float value)
+        {
+            value = Mathf.Clamp01(value);
+            const float c1 = 1.70158f;
+            const float c3 = c1 + 1f;
+            float shifted = value - 1f;
+            return 1f + c3 * shifted * shifted * shifted + c1 * shifted * shifted;
         }
 
         private static string Normalize(string value)

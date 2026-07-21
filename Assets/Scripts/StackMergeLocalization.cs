@@ -47,6 +47,7 @@ namespace StackMerge
             ["Manual mode"] = "Manuális mód",
             ["Auto solving"] = "Auto megoldás",
             ["Run ended"] = "Run vége",
+            ["Run time"] = "Run ideje",
 
             ["Automatization"] = "Automatizáció",
             ["Income Bonus"] = "Bevétel Bónusz",
@@ -96,8 +97,8 @@ namespace StackMerge
             ["Finish PPO Training first"] = "Előbb fejezd be a PPO tréninget",
             ["Unlock PPO to open Research"] = "A Kutatáshoz előbb oldd fel a PPO-t",
             ["Normal mode is still locked."] = "A normál mód még zárolva van.",
-            ["PPO: Training mode"] = "PPO: tréning mód",
-            ["PPO: Normal mode"] = "PPO: normál mód",
+            ["PPO: Training mode"] = "PPO: Tréning Mód",
+            ["PPO: Normal mode"] = "PPO: Normál Mód",
             ["Training Mode"] = "Tréning mód",
             ["Normal Mode"] = "Normál mód",
             ["Normal Mode\nLocked"] = "Normál mód\nZárolva",
@@ -202,7 +203,7 @@ namespace StackMerge
             ["HEUR is a weighted score formula. These are the clearest direct knobs."] = "A HEUR egy súlyozott pontszámképlet. Ezek a legközvetlenebb beállításai.",
             ["LOOK uses HEUR plus a follow-up estimate. Tune its greed and its second-step trust."] = "A LOOK a HEUR-t használja egy következő lépés becsléssel. Állítható a mohósága és a második lépésbe vetett bizalma.",
             ["MOCA samples futures. Its tuning can spend a little more thinking on rollout depth or sample count."] = "A MOCA jövőbeli állapotokat mintáz. Több gondolkodás adható a rollout mélységnek vagy a mintaszámnak.",
-            ["PLAN-3 searches the visible queue. Tune how much it trusts short plans over current safety."] = "A PLAN-3 a látható queue-t keresi. Állítható, hogy mennyire bízzon a rövid tervekben a biztonsággal szemben.",
+            ["PLAN searches the visible queue. Tune how much it trusts short plans over current safety."] = "A PLAN a látható queue-t keresi. Állítható, mennyire bízzon a rövid tervekben a biztonsággal szemben.",
             ["PLAN-5 searches deeper queue lines. Tuning lets you decide whether it should be patient or practical."] = "A PLAN-5 mélyebb queue-vonalakat keres. Hangolható, hogy türelmesebb vagy praktikusabb legyen.",
             ["MOCA+ uses smarter rollouts. Tuning affects both how much it samples and how it values rollout boards."] = "A MOCA+ okosabb rolloutokat használ. A hangolás a mintaszámra és a rollout táblák értékelésére is hat.",
             ["MCTS builds a tree. These sliders tune search behavior without replacing the tree search identity."] = "Az MCTS keresési fát épít. A keresési viselkedés állítható anélkül, hogy lecserélnék a fa alapú működését.",
@@ -380,6 +381,7 @@ namespace StackMerge
             ["Unlocks Auto Buy for Algos, Upgrades, Agents and Mods"] = "Feloldja az Auto Vásárlást az Algókhoz, Fejlesztésekhez, Ügynökökhöz és Modokhoz",
             ["Unlocks Datacenter"] = "Feloldja az Adatközpontot",
             ["Merge streak upgrade at max level is 5% stronger"] = "A Merge sorozat fejlesztés max szinten 5%-kal erősebb",
+            ["PPO learns from your Manual runs"] = "A PPO tanul a Manuális runjaidból",
             ["Higher frequency upgrade at max level is 2% stronger"] = "A Nagyobb gyakoriság fejlesztés max szinten 2%-kal erősebb",
             ["Unlocks Byte numeral for blocks"] = "Feloldja a Bájt számformátumot a blokkokon",
             ["Unlocks Power numeral for blocks"] = "Feloldja a Hatvány számformátumot a blokkokon",
@@ -531,6 +533,7 @@ namespace StackMerge
             ["Prestige banks 50000 PPO training frames per level. The next playthrough's PPO Training starts from that saved progress, with the knowledge already learned (instead of zero)."] = "A Prestige szintenként 50000 PPO tréning frame-et őriz meg. A következő végigjátszás PPO tréningje nulláról indulás helyett ebből a mentett tudásból folytatódik.",
             ["Each level lowers the cycle frame requirement for PPO Normal Mode by 8%. At level 5, PPO Curriculum upgrades can be bought before PPO is unlocked and can fully automate the remaining cycle requirement."] = "Minden szint 8%-kal csökkenti a PPO Normál mód ciklus-frame követelményét. 5. szinten a PPO Curriculum fejlesztések már a PPO feloldása előtt is megvehetők, és teljesen automatizálhatják a maradék ciklus-követelményt.",
             ["Prestige banks 50000 PPO cycle frames per level. The next playthrough's PPO Training starts from that saved cycle progress, while Datacenter training remains as permanent PPO knowledge."] = "A Prestige szintenként 50000 PPO ciklus-frame-et őriz meg. A következő végigjátszás PPO tréningje ebből a mentett ciklus-progresszből indul, miközben a Datacenter tréning permanens PPO tudásként marad meg.",
+            ["Prestige banks 40000 PPO cycle frames per level. The next playthrough's PPO Training starts from that saved cycle progress, while Datacenter training remains as permanent PPO knowledge."] = "A Prestige szintenként 40000 PPO ciklus-frame-et őriz meg. A következő végigjátszás PPO tréningje ebből a mentett ciklus-progresszből indul, miközben a Datacenter tréning permanens PPO tudásként marad meg.",
             ["Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger blocks instead of only safer runs."] = "Növeli a PPO jutalomjelét új highest blokkok létrehozásakor. Ez nagyobb high-ok felé tereli a tanulót, nem csak biztonságosabb runok felé.",
             ["Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early."] = "Javítja a PPO túlélési shapingjét és veszélybüntetéseit, így a high-focus policyk kevésbé omlanak össze korán.",
             ["+50% <sprite name=\"insight\" tint=1> from PPO Normal Mode performance per level. This is the late neural payoff node."] = "+50% <sprite name=\"insight\" tint=1> a PPO Normal Mód teljesítményéből szintenként. Ez a késői neurális megtérülési node.",
@@ -695,7 +698,34 @@ namespace StackMerge
             ["Agent Synergy"] = "Ügynök szinergia",
             ["Bulk Discount"] = "Tömeges kedvezmény",
             ["Evaluation Efficiency"] = "Kiértékelési hatékonyság",
-            ["Insight"] = "Insight"
+            ["Insight"] = "Insight",
+
+            ["RAND selected"] = "RAND kiválasztva",
+            ["RAND deselected"] = "RAND mellőzve",
+            ["BAL selected"] = "BAL kiválasztva",
+            ["BAL deselected"] = "BAL mellőzve",
+            ["BAL tuning updated"] = "BAL tuning mdosítva",
+            ["BAL tuning reset"] = "BAL tuning visszaállítva",
+            ["HEUR selected"] = "HEUR kiválasztva",
+            ["HEUR deselected"] = "HEUR mellőzve",
+            ["HEUR tuning updated"] = "HEUR tuning mdosítva",
+            ["HEUR tuning reset"] = "HEUR tuning visszaállítva",
+            ["COMBO selected"] = "COMBO kiválasztva",
+            ["COMBO deselected"] = "COMBO mellőzve",
+            ["COMBO tuning updated"] = "COMBO tuning mdosítva",
+            ["COMBO tuning reset"] = "COMBO tuning visszaállítva",
+            ["LOOK selected"] = "LOOK kiválasztva",
+            ["LOOK deselected"] = "LOOK mellőzve",
+            ["LOOK tuning updated"] = "LOOK tuning mdosítva",
+            ["LOOK tuning reset"] = "LOOK tuning visszaállítva",
+            ["MOCA selected"] = "MOCA kiválasztva",
+            ["MOCA deselected"] = "MOCA mellőzve",
+            ["MOCA tuning updated"] = "MOCA tuning mdosítva",
+            ["MOCA tuning reset"] = "MOCA tuning visszaállítva",
+            ["PLAN selected"] = "PLAN kiválasztva",
+            ["PLAN deselected"] = "PLAN mellőzve",
+            ["PLAN tuning updated"] = "PLAN tuning mdosítva",
+            ["PLAN tuning reset"] = "PLAN tuning visszaállítva",
         };
 
         public static void ClearRegisteredTranslations()
@@ -843,6 +873,7 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Auto solving:", "Auto megoldás:");
             translated = ReplacePrefix(translated, "Auto restart:", "Auto újraindítás:");
             translated = ReplacePrefix(translated, "Mode:", "Mód:");
+            translated = ReplacePrefix(translated, "Run time:", "Run ideje:");
             translated = ReplacePrefix(translated, "Run score:", "Run pontszám:");
             translated = ReplacePrefix(translated, "Moves:", "Lépések:");
             translated = ReplacePrefix(translated, "Merges:", "Merge-ek:");

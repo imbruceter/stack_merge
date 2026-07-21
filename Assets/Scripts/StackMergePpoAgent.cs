@@ -121,6 +121,7 @@ namespace StackMerge
         private const int QueueSkipAction = PlaceActionCount;
         private const int PickaxeActionStart = QueueSkipAction + 1;
         private const int ActionCount = PickaxeActionStart + MaxStacks * MaxStackCapacity;
+        private const int BackgroundTrainingUpdateBatch = 4;
 
         // Learning hyperparameters — defaults match standard PPO. Adjustable within safe bounds via
         // solver tuning (see ApplyTuning); kept as fields rather than consts for that reason.
@@ -259,6 +260,11 @@ namespace StackMerge
 
         public void Observe(MoveResult result, StackMergeGameState nextState, bool trainingMode)
         {
+            Observe(result, nextState, trainingMode, trainingMode ? 64 : 512);
+        }
+
+        private void Observe(MoveResult result, StackMergeGameState nextState, bool trainingMode, int targetBatch)
+        {
             if (!hasPendingTransition || nextState == null)
             {
                 return;
@@ -273,12 +279,11 @@ namespace StackMerge
             transition.NextValue = result.IsGameOver ? 0f : critic.Forward(nextFeatures)[0];
             trajectory.Add(transition);
             episodeReward += transition.Reward;
-            data.steps++;
+            data.steps = (int)Math.Min(int.MaxValue - 1L, Math.Max(0, (long)data.steps) + 1L);
 
-            // Smaller training batch (64) so the backprop happens as several small updates spread
-            // through the run instead of one ~450-backprop spike at game-over — that spike was the
-            // main cause of the FPS drop in Training mode (Normal mode does no updates and stays smooth).
-            int targetBatch = trainingMode ? 64 : 512;
+            // Small batches keep PPO backprop split across frames instead of landing as one
+            // large spike at game-over or on a Datacenter production tick.
+            targetBatch = Math.Max(1, targetBatch);
             if (trajectory.Count >= targetBatch || result.IsGameOver)
             {
                 UpdatePolicy(trainingMode);
@@ -288,6 +293,47 @@ namespace StackMerge
             {
                 CompleteEpisode(nextState);
             }
+        }
+
+        public bool ObserveImitationMove(StackMergeGameState stateBeforeMove, MoveResult result, StackMergeGameState nextState)
+        {
+            if (stateBeforeMove == null || nextState == null || stateBeforeMove.IsGameOver || !result.Accepted)
+            {
+                return false;
+            }
+
+            int action = GetActionFromResult(result);
+            if (action < 0 || action >= ActionCount)
+            {
+                return false;
+            }
+
+            float[] features = ExtractFeatures(stateBeforeMove);
+            bool[] mask = BuildActionMask(stateBeforeMove);
+            if (action >= mask.Length || !mask[action])
+            {
+                return false;
+            }
+
+            float[] logits = actor.Forward(features);
+            Softmax(logits, mask, out float[] probabilities, out float entropy);
+            float actionProbability = Math.Max(1e-7f, probabilities[action]);
+            float value = critic.Forward(features)[0];
+
+            pendingTransition = new Transition
+            {
+                Features = features,
+                Mask = mask,
+                Action = action,
+                OldLogProbability = (float)Math.Log(actionProbability),
+                Value = value,
+                ScoreBefore = stateBeforeMove.Score,
+                HighBefore = Math.Max(1, stateBeforeMove.HighestMergedBlock),
+                Entropy = entropy
+            };
+            hasPendingTransition = true;
+            Observe(result, nextState, trainingMode: false, targetBatch: BackgroundTrainingUpdateBatch);
+            return true;
         }
 
         public void ForceUpdate(bool trainingMode)
@@ -362,17 +408,26 @@ namespace StackMerge
 
                 if (hasPendingTransition)
                 {
-                    // Background Datacenter learning must not make the whole game run like Training
-                    // Mode. It still records real PPO transitions, but updates in the low-intensity
-                    // path (larger batch, one epoch, smaller learning rate) so passive allocation
-                    // stays playable while accumulating permanent knowledge.
-                    Observe(result, state, trainingMode: false);
+                    // Background Datacenter learning uses the low-intensity path so passive
+                    // allocation stays playable while accumulating permanent knowledge.
+                    Observe(result, state, trainingMode: false, targetBatch: BackgroundTrainingUpdateBatch);
                 }
 
                 trainedFrames++;
             }
 
             return Math.Max(0, data.steps - startingSteps);
+        }
+
+        public void AddBackgroundFrameCredit(int frames)
+        {
+            if (frames <= 0)
+            {
+                return;
+            }
+
+            long nextSteps = Math.Max(0, (long)data.steps) + frames;
+            data.steps = (int)Math.Min(int.MaxValue - 1L, nextSteps);
         }
 
         public void ResetForPrestige(int seed = 24681357)
@@ -754,6 +809,19 @@ namespace StackMerge
             int stackIndex = pickaxeTarget / MaxStackCapacity;
             int blockIndex = pickaxeTarget % MaxStackCapacity;
             return new SolverDecision(true, SolverActionKind.Pickaxe, stackIndex, blockIndex, score, $"{reason}: pickaxe");
+        }
+
+        private static int GetActionFromResult(MoveResult result)
+        {
+            return result.ActionKind switch
+            {
+                SolverActionKind.Place => result.StackIndex,
+                SolverActionKind.QueueSkip => QueueSkipAction,
+                SolverActionKind.Pickaxe => result.StackIndex >= 0 && result.BlockIndex >= 0
+                    ? PickaxeActionStart + result.StackIndex * MaxStackCapacity + result.BlockIndex
+                    : -1,
+                _ => -1
+            };
         }
 
         private static bool[] BuildActionMask(StackMergeGameState state)

@@ -95,6 +95,7 @@ namespace StackMerge
         public double machineLearningTotalPlaytimeSeconds;
         public StackMergePpoTrainingData machineLearningPermanentPolicy;
         public long machineLearningPermanentFrames;
+        public long machineLearningDatacenterCycleFrames;
         public StackMergePpoTrainingData machineLearningPrestigeMemoryPolicy;
         public long machineLearningPrestigeMemoryFrames;
         public long researchInsight;
@@ -454,11 +455,17 @@ namespace StackMerge
     public sealed class StackMergeProgression
     {
         private const string PlayerPrefsKey = "StackMerge.Progression.v2";
+        private const string MachineLearningPolicyPrefsKey = PlayerPrefsKey + ".PpoPolicy";
+        private const string MachineLearningPermanentPolicyPrefsKey = PlayerPrefsKey + ".PpoPermanentPolicy";
+        private const string MachineLearningPrestigeMemoryPolicyPrefsKey = PlayerPrefsKey + ".PpoPrestigeMemoryPolicy";
         private const int BaseAgentSlots = 2;
         private const long DebugPlayingModeFrameRequirement = 5000L;
         private const long DebugMinimumPlayingModeFrameRequirement = 500L;
         private const long MinimumTrainingRequirementBeforeBootcampCapstone = 50000L;
-        private const int DatacenterTrainingFrameBudgetPerTick = 32;
+        // Datacenter Training Cluster is late-game automation, not a replacement for Training Mode.
+        // It is processed every Unity frame, so this per-frame cap prevents catch-up spikes after
+        // stalls while normal active play still trains every generated background frame.
+        private const int DatacenterTrainingSampleBudgetPerTick = 4;
         private const int OfflinePerformanceSampleRuns = 40;
         private const double OfflineMinimumRunSeconds = 1.0;
         private const double OfflineMaximumRunsPerHour = 1200.0;
@@ -508,7 +515,8 @@ namespace StackMerge
         // UI displays the Scaling Frequency contribution to paired high-tier opportunity odds.
         private const double ScalingFrequencyPressurePerLevel = 0.008;
         private const double ProfitableEndingBonusPerLevel = 0.15;
-        private const int PpoPrimerAchievementId = 34;
+        private const int AgentTourAchievementId = 20;
+        private const int TrainingMontageAchievementId = 32;
         private const int InsightVaultAchievementId = 37;
         private const double ComboMaxAchievementBonus = 0.05;
         private const double ScalingFrequencyMaxAchievementBonus = 0.02;
@@ -622,7 +630,8 @@ namespace StackMerge
         private const double CoolingLoopFlopsBonusPerLevel = 0.10;        // +10% total rack FLOPS / level
         private const double FabricInterconnectBonusPerLevel = 0.18;      // +18% TPU Pod + Neural Fabric output / level
         private const double DatacenterPrestigeBonusPerPrestige = 0.05;   // +5% compute per prestige — prestiging feeds the layer
-        private const double DatacenterFramesPerSecondPerGigaflop = 0.60; // Training Cluster: PPO frames/sec per allocated GF/s
+        private const double DatacenterFramesPerSecondPerGigaflop = 0.03; // Training Cluster: PPO frames/sec per allocated GF/s
+        private const double DatacenterTrainingFramesPerSecondCap = 80.0;
         private const double DatacenterInsightPerSecondPerGigaflop = 0.0012; // Analysis Node: Insight/sec per allocated GF/s, pre-softcap
         private const double DatacenterMarketLogFactor = 0.20;            // Market Bots: ×(1 + 0.20·log10(1 + allocated GF/s))
 
@@ -705,7 +714,7 @@ namespace StackMerge
             new(ResearchId.AlgorithmArchive, "Algorithm Archive", "Start future prestiges with early algorithms already known: BAL, HEUR, COMBO, then LOOK.", 0, 2, 100, 350, 700, 1500),
             new(ResearchId.YieldTheory, "Yield Theory", "+50% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster.", 0, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.PpoBootcamp, "PPO Bootcamp", "Each level lowers the cycle frame requirement for PPO Normal Mode by 8%. At level 5, PPO Curriculum upgrades can be bought before PPO is unlocked and can fully automate the remaining cycle requirement.", 1, 1, 50, 200, 500, 1000, 2000),
-            new(ResearchId.PpoMemory, "PPO Memory", "Prestige banks 50000 PPO cycle frames per level. The next playthrough's PPO Training starts from that saved cycle progress, while Datacenter training remains as permanent PPO knowledge.", 1, 3, 300, 800, 2000, 5000, 12000),
+            new(ResearchId.PpoMemory, "PPO Memory", "Prestige banks 40000 PPO cycle frames per level. The next playthrough's PPO Training starts from that saved cycle progress, while Datacenter training remains as permanent PPO knowledge.", 1, 3, 300, 800, 2000, 5000, 12000),
             new(ResearchId.PpoHighFocus, "High Focus", "Raises PPO's reward signal for creating new highest blocks. This pushes the learner toward bigger blocks instead of only safer runs.", 1, 4, 1200, 3000, 7500, 18000, 42000),
             new(ResearchId.PpoStability, "Stability Model", "Improves PPO's survival shaping and danger penalties, making high-focus policies less likely to crash early.", 1, 5, 2500, 6000, 15000, 36000, 85000),
             new(ResearchId.InsightExtractor, "Insight Extractor", "+50% <sprite name=\"insight\" tint=1> from PPO Normal Mode performance per level. This is the late neural payoff node.", 1, 6, 5000, 12000, 30000, 72000, 170000),
@@ -728,6 +737,7 @@ namespace StackMerge
         // Runtime-only fractional accumulators for the Datacenter's per-second production.
         private double datacenterFrameCarry;
         private double datacenterInsightCarry;
+        private bool machineLearningPolicySaveDirty = true;
         // Combo Engine streak — runtime-only, reset every run end.
         private int comboStreak;
         // Income ledger — runtime-only, per-source chip bookkeeping for the balance tooling.
@@ -743,10 +753,33 @@ namespace StackMerge
             this.data = data ?? new StackMergeProgressionData();
             Normalize();
             machineLearningAgent = new StackMergePpoAgent(this.data.machineLearningPolicy);
+            RestoreMachineLearningExperienceFloor();
             ApplyMachineLearningResearchBonuses();
             if (applyOfflineProgress)
             {
                 ApplyOfflineProgress();
+            }
+        }
+
+        private void RestoreMachineLearningExperienceFloor()
+        {
+            if (machineLearningAgent == null)
+            {
+                return;
+            }
+
+            long storedFrames = Math.Max(0, (long)data.machineLearningExperience);
+            long currentFrames = Math.Max(0, machineLearningAgent.Metrics.Steps);
+            if (storedFrames <= currentFrames)
+            {
+                return;
+            }
+
+            long missingFrames = Math.Min(int.MaxValue - 1L - currentFrames, storedFrames - currentFrames);
+            if (missingFrames > 0)
+            {
+                machineLearningAgent.AddBackgroundFrameCredit((int)missingFrames);
+                data.machineLearningPolicy = machineLearningAgent.Data;
             }
         }
 
@@ -908,7 +941,10 @@ namespace StackMerge
 
         public long MachineLearningPermanentFrames => Math.Max(0, data.machineLearningPermanentFrames);
 
-        public long MachineLearningCycleFrames => Math.Max(0, MachineLearningFrames - MachineLearningPermanentFrames);
+        private long MachineLearningMemoryEligibleCycleFrames => Math.Max(0, MachineLearningFrames - MachineLearningPermanentFrames);
+
+        public long MachineLearningCycleFrames =>
+            Math.Max(0, MachineLearningMemoryEligibleCycleFrames + Math.Max(0, data.machineLearningDatacenterCycleFrames));
 
         public long MachineLearningMemoryFrameAllowance => GetPpoMemoryFrameAllowance();
 
@@ -944,6 +980,8 @@ namespace StackMerge
         public bool IsMachineLearningTrainingActive => SelectedSolver == SolverId.MachineLearning
             && IsSolverUnlocked(SolverId.MachineLearning)
             && (!MachineLearningPlayingModeUnlocked || data.machineLearningTrainingMode);
+
+        public bool ManualRunsTeachPpo => IsAchievementCompleteById(TrainingMontageAchievementId);
 
         public void SetMachineLearningTrainingMode(bool training)
         {
@@ -1124,7 +1162,7 @@ namespace StackMerge
         private double GetComboBonusPerStreak(int level)
         {
             double bonus = GetLevelBonus(ComboBonusPerStreakByLevel, level);
-            return level >= ComboEngineUpgradeCosts.Length && IsAchievementCompleteById(PpoPrimerAchievementId)
+            return level >= ComboEngineUpgradeCosts.Length && IsAchievementCompleteById(AgentTourAchievementId)
                 ? bonus + ComboMaxAchievementBonus
                 : bonus;
         }
@@ -1248,12 +1286,55 @@ namespace StackMerge
 
             try
             {
-                return new StackMergeProgression(JsonUtility.FromJson<StackMergeProgressionData>(json));
+                StackMergeProgressionData loaded = JsonUtility.FromJson<StackMergeProgressionData>(json);
+                RestoreMachineLearningPoliciesFromPlayerPrefs(loaded);
+                return new StackMergeProgression(loaded);
             }
             catch (Exception)
             {
                 return new StackMergeProgression(new StackMergeProgressionData());
             }
+        }
+
+        private static void RestoreMachineLearningPoliciesFromPlayerPrefs(StackMergeProgressionData loaded)
+        {
+            if (loaded == null)
+            {
+                return;
+            }
+
+            loaded.machineLearningPolicy = LoadMachineLearningPolicy(MachineLearningPolicyPrefsKey, loaded.machineLearningPolicy);
+            loaded.machineLearningPermanentPolicy = LoadMachineLearningPolicy(MachineLearningPermanentPolicyPrefsKey, loaded.machineLearningPermanentPolicy);
+            loaded.machineLearningPrestigeMemoryPolicy = LoadMachineLearningPolicy(MachineLearningPrestigeMemoryPolicyPrefsKey, loaded.machineLearningPrestigeMemoryPolicy);
+        }
+
+        private static StackMergePpoTrainingData LoadMachineLearningPolicy(string key, StackMergePpoTrainingData fallback)
+        {
+            if (!PlayerPrefs.HasKey(key))
+            {
+                return fallback;
+            }
+
+            string json = PlayerPrefs.GetString(key, string.Empty);
+            if (string.IsNullOrEmpty(json))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                StackMergePpoTrainingData loaded = JsonUtility.FromJson<StackMergePpoTrainingData>(json);
+                return GetPolicyStepCount(loaded) >= GetPolicyStepCount(fallback) ? loaded : fallback;
+            }
+            catch (Exception)
+            {
+                return fallback;
+            }
+        }
+
+        private static int GetPolicyStepCount(StackMergePpoTrainingData policy)
+        {
+            return policy != null ? Math.Max(0, policy.steps) : 0;
         }
 
         private bool saveDirty;
@@ -1273,6 +1354,11 @@ namespace StackMerge
         public void Save()
         {
             saveDirty = true;
+        }
+
+        private void MarkMachineLearningPolicyDirty()
+        {
+            machineLearningPolicySaveDirty = true;
         }
 
         public void TickPlaytime(float deltaSeconds)
@@ -1307,26 +1393,111 @@ namespace StackMerge
         /// Immediately serializes and flushes the progression to PlayerPrefs.
         /// Use sparingly (quit, pause, periodic autosave) — not in the per-move loop.
         /// </summary>
-        public void SaveImmediate()
+        public void SaveImmediate(bool forceMachineLearningPolicySave = false)
         {
             data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
+            data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent?.Metrics.Steps ?? 0);
             data.lastSaveUnixSeconds = GetUnixNow();
-            PlayerPrefs.SetString(PlayerPrefsKey, JsonUtility.ToJson(data));
+            if (ShouldSaveMachineLearningPolicies(forceMachineLearningPolicySave))
+            {
+                SaveMachineLearningPolicies();
+            }
+
+            PlayerPrefs.SetString(PlayerPrefsKey, SerializeProgressionWithoutMachineLearningPolicies());
             PlayerPrefs.Save();
             saveDirty = false;
+        }
+
+        private bool ShouldSaveMachineLearningPolicies(bool force)
+        {
+            if (!force)
+            {
+                return false;
+            }
+
+            return machineLearningPolicySaveDirty
+                || !PlayerPrefs.HasKey(MachineLearningPolicyPrefsKey)
+                || (MachineLearningPermanentFrames > 0 && !PlayerPrefs.HasKey(MachineLearningPermanentPolicyPrefsKey))
+                || (data.machineLearningPrestigeMemoryPolicy != null && !PlayerPrefs.HasKey(MachineLearningPrestigeMemoryPolicyPrefsKey));
+        }
+
+        private void SaveMachineLearningPolicies()
+        {
+            data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
+            SnapshotPermanentMachineLearningPolicy();
+            SaveMachineLearningPolicy(MachineLearningPolicyPrefsKey, data.machineLearningPolicy);
+            SaveMachineLearningPolicy(MachineLearningPermanentPolicyPrefsKey, data.machineLearningPermanentPolicy);
+            SaveMachineLearningPolicy(MachineLearningPrestigeMemoryPolicyPrefsKey, data.machineLearningPrestigeMemoryPolicy);
+            machineLearningPolicySaveDirty = false;
+        }
+
+        private void SnapshotPermanentMachineLearningPolicy()
+        {
+            if (machineLearningAgent == null || MachineLearningPermanentFrames <= 0)
+            {
+                return;
+            }
+
+            StackMergePpoTrainingData current = machineLearningAgent.Data;
+            if (current == null)
+            {
+                return;
+            }
+
+            if (!ReferenceEquals(data.machineLearningPermanentPolicy, current)
+                && data.machineLearningPermanentPolicy != null
+                && data.machineLearningPermanentPolicy.steps == current.steps
+                && data.machineLearningPermanentPolicy.updates == current.updates)
+            {
+                return;
+            }
+
+            data.machineLearningPermanentPolicy = StackMergePpoAgent.CloneData(current);
+        }
+
+        private static void SaveMachineLearningPolicy(string key, StackMergePpoTrainingData policy)
+        {
+            if (policy == null)
+            {
+                PlayerPrefs.DeleteKey(key);
+                return;
+            }
+
+            PlayerPrefs.SetString(key, JsonUtility.ToJson(policy));
+        }
+
+        private string SerializeProgressionWithoutMachineLearningPolicies()
+        {
+            StackMergePpoTrainingData policy = data.machineLearningPolicy;
+            StackMergePpoTrainingData permanentPolicy = data.machineLearningPermanentPolicy;
+            StackMergePpoTrainingData memoryPolicy = data.machineLearningPrestigeMemoryPolicy;
+
+            data.machineLearningPolicy = null;
+            data.machineLearningPermanentPolicy = null;
+            data.machineLearningPrestigeMemoryPolicy = null;
+            try
+            {
+                return JsonUtility.ToJson(data);
+            }
+            finally
+            {
+                data.machineLearningPolicy = policy;
+                data.machineLearningPermanentPolicy = permanentPolicy;
+                data.machineLearningPrestigeMemoryPolicy = memoryPolicy;
+            }
         }
 
         /// <summary>
         /// Writes pending changes to disk if any exist. Returns true when a write happened.
         /// </summary>
-        public bool FlushIfDirty()
+        public bool FlushIfDirty(bool forceMachineLearningPolicySave = false)
         {
-            if (!saveDirty)
+            if (!saveDirty && !(forceMachineLearningPolicySave && machineLearningPolicySaveDirty))
             {
                 return false;
             }
 
-            SaveImmediate();
+            SaveImmediate(forceMachineLearningPolicySave);
             return true;
         }
 
@@ -1495,6 +1666,7 @@ namespace StackMerge
         public long ExecutePrestige()
         {
             CaptureMachineLearningMemoryIfEligible();
+            SnapshotPermanentMachineLearningPolicy();
             long gained = PreviewPrestigeInsightGain();
             if (gained <= 0)
             {
@@ -1520,6 +1692,7 @@ namespace StackMerge
             ApplyPermanentMachineLearningAfterReset();
             ApplyMachineLearningMemoryAfterReset();
             data.machineLearningPolicy = machineLearningAgent?.Data ?? new StackMergePpoTrainingData();
+            MarkMachineLearningPolicyDirty();
             ApplyMachineLearningResearchBonuses();
             ApplyPrestigeStartResearchBonuses();
             Normalize();
@@ -2472,13 +2645,21 @@ namespace StackMerge
 
         /// <summary>
         /// True while the Datacenter can run permanent background PPO training. These frames improve
-        /// the policy itself and persist across prestiges, but they do not directly satisfy the
-        /// current cycle's Normal-mode frame requirement.
+        /// the policy itself and also count toward the current prestige's Normal-mode unlock. The
+        /// unlock credit resets on prestige; the PPO knowledge stays permanent.
         /// </summary>
         public bool DatacenterTrainingHasTarget => DatacenterUnlocked;
 
-        public double DatacenterTrainingFramesPerSecond =>
-            DatacenterTotalGigaflops * GetDatacenterAllocation(DatacenterAllocationId.TrainingCluster) * DatacenterFramesPerSecondPerGigaflop;
+        public double DatacenterTrainingFramesPerSecond
+        {
+            get
+            {
+                double raw = DatacenterTotalGigaflops
+                    * GetDatacenterAllocation(DatacenterAllocationId.TrainingCluster)
+                    * DatacenterFramesPerSecondPerGigaflop;
+                return Math.Min(DatacenterTrainingFramesPerSecondCap, Math.Max(0.0, raw));
+            }
+        }
 
         /// <summary>Insight/sec of the Analysis Node AFTER the per-prestige softcap fatigue.</summary>
         public double DatacenterInsightPerSecond
@@ -2517,9 +2698,9 @@ namespace StackMerge
         }
 
         /// <summary>
-        /// Advances datacenter production by `deltaSeconds`. Training Cluster frames run actual
-        /// background PPO training and become permanent knowledge; Analysis Insight accrues whenever
-        /// the layer is unlocked. Fractions carry over between calls.
+        /// Advances datacenter production by `deltaSeconds`. Training Cluster frames become permanent
+        /// PPO knowledge and current-cycle Training credit. Analysis Insight accrues whenever the
+        /// layer is unlocked. Fractions carry over between calls.
         /// </summary>
         public void TickDatacenter(float deltaSeconds)
         {
@@ -2533,7 +2714,7 @@ namespace StackMerge
             if (DatacenterTrainingHasTarget && framesPerSecond > 0.0)
             {
                 datacenterFrameCarry += framesPerSecond * deltaSeconds;
-                int wholeFrames = (int)Math.Min(DatacenterTrainingFrameBudgetPerTick, Math.Floor(datacenterFrameCarry));
+                int wholeFrames = (int)Math.Min(int.MaxValue, Math.Floor(datacenterFrameCarry));
                 if (wholeFrames > 0)
                 {
                     datacenterFrameCarry -= wholeFrames;
@@ -2564,9 +2745,10 @@ namespace StackMerge
             }
         }
 
-        // Datacenter frames are real background PPO training. They advance and update the policy,
-        // then record that knowledge as permanent so prestige resets can restore the learned base
-        // network without those frames counting toward the next cycle's Training requirement.
+        // Datacenter frames are permanent PPO knowledge and current-cycle Training credit. Normal
+        // frame-sized production ticks stay within the sample budget, so generated frames train
+        // directly; the credit fallback only catches unusually large accumulated ticks without
+        // causing an FPS spike.
         private int ApplyPermanentBackgroundTrainingFrames(int frames)
         {
             if (frames <= 0 || machineLearningAgent == null)
@@ -2575,12 +2757,13 @@ namespace StackMerge
             }
 
             ApplyMachineLearningResearchBonuses();
+            int sampleFrames = Math.Min(DatacenterTrainingSampleBudgetPerTick, frames);
             int seed = 9301
                 + data.prestigeCount * 8191
                 + (int)(MachineLearningPermanentFrames % 1_000_003L)
                 + Math.Max(0, machineLearningAgent.Metrics.Updates) * 17;
             int trainedFrames = machineLearningAgent.TrainBackgroundFrames(
-                frames,
+                sampleFrames,
                 StackCapacity,
                 QueueLength,
                 DifficultyLevel,
@@ -2588,17 +2771,28 @@ namespace StackMerge
                 BuildRunModifiers(),
                 ScalingFrequencyRewardBonus,
                 seed);
-            if (trainedFrames <= 0)
+
+            int creditedFrames = Math.Max(0, frames - Math.Max(0, trainedFrames));
+            if (creditedFrames > 0)
+            {
+                machineLearningAgent.AddBackgroundFrameCredit(creditedFrames);
+            }
+
+            int appliedFrames = Math.Max(0, trainedFrames) + creditedFrames;
+            if (appliedFrames <= 0)
             {
                 return 0;
             }
 
-            data.machineLearningPermanentFrames = Math.Max(0, data.machineLearningPermanentFrames) + trainedFrames;
-            data.machineLearningPermanentPolicy = StackMergePpoAgent.CloneData(machineLearningAgent.Data);
+            data.machineLearningPermanentFrames = Math.Max(0, data.machineLearningPermanentFrames) + appliedFrames;
+            data.machineLearningDatacenterCycleFrames = Math.Max(0, data.machineLearningDatacenterCycleFrames) + appliedFrames;
+            data.machineLearningPermanentPolicy ??= machineLearningAgent.Data;
+
             data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent.Metrics.Steps);
             data.machineLearningPolicy = machineLearningAgent.Data;
+            MarkMachineLearningPolicyDirty();
             CaptureMachineLearningMemoryIfEligible();
-            return trainedFrames;
+            return appliedFrames;
         }
 
         public long GetAgentsMenuUnlockCost()
@@ -3237,12 +3431,44 @@ namespace StackMerge
         {
             ApplyMachineLearningResearchBonuses();
             machineLearningAgent?.Observe(result, stateAfterMove, trainingMode);
+            if (machineLearningAgent != null)
+            {
+                data.machineLearningPolicy = machineLearningAgent.Data;
+                data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent.Metrics.Steps);
+                MarkMachineLearningPolicyDirty();
+            }
+        }
+
+        public void ObserveManualMoveForMachineLearning(StackMergeGameState stateBeforeMove, MoveResult result, StackMergeGameState stateAfterMove)
+        {
+            if (!ManualRunsTeachPpo || machineLearningAgent == null || stateBeforeMove == null || stateAfterMove == null || !result.Accepted)
+            {
+                return;
+            }
+
+            ApplyMachineLearningResearchBonuses();
+            if (!machineLearningAgent.ObserveImitationMove(stateBeforeMove, result, stateAfterMove))
+            {
+                return;
+            }
+
+            data.machineLearningPolicy = machineLearningAgent.Data;
+            data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent.Metrics.Steps);
+            MarkMachineLearningPolicyDirty();
+            CaptureMachineLearningMemoryIfEligible();
+            Save();
         }
 
         public void FlushMachineLearningTraining(bool trainingMode)
         {
             ApplyMachineLearningResearchBonuses();
             machineLearningAgent?.ForceUpdate(trainingMode);
+            if (machineLearningAgent != null)
+            {
+                data.machineLearningPolicy = machineLearningAgent.Data;
+                data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent.Metrics.Steps);
+                MarkMachineLearningPolicyDirty();
+            }
         }
 
 #if UNITY_EDITOR
@@ -3289,6 +3515,7 @@ namespace StackMerge
 
             data.machineLearningExperience = Math.Max(data.machineLearningExperience, policy.steps);
             data.machineLearningPolicy = policy;
+            MarkMachineLearningPolicyDirty();
             CaptureMachineLearningMemoryIfEligible();
             Normalize();
         }
@@ -3837,10 +4064,10 @@ namespace StackMerge
             return Math.Max(minimumRequirement, (long)Math.Round(baseRequirement * Math.Max(0.5, multiplier)));
         }
 
-        /// <summary>PPO Memory research: how many training frames survive a prestige (50k per level).</summary>
+        /// <summary>PPO Memory research: how many training frames survive a prestige (40k per level).</summary>
         public static long GetPpoMemoryFrameAllowance(int level)
         {
-            return Math.Max(0, level) * 50000L;
+            return Math.Max(0, level) * 40000L;
         }
 
         private long GetPpoMemoryFrameAllowance()
@@ -4138,6 +4365,7 @@ namespace StackMerge
             data.machineLearningNormalBestScore = 0;
             data.machineLearningNormalBestHigh = 0;
             data.machineLearningNormalFrames = 0;
+            data.machineLearningDatacenterCycleFrames = 0;
             data.researchInsightEarnedThisPrestige = 0.0;
             data.machineLearningPolicy ??= new StackMergePpoTrainingData();
         }
@@ -4199,8 +4427,9 @@ namespace StackMerge
             }
         }
 
-        // PPO Memory is cycle-frame based: Datacenter permanent frames are deliberately excluded from
-        // the requirement math, while the cloned policy still carries the learned weights.
+        // PPO Memory is cycle-frame based, but it does not bank Datacenter cycle credit. Training
+        // Cluster frames help the current prestige unlock Normal Mode and permanently improve the
+        // policy, but that shortcut itself resets on prestige.
         private void CaptureMachineLearningMemoryIfEligible()
         {
             long allowance = GetPpoMemoryFrameAllowance();
@@ -4209,7 +4438,7 @@ namespace StackMerge
                 return;
             }
 
-            long frames = Math.Min(MachineLearningCycleFrames, allowance);
+            long frames = Math.Min(MachineLearningMemoryEligibleCycleFrames, allowance);
             if (frames <= 0)
             {
                 return;
@@ -4217,13 +4446,14 @@ namespace StackMerge
 
             if (data.machineLearningPrestigeMemoryPolicy != null
                 && data.machineLearningPrestigeMemoryFrames >= frames
-                && data.machineLearningPrestigeMemoryFrames >= Math.Min(allowance, MachineLearningCycleFrames))
+                && data.machineLearningPrestigeMemoryFrames >= Math.Min(allowance, MachineLearningMemoryEligibleCycleFrames))
             {
                 return;
             }
 
             data.machineLearningPrestigeMemoryPolicy = StackMergePpoAgent.CloneData(machineLearningAgent.Data);
             data.machineLearningPrestigeMemoryFrames = frames;
+            MarkMachineLearningPolicyDirty();
         }
 
         private void ApplyPermanentMachineLearningAfterReset()
@@ -4830,6 +5060,7 @@ namespace StackMerge
             data.machineLearningTotalMoves = Math.Max(0, data.machineLearningTotalMoves);
             data.machineLearningTotalMerges = Math.Max(0, data.machineLearningTotalMerges);
             data.machineLearningTotalPlaytimeSeconds = Math.Max(0.0, data.machineLearningTotalPlaytimeSeconds);
+            data.machineLearningDatacenterCycleFrames = Math.Max(0, data.machineLearningDatacenterCycleFrames);
             if (data.datacenterRackCounts == null || data.datacenterRackCounts.Length != DatacenterRacks.Length)
             {
                 int[] rackCounts = new int[DatacenterRacks.Length];

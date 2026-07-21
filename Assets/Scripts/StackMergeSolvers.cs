@@ -336,7 +336,7 @@ namespace StackMerge
                 Tune(SolverTuneParameterId.FreeSpace, "Empty cells", "Rewards futures that leave more cells open."),
                 Tune(SolverTuneParameterId.DangerPenalty, "Danger penalty", "Makes dangerous simulated boards less attractive."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards rollouts that keep useful top blocks for the visible queue.")),
-            new(SolverId.Plan3, "PLAN-3 searches the visible queue. Tune how much it trusts short plans over current safety.",
+            new(SolverId.Plan3, "PLAN searches the visible queue. Tune how much it trusts short plans over current safety.",
                 TuneWhole(SolverTuneParameterId.PlanningDepth, "Planning depth", "Shifts how many visible queued blocks the search tries to use.", -2, 2),
                 Tune(SolverTuneParameterId.FollowUpWeight, "Future weight", "Changes how strongly future planned moves affect the first move."),
                 Tune(SolverTuneParameterId.QueueFit, "Queue fit", "Rewards stack tops that match upcoming values."),

@@ -399,6 +399,8 @@ namespace StackMerge
         [SerializeField] private GameObject gameOverOverlay;
         [SerializeField] private TMP_Text gameOverScoreText;
         [SerializeField] private TMP_Text gameOverBestText;
+        [Tooltip("Optional separate text for the just-finished run duration. Auto-found by name if left empty.")]
+        [SerializeField] private TMP_Text gameOverRunTimeText;
         [SerializeField] private Slider gameOverAutoRestartSlider;
 
         [Header("Achievement Notification")]
@@ -442,7 +444,7 @@ namespace StackMerge
         private float autoSolveTimer;
         private float autoRestartTimer;
         private float saveFlushTimer;
-        private const float SaveFlushInterval = 4f;
+        private const float SaveFlushInterval = 10f;
         private float trainingEvalTimer;
         private float datacenterUiRefreshTimer;
         private float autoBuyTimer;
@@ -521,10 +523,9 @@ namespace StackMerge
         private RectTransform[] stackSlotLayers;
         private Coroutine gameplayLayoutWarmupCoroutine;
         private float gameOverOverlayTimer;
-        private float datacenterTickAccumulator;
         private float nextTrainingOverlayRefreshTime;
         private float nextTrainingRunInfoRefreshTime;
-        private const float DatacenterProductionTickInterval = 0.2f;
+        private bool initialGameplayLayoutFinalized;
         private const float TrainingOverlayRefreshInterval = 0.12f;
         private readonly HashSet<int> completedAchievementIds = new();
         private readonly HashSet<SecretAchievementId> completedSecretAchievementIds = new();
@@ -612,6 +613,7 @@ namespace StackMerge
             EnsurePrestigeResetModalReferences();
             EnsureOfflineProgressOverlayReferences();
             EnsureDatacenterReferences();
+            EnsureGameOverReferences();
             EnsureAutoBuyButtons();
             HidePpoModeModal();
             SetActive(trainingOverlay != null ? trainingOverlay.gameObject : null, false);
@@ -636,7 +638,7 @@ namespace StackMerge
             {
                 blockNumeralStyle = BlockNumeralStyle.Standard;
             }
-            ApplyModernTheme();
+            //ApplyModernTheme();
             EnsureResearchUi();
             WirePrestigeResearchButtons();
             EnsureAchievementNotificationReferences();
@@ -655,6 +657,7 @@ namespace StackMerge
             ShowOfflineProgressOverlayIfEarned();
             menuHelpReady = true;
             TryShowMenuHelpForSelectedTab();
+            StartCoroutine(FinalizeInitialGameplayLayout());
         }
 
         /// <summary>
@@ -746,8 +749,8 @@ namespace StackMerge
                 currentRunElapsed += Time.deltaTime;
             }
 
-            // Persistence is throttled: the per-move path only marks the progression
-            // dirty, and we flush it to disk at most a few times per second-of-play here.
+            // Persistence is throttled: the per-move path only marks the progression dirty, and
+            // autosave flushes periodically. Pause/quit paths force the heavier PPO policy save.
             if (progression != null && progression.HasUnsavedChanges)
             {
                 saveFlushTimer += Time.deltaTime;
@@ -766,7 +769,7 @@ namespace StackMerge
                 RecordGameExitOnceForSecret();
                 currentSessionPlaytimeSeconds = 0.0;
                 FlushPlaytime();
-                progression?.FlushIfDirty();
+                progression?.FlushIfDirty(forceMachineLearningPolicySave: true);
             }
         }
 
@@ -774,7 +777,7 @@ namespace StackMerge
         {
             RecordGameExitOnceForSecret();
             FlushPlaytime();
-            progression?.FlushIfDirty();
+            progression?.FlushIfDirty(forceMachineLearningPolicySave: true);
         }
 
         private void OnDisable()
@@ -791,7 +794,7 @@ namespace StackMerge
             }
 
             FlushPlaytime();
-            progression?.FlushIfDirty();
+            progression?.FlushIfDirty(forceMachineLearningPolicySave: true);
         }
 
         private void TickPlaytime()
@@ -951,6 +954,31 @@ namespace StackMerge
             }
 
             gameplayPanel.SetActive(true);
+        }
+
+        private IEnumerator FinalizeInitialGameplayLayout()
+        {
+            yield return null;
+            yield return new WaitForEndOfFrame();
+
+            if (selectedTabIndex != 0 || gameplayPanel == null || gameState == null)
+            {
+                yield break;
+            }
+
+            gameplayPanel.SetActive(false);
+            Canvas.ForceUpdateCanvases();
+            gameplayPanel.SetActive(true);
+            Canvas.ForceUpdateCanvases();
+
+            boardLayoutDirty = true;
+            lastRenderedCapacity = -1;
+            RefreshGameplayModifiers();
+            RefreshColumns();
+            RefreshNextBlocks();
+            ForceGameplayLayoutPass();
+            ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
+            initialGameplayLayoutFinalized = true;
         }
 
         private bool IsGameplayLayoutReady()
@@ -1157,9 +1185,10 @@ namespace StackMerge
                 10 => "Unlocks Roman numeral for blocks",                      // "Move Singularity" (1M moves)
                 13 => "Unlocks Hexadecimal numeral for blocks",                // "Merge Singularity" (1M merges)
                 16 => "Unlocks Scientific numeral for blocks",                 // "High 32768"
+                20 => "Merge streak upgrade at max level is 5% stronger",
                 23 => "Unlocks Auto Buy for Algos, Upgrades, Agents and Mods", // "First Prestige"
                 24 => "Unlocks Datacenter",                                    // "Prestige Loop" (5×)
-                34 => "Merge streak upgrade at max level is 5% stronger",
+                32 => "PPO learns from your Manual runs",
                 37 => "Higher frequency upgrade at max level is 2% stronger",
                 _ => null
             };
@@ -2913,7 +2942,8 @@ namespace StackMerge
                 || text == gameplayInfoText
                 || text == achievementNotificationGoalText
                 || text == gameOverScoreText
-                || text == gameOverBestText)
+                || text == gameOverBestText
+                || text == gameOverRunTimeText)
             {
                 return true;
             }
@@ -4247,6 +4277,7 @@ namespace StackMerge
             }
 
             bool wasGameOver = gameState.IsGameOver;
+            StackMergeGameState manualLessonState = CaptureManualPpoLessonState(autoSolverMove);
             MoveResult result = gameState.PlaceNext(stackIndex);
             if (!result.Accepted)
             {
@@ -4255,6 +4286,7 @@ namespace StackMerge
                 return;
             }
 
+            TeachPpoFromManualMove(manualLessonState, result, autoSolverMove);
             HandleAcceptedMove(result, reason, autoSolverMove, wasGameOver);
         }
 
@@ -4294,6 +4326,7 @@ namespace StackMerge
             }
 
             bool wasGameOver = gameState.IsGameOver;
+            StackMergeGameState manualLessonState = CaptureManualPpoLessonState(autoSolverMove: false);
             MoveResult result = gameState.UsePickaxe(stackIndex, blockIndex);
             if (!result.Accepted)
             {
@@ -4304,6 +4337,7 @@ namespace StackMerge
             }
 
             ClearArmedGameplayModifier();
+            TeachPpoFromManualMove(manualLessonState, result, autoSolverMove: false);
             HandleAcceptedMove(result, "Manual pickaxe", false, wasGameOver);
         }
 
@@ -4315,6 +4349,7 @@ namespace StackMerge
             }
 
             bool wasGameOver = gameState.IsGameOver;
+            StackMergeGameState manualLessonState = CaptureManualPpoLessonState(autoSolverMove: false);
             MoveResult result = gameState.SkipNextBlock();
             if (!result.Accepted)
             {
@@ -4325,7 +4360,28 @@ namespace StackMerge
             }
 
             ClearArmedGameplayModifier();
+            TeachPpoFromManualMove(manualLessonState, result, autoSolverMove: false);
             HandleAcceptedMove(result, "Manual queue scrubber", false, wasGameOver);
+        }
+
+        private StackMergeGameState CaptureManualPpoLessonState(bool autoSolverMove)
+        {
+            if (autoSolverMove || progression == null || gameState == null || !progression.ManualRunsTeachPpo)
+            {
+                return null;
+            }
+
+            return gameState.CreateSimulationCopy();
+        }
+
+        private void TeachPpoFromManualMove(StackMergeGameState stateBeforeMove, MoveResult result, bool autoSolverMove)
+        {
+            if (autoSolverMove || stateBeforeMove == null || progression == null || gameState == null)
+            {
+                return;
+            }
+
+            progression.ObserveManualMoveForMachineLearning(stateBeforeMove, result, gameState);
         }
 
         private bool IsGameplayModifierArmed(ModifierId modifierId)
@@ -4631,14 +4687,39 @@ namespace StackMerge
 
         public void StartNewGame()
         {
-            CreateFreshGame();
+            bool preserveGameplayLayout = CanPreserveGameplayLayoutForNewRun();
+            CreateFreshGame(preserveGameplayLayout);
+            if (preserveGameplayLayout && gameplayLayoutWarmupCoroutine != null)
+            {
+                StopCoroutine(gameplayLayoutWarmupCoroutine);
+                gameplayLayoutWarmupCoroutine = null;
+            }
+
             SetText(feedbackText, string.Empty);
             RefreshEverything();
-            ForceGameplayLayoutPass();
-            ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
+            if (!preserveGameplayLayout)
+            {
+                ForceGameplayLayoutPass();
+                ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
+            }
         }
 
-        private void CreateFreshGame()
+        private bool CanPreserveGameplayLayoutForNewRun()
+        {
+            int nextCapacity = progression != null ? progression.StackCapacity : StackMergeGameState.DefaultStackCapacity;
+            return initialGameplayLayoutFinalized
+                && selectedTabIndex == 0
+                && gameplayPanel != null
+                && gameplayPanel.activeInHierarchy
+                && !historyOpen
+                && !achievementsOpen
+                && progression != null
+                && !progression.IsMachineLearningTrainingActive
+                && gameState != null
+                && gameState.StackCapacity == nextCapacity;
+        }
+
+        private void CreateFreshGame(bool preserveGameplayLayout = false)
         {
             int capacity = progression != null ? progression.StackCapacity : StackMergeGameState.DefaultStackCapacity;
             int queueLength = progression != null ? progression.QueueLength : StackMergeGameState.DefaultQueueLength;
@@ -4656,8 +4737,17 @@ namespace StackMerge
             gameOverOverlayTimer = 0f;
             nextTrainingOverlayRefreshTime = 0f;
             nextTrainingRunInfoRefreshTime = 0f;
-            boardLayoutDirty = true;
-            lastRenderedCapacity = -1;
+            if (!preserveGameplayLayout)
+            {
+                boardLayoutDirty = true;
+                lastRenderedCapacity = -1;
+            }
+            else
+            {
+                boardLayoutDirty = false;
+                lastRenderedCapacity = capacity;
+            }
+
             ClearArmedGameplayModifier();
         }
 
@@ -5451,13 +5541,7 @@ namespace StackMerge
                 return;
             }
 
-            datacenterTickAccumulator += Time.deltaTime;
-            if (datacenterTickAccumulator >= DatacenterProductionTickInterval)
-            {
-                float elapsed = datacenterTickAccumulator;
-                datacenterTickAccumulator = 0f;
-                progression.TickDatacenter(elapsed);
-            }
+            progression.TickDatacenter(Time.deltaTime);
 
             bool panelVisible = datacenterPanel != null ? datacenterPanel.activeInHierarchy : selectedTabIndex == 7;
             if (!panelVisible)
@@ -6296,7 +6380,7 @@ namespace StackMerge
             HidePpoModeModal();
             CreateFreshGame();
             ShowFeedbackModal($"Prestige complete: +{FormatNumber(gained)} <sprite name=\"insight\" tint=1>");
-            progression.SaveImmediate();
+            progression.SaveImmediate(forceMachineLearningPolicySave: true);
             SelectTab(5);
             RefreshEverything();
         }
@@ -7196,8 +7280,7 @@ namespace StackMerge
             EnsureGameplayModifierReferences();
             bool pickaxeUnlocked = IsGameplayModifierUnlocked(ModifierId.MinersPickaxe);
             bool queueScrubberUnlocked = IsGameplayModifierUnlocked(ModifierId.QueueScrubber);
-            bool showSection = selectedTabIndex == 0
-                && (pickaxeUnlocked || queueScrubberUnlocked);
+            bool showSection = ShouldShowGameplayModifiersSection();
 
             if (!showSection && armedGameplayModifier != NoArmedGameplayModifier)
             {
@@ -7229,6 +7312,13 @@ namespace StackMerge
                 gameplayQueueScrubberAmountText,
                 ModifierId.QueueScrubber,
                 queueScrubberUnlocked && showSection);
+        }
+
+        private bool ShouldShowGameplayModifiersSection()
+        {
+            return selectedTabIndex == 0
+                && (IsGameplayModifierUnlocked(ModifierId.MinersPickaxe)
+                    || IsGameplayModifierUnlocked(ModifierId.QueueScrubber));
         }
 
         private void RefreshGameplayModifierButton(Button button, TMP_Text amountText, ModifierId modifierId, bool visible)
@@ -9082,17 +9172,17 @@ namespace StackMerge
             SetText(researchDetailNameText, definition.DisplayName);
             SetText(researchDetailStatusText, $"Level {level}/{definition.MaxLevel}");
 
-            string availability = maxed
-                ? "This research is maxed."
-                : canBuy
-                    ? $"Ready to buy for <sprite name=\"insight\" tint=1> {FormatNumber(progression.GetResearchCost(selectedResearchId))}."
-                    : string.Empty;
+            //string availability = maxed
+            //    ? "This research is maxed."
+            //    : canBuy
+            //        ? $"Ready to buy for <sprite name=\"insight\" tint=1> {FormatNumber(progression.GetResearchCost(selectedResearchId))}."
+            //        : string.Empty;
 
             string detailText = $"{definition.Description}\n\nEffect: {effectDisplay}";
-            if (!string.IsNullOrEmpty(availability))
-            {
-                detailText += $"\n\n{availability}";
-            }
+            //if (!string.IsNullOrEmpty(availability))
+            //{
+            //    detailText += $"\n\n{availability}";
+            //}
 
             SetText(researchDetailInfoText, detailText);
 
@@ -9107,7 +9197,7 @@ namespace StackMerge
                 else
                 {
                     SetButtonText(researchDetailActionButton, canBuy
-                        ? $"Buy\n{FormatNumber(progression.GetResearchCost(selectedResearchId))}"
+                        ? $"Buy\n<sprite name=\"insight\" tint=1> {FormatNumber(progression.GetResearchCost(selectedResearchId))}"
                         : string.IsNullOrEmpty(reason) ? "Locked" : reason);
                     researchDetailActionButton.interactable = canBuy;
                     SetButtonColor(researchDetailActionButton, canBuy ? HexColor("#7C3AED") : HexColor("#334155"));
@@ -10526,10 +10616,11 @@ namespace StackMerge
             RectTransform modifierSection = gameplayModifiersSection != null ? gameplayModifiersSection.transform as RectTransform : null;
             bool modifierSectionVisible = modifierSection != null
                 && modifierSection.parent == parent
-                && gameplayModifiersSection.activeSelf;
+                && ShouldShowGameplayModifiersSection();
             float modifierHeight = modifierSectionVisible ? GameplayModifiersSectionHeight : 0f;
             if (modifierSectionVisible)
             {
+                SetActive(gameplayModifiersSection, true);
                 modifierSection.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, GameplayModifiersSectionHeight);
             }
 
@@ -10818,6 +10909,23 @@ namespace StackMerge
             runInfoPanel.offsetMax = new Vector2(runInfoPanel.offsetMax.x, -panelTopFromTop);
         }
 
+        private void EnsureGameOverReferences()
+        {
+            if (gameOverOverlay == null)
+            {
+                return;
+            }
+
+            Transform root = gameOverOverlay.transform;
+            gameOverRunTimeText ??= FindComponentByNormalizedName<TMP_Text>(
+                root,
+                "GameOverRunTimeText",
+                "RunTimeText",
+                "Run Time Text",
+                "RunTime",
+                "Run Time");
+        }
+
         private void RefreshGameOver()
         {
             if (gameOverOverlay == null)
@@ -10825,6 +10933,7 @@ namespace StackMerge
                 return;
             }
 
+            EnsureGameOverReferences();
             bool trainingActive = progression != null && progression.IsMachineLearningTrainingActive;
             bool showOverlay = gameState != null
                 && gameState.IsGameOver
@@ -10847,6 +10956,7 @@ namespace StackMerge
             }
 
             SetText(gameOverScoreText, $"Score: {FormatNumber(gameState.Score)}");
+            SetText(gameOverRunTimeText, $"Run time: {FormatDurationCompact(currentRunElapsed)}");
             SetText(gameOverBestText,
                 $"Moves: {FormatNumber(gameState.BlocksDropped)}\n" +
                 $"Merges: {FormatNumber(gameState.TotalMerges)}\n" +
