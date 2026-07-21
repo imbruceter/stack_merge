@@ -1278,6 +1278,8 @@ namespace StackMerge
 
         public static StackMergeProgression Load()
         {
+            // A fresh load means the import (if any) is done — saving is allowed again.
+            SuppressNextSave = false;
             string json = PlayerPrefs.GetString(PlayerPrefsKey, string.Empty);
             if (string.IsNullOrWhiteSpace(json))
             {
@@ -1390,11 +1392,25 @@ namespace StackMerge
         }
 
         /// <summary>
+        /// Blocks every write to PlayerPrefs while set. Used by the save-import flow: once an imported
+        /// save has been written, the still-live in-memory progression of the OLD save must not be
+        /// allowed to flush over it during the scene reload (OnDisable/OnApplicationQuit both flush).
+        /// Reset by <see cref="Load"/>, so a reloaded scene saves normally again.
+        /// </summary>
+        public static bool SuppressNextSave { get; set; }
+
+        /// <summary>
         /// Immediately serializes and flushes the progression to PlayerPrefs.
         /// Use sparingly (quit, pause, periodic autosave) — not in the per-move loop.
         /// </summary>
         public void SaveImmediate(bool forceMachineLearningPolicySave = false)
         {
+            if (SuppressNextSave)
+            {
+                saveDirty = false;
+                return;
+            }
+
             data.machineLearningPolicy = machineLearningAgent?.Data ?? data.machineLearningPolicy;
             data.machineLearningExperience = Math.Max(data.machineLearningExperience, machineLearningAgent?.Metrics.Steps ?? 0);
             data.lastSaveUnixSeconds = GetUnixNow();

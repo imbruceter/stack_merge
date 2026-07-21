@@ -90,7 +90,7 @@ namespace StackMerge
             ["Income upgrade unavailable"] = "A bevétel fejlesztés nem elérhető",
             ["Solver tuning unlocked"] = "Solver hangolás feloldva",
             ["Auto solve updated"] = "Auto megoldás frissítve",
-            ["Auto restart updated"] = "Auto újraindulás frissítve",
+            ["Auto restart updated"] = "Auto újraindítás frissítve",
             ["Modifier Lab unlocked"] = "Módosító labor feloldva",
             ["Unlock Agents in Upgrades first"] = "Előbb oldd fel az Ügynököket a Fejlesztésekben",
             ["Unlock Modifier Lab in Upgrades first"] = "Előbb oldd fel a Módosító labort a Fejlesztésekben",

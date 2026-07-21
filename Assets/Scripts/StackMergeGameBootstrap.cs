@@ -41,9 +41,27 @@ namespace StackMerge
             "However, existing <sprite name=\"insight\" tint=1> and purchased research will remain, which will make further resets progressively more valuable.\n\n" +
             "<b>It is recommended to use PPO in Normal Mode before resetting to gain <sprite name=\"insight\" tint=1> multiplier.</b>";
         private static readonly Color DropdownSelectedBackgroundColor = HexColor("#F2EEE6");
+        // Floating reward-number colours. Placements are muted so they read as background chatter;
+        // merges are the chip colour; a new highest block gets the celebratory gold.
+        private static readonly Color PlacementRewardColor = HexColor("#9AA3AE");
+        private static readonly Color MergeRewardColor = HexColor("#7CE0A0");
+        private static readonly Color NewHighRewardColor = HexColor("#FFD166");
+        private static readonly Color NewHighFlashColor = new(1f, 0.82f, 0.4f, 0.16f);
+        // Prestige uses the Insight hue and a stronger, longer flash — it is the game's biggest moment.
+        private static readonly Color PrestigeFlashColor = new(0.62f, 0.51f, 1f, 0.45f);
 
         private readonly Dictionary<string, Sprite> spriteCache = new();
         private readonly IStackMergeSolver[] solvers = StackMergeSolverFactory.CreateAll();
+
+        [Header("Audio")]
+        [Tooltip("Central audio service. Auto-found on this GameObject (or anywhere in the scene); a silent " +
+                 "instance is created automatically if none exists, so the game runs fine with no clips assigned. " +
+                 "Drag the sound effects into the StackMergeAudio component's own Inspector fields.")]
+        [SerializeField] private StackMergeAudio audioService;
+
+        [Tooltip("Visual juice service (floating numbers, punch/shake, screen flash). Auto-found or created " +
+                 "like the audio service. Everything it draws is built procedurally — no prefabs needed.")]
+        [SerializeField] private StackMergeJuice juiceService;
 
         [Header("Scene UI")]
         [SerializeField] private Camera gameCamera;
@@ -110,6 +128,17 @@ namespace StackMerge
         [SerializeField] private Toggle showFpsToggle;
         [SerializeField] private TMP_Text fpsText;
         [SerializeField] private Toggle suppressAchievementNotificationToggle;
+        [Tooltip("Optional Settings sliders (0-1). Auto-found by a name containing 'Master' / 'Sfx' / 'Music'. " +
+                 "Leave empty if the Settings panel has no volume rows yet — the game just uses the saved values.")]
+        [SerializeField] private Slider masterVolumeSlider;
+        [SerializeField] private Slider sfxVolumeSlider;
+        [SerializeField] private Slider musicVolumeSlider;
+        [Tooltip("Optional Settings controls for the local save backup. Auto-found by name: a Button " +
+                 "containing 'ExportSave', a Button containing 'ImportSave', and a TMP_InputField " +
+                 "containing 'SaveCode'. All optional — omit them and the feature is simply hidden.")]
+        [SerializeField] private Button exportSaveButton;
+        [SerializeField] private Button importSaveButton;
+        [SerializeField] private TMP_InputField saveCodeInput;
         [Tooltip("Testing only: lowers the PPO Normal Mode frame requirement so late-game flow can be checked quickly.")]
         [SerializeField] private Toggle testingPpoFramesToggle;
         [Tooltip("Testing only: multiplies chip income by 3. Default off; intended for local balance testing.")]
@@ -514,6 +543,12 @@ namespace StackMerge
         private Vector3 bottomMenuHighlightStartWorld;
         private Vector3 bottomMenuHighlightEndWorld;
         private float bottomMenuHighlightTimer;
+        // Highest block reached this run, tracked purely for the "new high" sound/flash. Kept separate
+        // from the progression metrics so audio never depends on award ordering.
+        private int audioHighestBlockThisRun;
+        private bool lastMoveWasNewHigh;
+        private bool lastMoveWasLifetimeRecord;
+        private float ambienceIntensityTimer;
         private int blockDropStack = -1;
         private float blockDropTimer = 0f;
         private const float BlockDropDuration = 0.14f;
@@ -596,6 +631,7 @@ namespace StackMerge
         private void Awake()
         {
             StackMergeProgression.DebugUnlockDatacenter = unlockDatacenterInEditor && Application.isEditor;
+            EnsureAudioService();
             ConfigureCamera();
             EnsureEventSystem();
             EnsureOptionalUpgradeButtonReferences();
@@ -651,9 +687,17 @@ namespace StackMerge
             ScheduleGameplayLayoutWarmup(StartupGameplayLayoutWarmupFrames);
             if (progression.LastOfflineChips > 0 || progression.LastOfflineInsight > 0)
             {
-                ShowFeedbackModal($"Offline gain: +{FormatNumber(progression.LastOfflineChips)} <sprite name=\"chips\" tint=1>, +{FormatNumber(progression.LastOfflineInsight)} <sprite name=\"insight\" tint=1>");
+                // The offline chime is played explicitly, so the toast itself stays silent.
+                ShowFeedbackModal(
+                    $"Offline gain: +{FormatNumber(progression.LastOfflineChips)} <sprite name=\"chips\" tint=1>, +{FormatNumber(progression.LastOfflineInsight)} <sprite name=\"insight\" tint=1>",
+                    StackMergeSfx.OfflineReward);
             }
 
+            // One sweep over the whole canvas gives every scene-built button its click sound and press
+            // animation; the row builders re-hook their own subtrees after each rebuild.
+            HookButtonFeedback(canvas);
+            EnsureJuiceService();
+            UpdateAmbienceIntensity();
             ShowOfflineProgressOverlayIfEarned();
             menuHelpReady = true;
             TryShowMenuHelpForSelectedTab();
@@ -743,6 +787,7 @@ namespace StackMerge
             TickDatacenterProduction();
             TickAutoBuy();
             TickPlaytime();
+            TickAudioAmbience();
             RefreshEconomyUiIfChanged();
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -853,6 +898,174 @@ namespace StackMerge
 
             exitRecordedThisSession = true;
             progression.RecordGameExit();
+        }
+
+        // ------------------------------------------------------------------------------------------
+        // Audio. Everything routes through StackMergeAudio, which is a silent no-op until clips are
+        // assigned in the Inspector — so the game is fully playable before a single sound exists.
+        // ------------------------------------------------------------------------------------------
+
+        private void EnsureAudioService()
+        {
+            if (audioService != null)
+            {
+                return;
+            }
+
+            audioService = GetComponent<StackMergeAudio>();
+            if (audioService == null)
+            {
+                audioService = StackMergeAudio.Instance;
+            }
+
+            if (audioService == null)
+            {
+#if UNITY_2023_1_OR_NEWER
+                audioService = FindFirstObjectByType<StackMergeAudio>(FindObjectsInactive.Include);
+#else
+                audioService = FindObjectOfType<StackMergeAudio>(true);
+#endif
+            }
+
+            // Nothing in the scene: create a silent service so every Play call stays valid and the
+            // volume settings still have something to talk to.
+            audioService ??= gameObject.AddComponent<StackMergeAudio>();
+        }
+
+        private void EnsureJuiceService()
+        {
+            if (juiceService == null)
+            {
+                juiceService = GetComponent<StackMergeJuice>()
+                    ?? StackMergeJuice.Instance;
+            }
+
+            if (juiceService == null)
+            {
+#if UNITY_2023_1_OR_NEWER
+                juiceService = FindFirstObjectByType<StackMergeJuice>(FindObjectsInactive.Include);
+#else
+                juiceService = FindObjectOfType<StackMergeJuice>(true);
+#endif
+            }
+
+            juiceService ??= gameObject.AddComponent<StackMergeJuice>();
+            juiceService.Initialize(canvas);
+        }
+
+        // Visual counterpart of PlayMoveAudio. Deliberately minimal: the only per-move visual is the
+        // feedback line's colour envelope, and the only board-adjacent effect is a screen flash on an
+        // all-time record. Anything spawned or restarted per move breaks down at 60-100 moves/second.
+        private void PlayMoveJuice(MoveResult result, long chipsGained, bool machineLearningTraining)
+        {
+            if (juiceService == null || !juiceService.Ready || selectedTabIndex != 0 || historyOpen || achievementsOpen)
+            {
+                return;
+            }
+
+            // Training mode earns nothing and runs at burst speed — popping numbers there is noise.
+            if (machineLearningTraining)
+            {
+                return;
+            }
+
+            // NOTE: there is deliberately NO per-move visual left. Two attempts were rejected in play:
+            // floating numbers on the board (too busy at 60-100 moves/second) and a colour envelope on
+            // the feedback line (the line's CONTENT already changes far too fast to read, so animating
+            // it added motion without adding information, and tinting a whole multi-line label looks
+            // bad). The remaining board-adjacent effect is the all-time-record flash below, which fires
+            // a handful of times per prestige cycle.
+            if (lastMoveWasLifetimeRecord)
+            {
+                juiceService.Flash(NewHighFlashColor, 0.45f);
+            }
+        }
+
+        private void PlaySfx(StackMergeSfx sfx)
+        {
+            StackMergeAudio.Play(sfx);
+        }
+
+        // Gives every Button in a subtree its click sound and its press animation, exactly once. Called
+        // for the whole canvas at startup and again after each card/row rebuild, so runtime-instantiated
+        // buttons get both for free with no per-button wiring.
+        private void HookButtonFeedback(Component root)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            audioService?.HookButtonSounds(root);
+
+            // The press animation is independent of audio: it must work even with no clips assigned.
+            Button[] buttons = root.GetComponentsInChildren<Button>(true);
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                Button button = buttons[i];
+                if (button != null && button.GetComponent<StackMergeButtonPress>() == null)
+                {
+                    button.gameObject.AddComponent<StackMergeButtonPress>();
+                }
+            }
+        }
+
+        // Classifies the central toast message so purchases and rejections sound different without having
+        // to touch all ~60 ShowFeedbackModal call sites. Explicit sounds can still be passed per call.
+        private static StackMergeSfx ClassifyFeedbackSound(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+            {
+                return StackMergeSfx.UiClick;
+            }
+
+            // The toasts are authored in English and localized at display time, so matching the source
+            // strings is language-independent.
+            if (message.Contains("Not enough", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("locked", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("requires", StringComparison.OrdinalIgnoreCase)
+                || message.Contains(" first", StringComparison.OrdinalIgnoreCase))
+            {
+                return StackMergeSfx.PurchaseDenied;
+            }
+
+            return StackMergeSfx.Purchase;
+        }
+
+        // Once a second is plenty for a slowly-growing hum, and it keeps the rack summation off the
+        // per-frame path.
+        private void TickAudioAmbience()
+        {
+            if (audioService == null)
+            {
+                return;
+            }
+
+            ambienceIntensityTimer += Time.unscaledDeltaTime;
+            if (ambienceIntensityTimer < 1f)
+            {
+                return;
+            }
+
+            ambienceIntensityTimer = 0f;
+            UpdateAmbienceIntensity();
+        }
+
+        // Feeds the Datacenter's scale into the ambience loop, so the server-room hum literally grows with
+        // the farm. Log-scaled: the layer spans 0 to thousands of GF/s.
+        private void UpdateAmbienceIntensity()
+        {
+            if (audioService == null || progression == null)
+            {
+                return;
+            }
+
+            double gigaflops = progression.DatacenterUnlocked ? progression.DatacenterTotalGigaflops : 0.0;
+            float intensity = gigaflops <= 0.0
+                ? 0f
+                : Mathf.Clamp01((float)(Math.Log10(1.0 + gigaflops) / 4.0));
+            StackMergeAudio.SetAmbienceIntensity(intensity);
         }
 
         private void TickBlockAnimations()
@@ -1296,6 +1509,7 @@ namespace StackMerge
 
             SetActive(achievementNotificationPanel, true);
             achievementNotificationPanel.transform.SetAsLastSibling();
+            PlaySfx(StackMergeSfx.AchievementUnlocked);
 
             if (achievementNotificationRect == null)
             {
@@ -2407,6 +2621,15 @@ namespace StackMerge
             languageDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Language", "LanguageDropdown");
             blockNumeralDropdown ??= FindComponentByNormalizedName<TMP_Dropdown>(settingsRoot, "Numeral", "BlockNumeral", "NumeralDropdown");
             fpsText ??= FindComponentByNormalizedName<TMP_Text>(canvasRoot, "FPSText", "FpsText", "FPS");
+            // Volume sliders are optional: add a Slider named "Master Volume" / "SFX Volume" /
+            // "Music Volume" to the Settings panel and it wires itself up. Without them the volumes
+            // simply stay at their saved defaults.
+            masterVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "MasterVolume", "Master");
+            sfxVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "SfxVolume", "SoundVolume", "Sfx");
+            musicVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "MusicVolume", "Music");
+            exportSaveButton ??= FindComponentByNormalizedName<Button>(settingsRoot, "ExportSave", "SaveExport", "Export");
+            importSaveButton ??= FindComponentByNormalizedName<Button>(settingsRoot, "ImportSave", "SaveImport", "Import");
+            saveCodeInput ??= FindComponentByNormalizedName<TMP_InputField>(settingsRoot, "SaveCode", "SaveInput", "ImportField");
             howToPlayPanel ??= FindAnyObjectByType<StackMergeHowToPlayPanel>(FindObjectsInactive.Include);
             menuHelpOverlay ??= FindAnyObjectByType<StackMergeHelpOverlay>(FindObjectsInactive.Include);
         }
@@ -2494,12 +2717,124 @@ namespace StackMerge
                 blockNumeralDropdown.onValueChanged.RemoveAllListeners();
                 blockNumeralDropdown.onValueChanged.AddListener(SetBlockNumeralFromDropdown);
             }
+
+            WireVolumeSlider(masterVolumeSlider, value => SetVolumeSetting(StackMergeVolumeChannel.Master, value));
+            WireVolumeSlider(sfxVolumeSlider, value => SetVolumeSetting(StackMergeVolumeChannel.Sfx, value));
+            WireVolumeSlider(musicVolumeSlider, value => SetVolumeSetting(StackMergeVolumeChannel.Music, value));
+
+            if (exportSaveButton != null)
+            {
+                exportSaveButton.onClick.RemoveAllListeners();
+                exportSaveButton.onClick.AddListener(ExportSaveToClipboard);
+            }
+
+            if (importSaveButton != null)
+            {
+                importSaveButton.onClick.RemoveAllListeners();
+                importSaveButton.onClick.AddListener(ImportSaveFromField);
+            }
+        }
+
+        // ------------------------------------------------------------------------------------------
+        // Local save transfer. No server involved: the code IS the save. See StackMergeSaveTransfer.
+        // ------------------------------------------------------------------------------------------
+
+        private void ExportSaveToClipboard()
+        {
+            // Everything in memory has to reach PlayerPrefs before it can be exported.
+            progression?.SaveImmediate(forceMachineLearningPolicySave: true);
+
+            string code = StackMergeSaveTransfer.Export();
+            GUIUtility.systemCopyBuffer = code;
+            if (saveCodeInput != null)
+            {
+                saveCodeInput.SetTextWithoutNotify(code);
+            }
+
+            ShowFeedbackModal("Save code copied to clipboard");
+        }
+
+        private void ImportSaveFromField()
+        {
+            // Prefer what the player typed/pasted into the field; fall back to the clipboard so the flow
+            // still works if the Settings panel has a button but no input field.
+            string code = saveCodeInput != null && !string.IsNullOrWhiteSpace(saveCodeInput.text)
+                ? saveCodeInput.text
+                : GUIUtility.systemCopyBuffer;
+
+            StackMergeSaveImportResult result = StackMergeSaveTransfer.Import(code);
+            ShowFeedbackModal(StackMergeSaveTransfer.DescribeResult(result));
+            if (result != StackMergeSaveImportResult.Success)
+            {
+                return;
+            }
+
+            // The whole game state hangs off the progression object and dozens of cached UI references,
+            // so a scene reload is the only reliable way to adopt an imported save.
+            StackMergeProgression.SuppressNextSave = true;
+            SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+        }
+
+        private enum StackMergeVolumeChannel
+        {
+            Master,
+            Sfx,
+            Music
+        }
+
+        private static void WireVolumeSlider(Slider slider, UnityEngine.Events.UnityAction<float> handler)
+        {
+            if (slider == null)
+            {
+                return;
+            }
+
+            slider.minValue = 0f;
+            slider.maxValue = 1f;
+            slider.wholeNumbers = false;
+            slider.onValueChanged.RemoveAllListeners();
+            slider.onValueChanged.AddListener(handler);
+        }
+
+        private void SetVolumeSetting(StackMergeVolumeChannel channel, float value)
+        {
+            if (syncingSettingsControls || audioService == null)
+            {
+                return;
+            }
+
+            switch (channel)
+            {
+                case StackMergeVolumeChannel.Master:
+                    audioService.MasterVolume = value;
+                    break;
+                case StackMergeVolumeChannel.Sfx:
+                    audioService.SfxVolume = value;
+                    break;
+                case StackMergeVolumeChannel.Music:
+                    audioService.MusicVolume = value;
+                    break;
+            }
+
+            // Audible confirmation of where the slider now sits — the standard way volume sliders
+            // work, and it costs nothing since the sound is already rate-limited.
+            if (channel != StackMergeVolumeChannel.Music)
+            {
+                PlaySfx(StackMergeSfx.UiClick);
+            }
         }
 
         private void SyncSettingsControls()
         {
             EnsureSettingsReferences();
             syncingSettingsControls = true;
+
+            if (audioService != null)
+            {
+                masterVolumeSlider?.SetValueWithoutNotify(audioService.MasterVolume);
+                sfxVolumeSlider?.SetValueWithoutNotify(audioService.SfxVolume);
+                musicVolumeSlider?.SetValueWithoutNotify(audioService.MusicVolume);
+            }
 
             if (showFpsToggle != null)
             {
@@ -3104,6 +3439,13 @@ namespace StackMerge
             {
                 ShowFeedbackModal($"Prestige {StackMergeProgression.DatacenterUnlockPrestigeCount} times to unlock the Datacenter");
                 requestedTab = selectedTabIndex;
+            }
+
+            // Only sound an actual tab change — Awake calls SelectTab(0) during startup, and the
+            // gameplay tab is re-selected by several close/back paths.
+            if (requestedTab != selectedTabIndex)
+            {
+                PlaySfx(StackMergeSfx.UiTab);
             }
 
             selectedTabIndex = requestedTab;
@@ -4067,9 +4409,22 @@ namespace StackMerge
 
         private void ShowFeedbackModal(string message)
         {
+            ShowFeedbackModal(message, ClassifyFeedbackSound(message));
+        }
+
+        /// <param name="sound">Explicit sound for this toast, or null for a silent one. Toasts that fire
+        /// on the automatic run loop (e.g. Salvage) must be silent — the classifier would otherwise play
+        /// a purchase chime at the end of every single run.</param>
+        private void ShowFeedbackModal(string message, StackMergeSfx? sound)
+        {
             if (string.IsNullOrWhiteSpace(message))
             {
                 return;
+            }
+
+            if (sound.HasValue)
+            {
+                PlaySfx(sound.Value);
             }
 
             EnsureFeedbackModalReferences();
@@ -4532,9 +4887,12 @@ namespace StackMerge
                 mergePulseTimer = MergePulseDuration;
             }
 
+            PlayMoveAudio(result);
+
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             long chipsGained = progression.AwardMove(result, machineLearningTraining);
             currentRunChipsEarned += chipsGained;
+            PlayMoveJuice(result, chipsGained, machineLearningTraining);
             if (result.ActionKind == SolverActionKind.Pickaxe && result.RemovedValue >= 1024)
             {
                 progression.MarkSecretAchievementComplete(SecretAchievementId.SurgicalMove);
@@ -4602,6 +4960,70 @@ namespace StackMerge
             else
             {
                 RefreshGameView();
+            }
+        }
+
+        // Fires the gameplay sounds for one accepted move. Ordering matters: the rarest, loudest event
+        // wins the frame's voice budget, so a new-high merge is never drowned out by the placement tick.
+        private void PlayMoveAudio(MoveResult result)
+        {
+            // Both flags are also read by PlayMoveJuice, so they must be updated even when audio is
+            // silent — track them before the early-out.
+            lastMoveWasNewHigh = result.MergeCount > 0 && result.ResultingTopValue > audioHighestBlockThisRun;
+            if (lastMoveWasNewHigh)
+            {
+                audioHighestBlockThisRun = result.ResultingTopValue;
+            }
+
+            // An all-time record, evaluated BEFORE AwardMove writes the new lifetime maximum. A run
+            // produces ~20 run-local new highs, but an all-time record happens a handful of times per
+            // prestige cycle — which is what makes it worth a screen-wide effect.
+            lastMoveWasLifetimeRecord = result.MergeCount > 0
+                && progression != null
+                && result.ResultingTopValue > progression.LifetimeHighestBlockEver;
+
+            if (audioService == null || !audioService.HasAnyAudio)
+            {
+                return;
+            }
+
+            switch (result.ActionKind)
+            {
+                case SolverActionKind.Pickaxe:
+                    PlaySfx(StackMergeSfx.Pickaxe);
+                    return;
+                case SolverActionKind.QueueSkip:
+                    PlaySfx(StackMergeSfx.QueueScrub);
+                    return;
+            }
+
+            if (result.UnstableSaveUsed)
+            {
+                PlaySfx(StackMergeSfx.UnstableSave);
+            }
+
+            if (result.MergeCount > 0)
+            {
+                if (lastMoveWasNewHigh)
+                {
+                    PlaySfx(StackMergeSfx.NewHigh);
+                }
+
+                if (result.JokerMergeCount > 0)
+                {
+                    PlaySfx(StackMergeSfx.JokerMerge);
+                }
+
+                StackMergeAudio.PlayMerge(result.ResultingTopValue, result.MergeCount);
+            }
+            else
+            {
+                PlaySfx(StackMergeSfx.BlockPlace);
+            }
+
+            if (result.IsGameOver)
+            {
+                PlaySfx(StackMergeSfx.GameOver);
             }
         }
 
@@ -4734,6 +5156,8 @@ namespace StackMerge
             currentRunElapsed = 0f;
             currentRunChipsEarned = 0L;
             timeSinceLastAcceptedMove = float.MaxValue;
+            audioHighestBlockThisRun = 0;
+            PlaySfx(StackMergeSfx.RunStart);
             gameOverOverlayTimer = 0f;
             nextTrainingOverlayRefreshTime = 0f;
             nextTrainingRunInfoRefreshTime = 0f;
@@ -5572,6 +5996,9 @@ namespace StackMerge
                 return;
             }
 
+            // NOTE: the chip readout is deliberately NOT animated. A punch-on-increase reads well in a
+            // game with discrete purchases, but here income arrives on every move — at the 60-100
+            // moves/second the late game reaches, the label would pulse without ever stopping.
             lastObservedChips = chips;
             lastObservedInsight = insight;
             lastObservedTokens = tokens;
@@ -6364,6 +6791,12 @@ namespace StackMerge
                 ShowFeedbackModal(progression.PrestigeAvailable ? "Run PPO in Normal mode first" : "Finish PPO Training first");
                 RefreshEverything();
                 return;
+            }
+
+            PlaySfx(StackMergeSfx.Prestige);
+            if (juiceService != null)
+            {
+                juiceService.Flash(PrestigeFlashColor, 0.7f);
             }
 
             highScore = 0;
@@ -7853,6 +8286,10 @@ namespace StackMerge
                 }
             }
 
+            // Tuning rows are the only interactive UI instantiated after startup, so they need their
+            // own feedback sweep (everything else is static in the Hierarchy and covered by the
+            // one-time canvas sweep in Start).
+            HookButtonFeedback(root);
             SetManualContentHeight(root, y);
         }
 
@@ -8052,22 +8489,30 @@ namespace StackMerge
             }
 
             var builder = new StringBuilder();
-            builder.AppendLine($"Stack capacity: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
-            builder.AppendLine($"Difficulty: Level {progression.DifficultyLevel}");
-            builder.AppendLine($"Speed: Level {progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
-            builder.AppendLine($"Auto solving: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
-            builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
+
+            SolverId solverId = progression.SelectedSolver;
+            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(solverId);
+            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
+            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
+
+            if (!IsManualModeActive())
+            {
+                builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
+            }
+
+            if (solverId == SolverId.MachineLearning)
+            {
+                builder.AppendLine(progression.IsMachineLearningTrainingActive ? "Mode: PPO Training" : "Mode: PPO Normal");
+            }
 
             if (IsManualModeActive())
             {
                 builder.AppendLine("Mode: Manual");
+                builder.AppendLine();
                 if (gameState != null)
                 {
-                    builder.AppendLine($"Run score: {FormatNumber(gameState.Score)}");
-                    builder.AppendLine($"Moves: {FormatNumber(gameState.BlocksDropped)}");
-                    builder.AppendLine($"Merges: {FormatNumber(gameState.TotalMerges)}");
-                    builder.AppendLine($"Current next: {(gameState.NextBlocks.Count > 0 ? FormatBlockValue(gameState.NextBlocks[0]) : "-")}");
-                    builder.AppendLine($"Available actions: Pickaxe {gameState.PickaxeUsesRemaining}, Queue Scrubber {gameState.QueueSkipsRemaining}");
+                    builder.AppendLine($"<b>Available Mods</b>");
+                    builder.AppendLine($"{gameState.PickaxeUsesRemaining} Miner's Pickaxe\n{gameState.QueueSkipsRemaining} Queue Scrubber");
                 }
 
                 builder.AppendLine();
@@ -8087,27 +8532,29 @@ namespace StackMerge
                 return;
             }
 
-            SolverId solverId = progression.SelectedSolver;
-            SolverDefinition solverDefinition = StackMergeSolverCatalog.GetDefinition(solverId);
-            SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
-            SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
-            builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
-            if (solverId == SolverId.MachineLearning)
-            {
-                builder.AppendLine(progression.IsMachineLearningTrainingActive ? "Mode: PPO Training" : "Mode: PPO Normal");
-            }
+            builder.AppendLine();
+
+            builder.AppendLine($"Auto solve: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
+            builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
+            builder.AppendLine($"Stack capacity: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
+            //builder.AppendLine($"Difficulty: Level {progression.DifficultyLevel}");
+            //builder.AppendLine($"Speed: Level {progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
+
+            builder.AppendLine();
 
             if (progression.NeuralAcceleratorActive)
             {
-                builder.AppendLine("Neural Accelerator: MOCA/MOCA+/MCTS speed boost active");
+                builder.AppendLine("Neural Accelerator speed boost active");
             }
 
-            if (gameState != null)
-            {
-                builder.AppendLine($"Run modifiers: Unstable {gameState.UnstableSavesRemaining}, Pickaxe {gameState.PickaxeUsesRemaining}, Queue skip {gameState.QueueSkipsRemaining}");
-                builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")}, Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
-            }
             builder.AppendLine();
+
+            //if (gameState != null)
+            //{
+            //    builder.AppendLine($"Mods: {gameState.UnstableSavesRemaining} Unstable Stack, {gameState.PickaxeUsesRemaining} Miner's Pickaxe, {gameState.QueueSkipsRemaining} Queue Scrubber");
+            //    builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")}, Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
+            //}
+            //builder.AppendLine();
             builder.AppendLine("<b>Solver tuning</b>");
 
             if (!progression.SolverTuningUnlocked)
@@ -10083,19 +10530,21 @@ namespace StackMerge
             SetText(solverInfoTitle, $"{definition.DisplayName} detail");
 
             var stats = new StringBuilder();
-            stats.AppendLine(definition.Description);
-            stats.AppendLine();
-            stats.AppendLine($"<b>Lifetime runs</b>\n" +
-                $"{FormatNumber(lifetime)} lifetime\n{FormatNumber(solverRuns.Length)} this playthrough");
+            //stats.AppendLine(definition.Description);
+            //stats.AppendLine();
+            stats.AppendLine($"<b>Runs</b>\n" +
+                $"Total: <b>{FormatNumber(lifetime)}</b> (<b>{FormatNumber(solverRuns.Length)}</b> this playthrough)\n");
             if (solverRuns.Length > 0)
             {
                 long[] scores = solverRuns.Select(entry => entry.score).OrderBy(value => value).ToArray();
-                stats.AppendLine($"Best {FormatNumber(scores[^1])}\n" +
-                    $"Median {FormatNumber(Median(scores))}\n" +
-                    $"Average {FormatNumber((long)scores.Average())}");
-                stats.AppendLine($"Range {FormatNumber(scores[0])} – {FormatNumber(scores[^1])}");
-                stats.AppendLine($"Best high tile {FormatBlockValue(solverRuns.Max(entry => entry.highestMergedBlock))}\n" +
-                    $"Average moves {solverRuns.Average(entry => entry.moves):0}");
+                stats.AppendLine($"<b>Score</b>\n" +
+                    $"Best: <b>{FormatNumber(scores[^1])}</b>\n" +
+                    $"Median: <b>{FormatNumber(Median(scores))}</b>\n" +
+                    $"Average: <b>{FormatNumber((long)scores.Average())}</b>");
+                stats.AppendLine($"Range: <b>{FormatNumber(scores[0])} – {FormatNumber(scores[^1])}</b>\n");
+                stats.AppendLine($"Highest block: <b>{FormatBlockValue(solverRuns.Max(entry => entry.highestMergedBlock))}</b>\n\n" +
+                    $"Average moves: <b>{solverRuns.Average(entry => entry.moves):0}</b>\n" +
+                    $"Average merges: <b>{solverRuns.Average(entry => entry.merges):0}</b>");
             }
             else
             {
@@ -10106,17 +10555,21 @@ namespace StackMerge
             {
                 StackMergePpoMetrics metrics = progression.MachineLearningAgent.Metrics;
                 stats.AppendLine();
-                stats.AppendLine("<b>PPO training</b>");
-                stats.AppendLine($"Updates {metrics.Updates}   Frames {metrics.Steps}   Lv {progression.MachineLearningLevel}");
-                stats.AppendLine($"Avg high {metrics.RecentAverageHigh:0}   Avg score {metrics.RecentAverageScore:0}");
-                stats.AppendLine($"Policy loss {metrics.LastPolicyLoss:0.000}   Entropy {metrics.LastEntropy:0.000}");
+                stats.AppendLine("PPO training</b>");
+                stats.AppendLine($"Updates: <b>{metrics.Updates}</b>\n" +
+                    $"Frames <b>{metrics.Steps}</b>\n" +
+                    $"Level: <b>{progression.MachineLearningLevel}</b>");
+                stats.AppendLine($"Average highest block: <b>{metrics.RecentAverageHigh:0}</b>\n" +
+                    $"average score: <b>{metrics.RecentAverageScore:0}</b>");
+                stats.AppendLine($"Policy loss: <b>{metrics.LastPolicyLoss:0.000}</b>\n" +
+                    $"Entropy: <b>{metrics.LastEntropy:0.000}</b>\n");
                 stats.AppendLine(progression.MachineLearningPlayingModeUnlocked
                     ? "Playing mode: unlocked"
-                    : $"Playing mode unlocks at {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} cycle frames ({FormatNumber(progression.MachineLearningCycleFrames)} so far)");
+                    : $"Playing mode unlocks at {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} frames (<b>{FormatNumber(progression.MachineLearningCycleFrames)}</b> so far)");
             }
 
             SetText(solverInfoStatsText, stats.ToString());
-            SetText(solverInfoTuningText, BuildTuningSummary(solverId));
+            //SetText(solverInfoTuningText, BuildTuningSummary(solverId));
 
             int take = Math.Min(solverRuns.Length, 50);
             var values = new List<double>(take);
@@ -10432,23 +10885,36 @@ namespace StackMerge
 
                     float finalY = padding + i * (blockHeight + spacing);
                     bool isTopBlock = i == count - 1;
+                    bool dropping = stackIndex == blockDropStack && isTopBlock && blockDropTimer > 0f;
+                    float dropT = 1f;
 
-                    // Block drop animation: slide the freshly placed top block from above.
-                    if (stackIndex == blockDropStack && isTopBlock && blockDropTimer > 0f)
+                    // Block drop animation: accelerate the freshly placed top block in from above.
+                    // Quadratic ease-in (not SmoothStep) reads as gravity rather than a glide.
+                    if (dropping)
                     {
-                        float t = Mathf.SmoothStep(0f, 1f, 1f - blockDropTimer / BlockDropDuration);
+                        dropT = 1f - blockDropTimer / BlockDropDuration;
+                        float eased = dropT * dropT;
                         float startY = padding + capacity * (blockHeight + spacing);
-                        finalY = Mathf.Lerp(startY, finalY, t);
+                        finalY = Mathf.Lerp(startY, finalY, eased);
                     }
 
                     block.anchoredPosition = new Vector2(0f, finalY);
 
-                    // Merge pulse: bounce scale on the resulting top block.
                     if (stackIndex == mergePulseStack && isTopBlock && mergePulseTimer > 0f)
                     {
-                        float pt = mergePulseTimer / MergePulseDuration;
-                        float scale = 1f + 0.14f * Mathf.Sin(pt * Mathf.PI);
-                        block.localScale = new Vector3(scale, scale, 1f);
+                        // Merge pop: a sharp overshoot that settles back, with a touch of squash on the
+                        // way out so the block reads as elastic instead of simply scaling.
+                        float pt = 1f - mergePulseTimer / MergePulseDuration;
+                        float pop = Mathf.Sin(pt * Mathf.PI * 0.9f) * (1f - pt * 0.4f);
+                        block.localScale = new Vector3(1f + 0.26f * pop, 1f + 0.18f * pop, 1f);
+                    }
+                    else if (dropping)
+                    {
+                        // Landing squash: the block flattens on impact and springs back. Only the last
+                        // third of the drop is affected, so the motion stays readable at high speeds.
+                        float impact = dropT < 0.66f ? 0f : (dropT - 0.66f) / 0.34f;
+                        float squash = Mathf.Sin(impact * Mathf.PI) * 0.16f;
+                        block.localScale = new Vector3(1f + squash, 1f - squash, 1f);
                     }
                     else
                     {
@@ -10942,7 +11408,16 @@ namespace StackMerge
                 && !historyOpen
                 && !achievementsOpen
                 && !trainingActive;
+            // Stamp the modal down the moment it appears — the run gets marked "finished" rather than the
+            // board being disturbed. Fires only on the false->true edge, so the effect plays once per run
+            // and not on every refresh while the overlay stays up.
+            bool wasVisible = gameOverOverlay.activeSelf;
             gameOverOverlay.SetActive(showOverlay);
+            if (showOverlay && !wasVisible && juiceService != null)
+            {
+                juiceService.Stamp((RectTransform)gameOverOverlay.transform);
+            }
+
             if (gameState == null || !gameState.IsGameOver)
             {
                 UpdateGameOverAutoRestartSlider(false);
