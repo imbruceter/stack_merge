@@ -11,6 +11,9 @@ namespace StackMerge
     {
         [Header("Scene References")]
         [SerializeField] private GameObject overlayRoot;
+        [Tooltip("The panel inside the overlay that actually gets animated. Auto-found by a name ending " +
+                 "in \"Modal\". The overlay root itself is only a dimming backdrop and must NOT be animated.")]
+        [SerializeField] private RectTransform modalRoot;
         [SerializeField] private Button backButton;
         [SerializeField] private TMP_Text titleText;
         [SerializeField] private TMP_Text bodyText;
@@ -139,11 +142,67 @@ namespace StackMerge
                 return;
             }
 
+            bool wasVisible = overlayRoot.activeSelf;
             overlayRoot.SetActive(visible);
             if (visible && bringToFrontOnShow)
             {
                 overlayRoot.transform.SetAsLastSibling();
             }
+
+            if (visible && !wasVisible)
+            {
+                PlayEntranceAnimation();
+            }
+        }
+
+        // Animates the inner modal, never the overlay root. The root here is only a dimming backdrop
+        // ("Help Overlay" wrapping "Help Modal"), and scaling a full-screen dimmer reads as a glitch.
+        private void PlayEntranceAnimation()
+        {
+            StackMergeJuice juice = StackMergeJuice.Instance;
+            if (juice == null)
+            {
+                return;
+            }
+
+            RectTransform target = ResolveModalTarget();
+            if (target != null)
+            {
+                juice.PopIn(target);
+            }
+
+            StackMergeAudio.Play(StackMergeSfx.UiPanelOpen);
+        }
+
+        private RectTransform ResolveModalTarget()
+        {
+            if (modalRoot != null)
+            {
+                return IsFullScreenStretch(modalRoot) ? null : modalRoot;
+            }
+
+            foreach (Transform child in overlayRoot.transform)
+            {
+                if (child is RectTransform rect && child.name.EndsWith("Modal", StringComparison.OrdinalIgnoreCase))
+                {
+                    modalRoot = rect;
+                    return IsFullScreenStretch(rect) ? null : rect;
+                }
+            }
+
+            // No separate modal child was found. Deliberately animate NOTHING rather than falling back
+            // to the root: this overlay root is the full-screen black dimmer, and scaling it makes the
+            // dim visibly fail to cover the screen for the duration of the animation.
+            return null;
+        }
+
+        private static bool IsFullScreenStretch(RectTransform rect)
+        {
+            return rect != null
+                && Mathf.Approximately(rect.anchorMin.x, 0f)
+                && Mathf.Approximately(rect.anchorMin.y, 0f)
+                && Mathf.Approximately(rect.anchorMax.x, 1f)
+                && Mathf.Approximately(rect.anchorMax.y, 1f);
         }
 
         private TMP_Text FindTmpText(params string[] names)

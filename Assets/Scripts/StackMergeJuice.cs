@@ -43,6 +43,7 @@ namespace StackMerge
             public float startRotation;
             public float timer;
             public float duration;
+            public bool impact;
         }
 
         private sealed class PunchTween
@@ -112,6 +113,11 @@ namespace StackMerge
         /// </summary>
         public void Stamp(RectTransform target, float startScale = 2.1f, float startRotation = -7f, float duration = 0.32f)
         {
+            StartScaleTween(target, startScale, startRotation, duration, impact: true);
+        }
+
+        private void StartScaleTween(RectTransform target, float startScale, float startRotation, float duration, bool impact)
+        {
             if (!effectsEnabled || target == null)
             {
                 return;
@@ -127,6 +133,7 @@ namespace StackMerge
                     stamps[i].duration = duration;
                     stamps[i].startScale = startScale;
                     stamps[i].startRotation = startRotation;
+                    stamps[i].impact = impact;
                     return;
                 }
             }
@@ -139,8 +146,20 @@ namespace StackMerge
                 startScale = startScale,
                 startRotation = startRotation,
                 timer = 0f,
-                duration = duration
+                duration = duration,
+                impact = impact
             });
+        }
+
+        /// <summary>
+        /// Gentle modal entrance: scales up from slightly small with a soft overshoot. This is the
+        /// counterpart to <see cref="Stamp"/> — use Stamp when the moment should feel like an impact
+        /// (a run ending) and PopIn when a panel is simply appearing because the player asked for it.
+        /// Runs on the same tween list as Stamp, so the two can never fight over one transform.
+        /// </summary>
+        public void PopIn(RectTransform target, float startScale = 0.88f, float duration = 0.24f)
+        {
+            StartScaleTween(target, startScale, 0f, duration, impact: false);
         }
 
         /// <summary>Scale-punches a transform (overshoot then settle). Re-punching restarts the tween.</summary>
@@ -251,24 +270,37 @@ namespace StackMerge
                     continue;
                 }
 
-                // Two-phase curve. Phase 1 (first 55%): a hard quartic ease-IN from oversized down to
-                // slightly UNDER the resting size — accelerating downward is what sells the weight of a
-                // stamp being pressed. Phase 2: a damped bounce back up to rest.
                 float scaleFactor;
                 float rotation;
-                if (t < 0.55f)
+                if (tween.impact)
                 {
-                    float p = t / 0.55f;
-                    float eased = p * p * p * p;
-                    scaleFactor = Mathf.Lerp(tween.startScale, 0.94f, eased);
-                    rotation = Mathf.Lerp(tween.startRotation, 0f, eased);
+                    // STAMP. Phase 1 (first 55%): a hard quartic ease-IN from oversized down to slightly
+                    // UNDER the resting size — accelerating downward is what sells the weight of a stamp
+                    // being pressed. Phase 2: a damped bounce back up to rest.
+                    if (t < 0.55f)
+                    {
+                        float p = t / 0.55f;
+                        float eased = p * p * p * p;
+                        scaleFactor = Mathf.Lerp(tween.startScale, 0.94f, eased);
+                        rotation = Mathf.Lerp(tween.startRotation, 0f, eased);
+                    }
+                    else
+                    {
+                        float p = (t - 0.55f) / 0.45f;
+                        scaleFactor = 1f - 0.06f * Mathf.Cos(p * Mathf.PI * 1.5f) * (1f - p);
+                        rotation = 0f;
+                    }
                 }
                 else
                 {
-                    float p = (t - 0.55f) / 0.45f;
-                    // Damped sine settle: 0.94 -> slight overshoot -> 1.
-                    scaleFactor = 1f - 0.06f * Mathf.Cos(p * Mathf.PI * 1.5f) * (1f - p);
-                    rotation = 0f;
+                    // POP-IN. A single ease-OUT back curve: fast at the start, overshoots the resting
+                    // size once, settles. Opening a panel the player asked for should feel immediate,
+                    // which is the opposite pacing from the stamp's wind-up.
+                    float p = 1f - t;
+                    float eased = 1f - p * p * p;
+                    float overshoot = Mathf.Sin(t * Mathf.PI) * 0.05f * (1f - t);
+                    scaleFactor = Mathf.Lerp(tween.startScale, 1f, eased) + overshoot;
+                    rotation = Mathf.Lerp(tween.startRotation, 0f, eased);
                 }
 
                 tween.target.localScale = tween.baseScale * scaleFactor;

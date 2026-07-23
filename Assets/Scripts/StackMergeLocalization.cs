@@ -526,7 +526,7 @@ namespace StackMerge
             ["+35% <sprite name=\"insight\" tint=1> from every future prestige per level."] = "+35% <sprite name=\"insight\" tint=1> minden későbbi prestige-ből szintenként.",
             ["Start after each prestige reset with <sprite name=\"chips\" tint=1> already banked. This allows making purchases right at the beginning of the game."] = "Minden prestige elején kezdőtőkét biztosít. Ez lehetővé teszi a vásárlásokat rögtön a játék elején.",
             ["Permanently remembers automation unlocks per level after prestige: Auto Solve, Auto Restart <sprite name=\"token\" tint=1>, then Solver Tuning."] = "Prestige után szintenként tartósan felold egy automatizációt: Auto Solve, Auto Restart tokenek, majd Solver Tuning.",
-            ["Start future prestiges with early algorithms already known: RAND, MERG, BAL, then HEUR."] = "A későbbi prestige-eket korai algoritmusokkal kezded: RAND, MERG, BAL, majd HEUR.",
+            ["Start future prestiges with early algorithms already known: BAL, HEUR, COMBO, then LOOK."] = "A későbbi prestige-eket korai algoritmusokkal kezded: BAL, HEUR, COMBO, majd LOOK.",
             ["+18% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers."] = "+18% <sprite name=\"chips\" tint=1> minden jutalomból szintenként. Stackelődik a Chip Yielddel és a szakasz szorzókkal.",
             ["+50% <sprite name=\"chips\" tint=1> from every reward per level. It stacks with Chip Yield and stage multipliers, making every future playthrough visibly faster."] = "+50% <sprite name=\"chips\" tint=1> minden jutalomból szintenként. Stackelődik a Chip Yielddel és a szakasz szorzókkal, így minden későbbi végigjátszás érezhetően gyorsabb lesz.",
             ["PPO still resets every prestige, but each level lowers the trained frame requirement for Normal Mode by 8%."] = "A PPO továbbra is resetelődik minden prestige-nél, de minden szint 8%-kal csökkenti a Normal Módhoz szükséges betanított frame-ek számát.",
@@ -578,19 +578,19 @@ namespace StackMerge
             ["Not enough <sprite name=\"insight\" tint=1>."] = "Nincs elég <sprite name=\"insight\" tint=1>.",
             ["Prestige once to open Research."] = "Prestige reset szükséges a Kutatáshoz.",
             ["Research maxed."] = "A kutatás maxolva van.",
-            ["Requires Seed Capital L1."] = "Seed Capital L1 szükséges.",
-            ["Requires Automation Memory L1."] = "Automation Memory L1 szükséges.",
-            ["Requires Algorithm Archive L1."] = "Algorithm Archive L1 szükséges.",
-            ["Requires Agent Synergy L1."] = "Agent Synergy L1 szükséges.",
-            ["Requires Bulk Discount L1."] = "Bulk Discount L1 szükséges.",
+            ["Requires Seed Capital L1."] = "Kezdőtőke L1 szükséges.",
+            ["Requires Automation Memory L1."] = "Automatizációs memória L1 szükséges.",
+            ["Requires Algorithm Archive L1."] = "Algoritmus archívum L1 szükséges.",
+            ["Requires Agent Synergy L1."] = "Ügynök szinergia L1 szükséges.",
+            ["Requires Bulk Discount L1."] = "Tömeges kedvezmény L1 szükséges.",
             ["Requires PPO Bootcamp L1."] = "PPO Bootcamp L1 szükséges.",
-            ["Requires Evaluation Efficiency L1."] = "Evaluation Efficiency L1 szükséges.",
-            ["Requires PPO Memory L1."] = "PPO Memory L1 szükséges.",
-            ["Requires High Focus L1."] = "High Focus L1 szükséges.",
-            ["Requires Stability Model L1."] = "Stability Model L1 szükséges.",
-            ["Requires Insight Amplifier L1."] = "Insight Amplifier L1 szükséges.",
-            ["Requires Passive Insight L1."] = "Passive Insight L1 szükséges.",
-            ["Requires Offline Engine L1."] = "Offline Engine L1 szükséges.",
+            ["Requires Evaluation Efficiency L1."] = "Kiértékelési hatékonyság L1 szükséges.",
+            ["Requires PPO Memory L1."] = "PPO memória L1 szükséges.",
+            ["Requires High Focus L1."] = "Magas fókusz L1 szükséges.",
+            ["Requires Stability Model L1."] = "Stabilitási modell L1 szükséges.",
+            ["Requires Insight Amplifier L1."] = "Insight erősítő L1 szükséges.",
+            ["Requires Passive Insight L1."] = "Passzív Insight L1 szükséges.",
+            ["Requires Offline Engine L1."] = "Offline motor L1 szükséges.",
             ["Ready to buy."] = "Megvásárolható.",
             ["Not enough chips"] = "Nincs elég chip",
             ["PPO requires every Modifier maxed"] = "A PPO-hoz minden Módosítót maxolni kell",
@@ -954,7 +954,7 @@ namespace StackMerge
             translated = translated.Replace(" - total: ", " - össz: ");
             translated = translated.Replace(" fr/s (idle)", " fr/s (üresjárat)");
             translated = translated.Replace(" rack FLOPS", " rack FLOPS");
-            translated = translated.Replace(" TPU / Fabric output", " TPU / Fabric kimenet");
+            translated = translated.Replace(" TPU / Fabric", " TPU / Szövet");
             translated = translated.Replace("<b>Gain:", "<b>Jutalom:");
             translated = translated.Replace("You made ", "Szereztél ");
             translated = translated.Replace(" while you were offline.", " amíg offline voltál.");

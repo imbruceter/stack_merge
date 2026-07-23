@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace StackMerge
 {
@@ -20,5 +21,18 @@ namespace StackMerge
 
         [Tooltip("Shows the equipped agent's name, or \"Empty\" / \"Locked\".")]
         public TMP_Text nameText;
+
+        [Tooltip("Optional. Shows the equipped agent's icon. The sprite comes from the Bootstrap's Agent " +
+                 "Icons list. The Bootstrap hides this Image entirely while the slot is empty or locked, " +
+                 "so an empty slot never shows a stale or placeholder graphic.")]
+        public Image iconImage;
+
+        [Tooltip("Optional. The transform the equip/unequip animation plays on. Leave empty to animate " +
+                 "the slot root itself; assign an inner card if the root is a layout cell that should " +
+                 "not move.")]
+        public RectTransform animationTarget;
+
+        /// <summary>The transform the Bootstrap animates when this slot's agent changes.</summary>
+        public RectTransform AnimationTarget => animationTarget != null ? animationTarget : (RectTransform)transform;
     }
 }

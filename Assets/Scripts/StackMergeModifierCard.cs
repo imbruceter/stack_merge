@@ -20,5 +20,9 @@ namespace StackMerge
         public TMP_Text nameText;
         public TMP_Text descriptionText;
         public Button button;
+
+        [Tooltip("Optional. Shows this modifier's icon. The sprite comes from the Bootstrap's Modifier " +
+                 "Icons list, so it is set in one place rather than per card. Hidden when no icon is mapped.")]
+        public Image iconImage;
     }
 }

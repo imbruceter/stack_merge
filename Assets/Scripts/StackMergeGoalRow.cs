@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace StackMerge
 {
@@ -17,5 +18,13 @@ namespace StackMerge
 
         [Tooltip("Optional. Shows the goal's unlock reward; stays hidden for goals without one.")]
         public TMP_Text rewardText;
+
+        [Tooltip("Optional. The coloured plate behind the icon. The Bootstrap tints it green once the " +
+                 "goal is complete and grey while it is not. Auto-found by the name 'IconBackground'.")]
+        public Image iconBackground;
+
+        [Tooltip("Optional. The goal's icon. Auto-found by the name 'Icon'. Hidden when no sprite is " +
+                 "mapped for this goal.")]
+        public Image iconImage;
     }
 }

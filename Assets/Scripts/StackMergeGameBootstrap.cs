@@ -41,6 +41,10 @@ namespace StackMerge
             "However, existing <sprite name=\"insight\" tint=1> and purchased research will remain, which will make further resets progressively more valuable.\n\n" +
             "<b>It is recommended to use PPO in Normal Mode before resetting to gain <sprite name=\"insight\" tint=1> multiplier.</b>";
         private static readonly Color DropdownSelectedBackgroundColor = HexColor("#F2EEE6");
+        // Goal icon plate colours (user's values). Kept as constants too, so the serialized fields
+        // below can be recovered when they deserialize as transparent on a pre-existing component.
+        private static readonly Color GoalCompleteFallbackColor = HexColor("#A4EA49");
+        private static readonly Color GoalLockedFallbackColor = HexColor("#CCCCCC");
         // Floating reward-number colours. Placements are muted so they read as background chatter;
         // merges are the chip colour; a new highest block gets the celebratory gold.
         private static readonly Color PlacementRewardColor = HexColor("#9AA3AE");
@@ -62,6 +66,98 @@ namespace StackMerge
         [Tooltip("Visual juice service (floating numbers, punch/shake, screen flash). Auto-found or created " +
                  "like the audio service. Everything it draws is built procedurally — no prefabs needed.")]
         [SerializeField] private StackMergeJuice juiceService;
+
+        // Icon lookup is a list of explicit (id, sprite) PAIRS rather than a sprite array indexed by
+        // the enum. That is deliberate: index-aligned arrays are the exact trap that already corrupted
+        // the Agents definition array once when it got reordered in the Inspector. Here the id travels
+        // with the sprite, so the list can be reordered freely and entries may be missing.
+        [Serializable]
+        private sealed class AgentIconEntry
+        {
+            public AgentId agentId;
+            public Sprite icon;
+        }
+
+        [Serializable]
+        private sealed class ModifierIconEntry
+        {
+            public ModifierId modifierId;
+            public Sprite icon;
+        }
+
+        [Header("Icons")]
+        [Tooltip("Per-agent icons. Used by the Agent cards, the equipped-agent Slots and the Gameplay " +
+                 "Info panel — set once here, not on every card. Unmapped agents simply show no icon.")]
+        [SerializeField] private AgentIconEntry[] agentIcons = Array.Empty<AgentIconEntry>();
+
+        [Tooltip("Per-modifier icons. Used by the Modifier cards and the Gameplay Info panel.")]
+        [SerializeField] private ModifierIconEntry[] modifierIcons = Array.Empty<ModifierIconEntry>();
+
+        [Serializable]
+        private sealed class AchievementIconEntry
+        {
+            [Tooltip("The goal's Id as declared in StackMergeProgression.Achievements.")]
+            public int achievementId;
+
+            public Sprite icon;
+        }
+
+        [Tooltip("Per-goal icons for the Achievements list, keyed by the goal's Id. Goals with no entry " +
+                 "fall back to Default Achievement Icon.")]
+        [SerializeField] private AchievementIconEntry[] achievementIcons = Array.Empty<AchievementIconEntry>();
+
+        [Tooltip("Icon used for any goal with no specific entry above.")]
+        [SerializeField] private Sprite defaultAchievementIcon;
+
+        [Tooltip("Single icon shared by EVERY secret goal — secrets deliberately do not get individual " +
+                 "icons, only the background colour tells completed from locked.")]
+        [SerializeField] private Sprite secretAchievementIcon;
+
+        [Tooltip("Icon plate colour once a goal is complete.")]
+        [SerializeField] private Color goalCompleteColor = HexColor("#A4EA49");
+
+        [Tooltip("Icon plate colour while a goal is still locked.")]
+        [SerializeField] private Color goalLockedColor = HexColor("#CCCCCC");
+
+        [Tooltip("GameplayInfoAgentandMod prefab — a single Image, instantiated once per equipped agent " +
+                 "and once per owned modifier inside the Gameplay Info panel.")]
+        [SerializeField] private GameObject gameplayInfoIconPrefab;
+
+        [Tooltip("The 'ActiveAgents' section in Gameplay Info. This whole object is SHOWN/HIDDEN " +
+                 "depending on whether any agent is equipped — it may contain a heading or anything else. " +
+                 "Auto-found by name.")]
+        [SerializeField] private RectTransform gameplayInfoActiveAgentsRoot;
+
+        [Tooltip("The 'ActiveMods' section in Gameplay Info. Shown/hidden depending on whether any " +
+                 "modifier is owned. Auto-found by name.")]
+        [SerializeField] private RectTransform gameplayInfoActiveModsRoot;
+
+        [Tooltip("The object INSIDE ActiveAgents that the agent icons are spawned into. Keep it separate " +
+                 "from the section root so the section can also hold a heading. Falls back to the section " +
+                 "root when empty.")]
+        [SerializeField] private RectTransform gameplayInfoAgentIconsRoot;
+
+        [Tooltip("The object INSIDE ActiveMods that the modifier icons are spawned into. Falls back to " +
+                 "the section root when empty.")]
+        [SerializeField] private RectTransform gameplayInfoModIconsRoot;
+
+        // Explicit overlay -> modal pairing. Auto-detection works from the scene's "X Overlay" /
+        // "X Modal" naming, but a wrong guess animates the full-screen dimmer, which looks broken —
+        // so this list always wins when an entry exists.
+        [Serializable]
+        private sealed class OverlayModalBinding
+        {
+            [Tooltip("The overlay root (the dimming backdrop).")]
+            public GameObject overlay;
+
+            [Tooltip("The panel inside it that should actually animate.")]
+            public RectTransform modal;
+        }
+
+        [Tooltip("Optional overrides for which panel animates when an overlay opens. Leave empty to rely " +
+                 "on the 'X Overlay' -> 'X Modal' naming. A full-screen-stretched target is NEVER " +
+                 "animated regardless, because that is by definition a backdrop and not a modal.")]
+        [SerializeField] private OverlayModalBinding[] overlayModalBindings = Array.Empty<OverlayModalBinding>();
 
         [Header("Scene UI")]
         [SerializeField] private Camera gameCamera;
@@ -549,6 +645,8 @@ namespace StackMerge
         private bool lastMoveWasNewHigh;
         private bool lastMoveWasLifetimeRecord;
         private float ambienceIntensityTimer;
+        // Last observed occupant per agent slot, so the equip/unequip animation fires on change only.
+        private readonly Dictionary<int, int> lastSlotAgentIds = new();
         private int blockDropStack = -1;
         private float blockDropTimer = 0f;
         private const float BlockDropDuration = 0.14f;
@@ -953,6 +1051,430 @@ namespace StackMerge
             juiceService.Initialize(canvas);
         }
 
+        // ------------------------------------------------------------------------------------------
+        // Overlay entrance animations.
+        //
+        // Every full-screen overlay in this scene follows the same shape: an "X Overlay" root that is
+        // just a dimming backdrop, containing an "X Modal" child that is the actual panel. Animating
+        // the root scales the backdrop too, which looks wrong (the dimmer visibly grows). These
+        // helpers always resolve down to the modal and animate THAT.
+        // ------------------------------------------------------------------------------------------
+
+        private readonly Dictionary<GameObject, RectTransform> overlayModalCache = new();
+
+        // ------------------------------------------------------------------------------------------
+        // Icon lookup + the shared "put this sprite on this Image, or hide it" helper.
+        // ------------------------------------------------------------------------------------------
+
+        // ------------------------------------------------------------------------------------------
+        // Gameplay Info: icon strips for the equipped agents and the owned modifiers.
+        //
+        // Each strip is a container ("ActiveAgents" / "ActiveMods") holding one GameplayInfoAgentandMod
+        // instance per entry. A strip with nothing to show is hidden completely rather than left as an
+        // empty box, so the panel has no dead space early in a run.
+        // ------------------------------------------------------------------------------------------
+
+        private void EnsureGameplayInfoIconReferences()
+        {
+            Transform root = gameplayInfoOverlay != null ? gameplayInfoOverlay.transform : null;
+            if (root == null)
+            {
+                return;
+            }
+
+            gameplayInfoActiveAgentsRoot ??= FindNamedDescendant(root, "ActiveAgents") as RectTransform;
+            gameplayInfoActiveModsRoot ??= FindNamedDescendant(root, "ActiveMods") as RectTransform;
+
+            // If the section holds exactly one child container, assume that is where the icons belong.
+            // Anything more ambiguous is left for the Inspector fields to settle.
+            gameplayInfoAgentIconsRoot ??= ResolveSingleChildContainer(gameplayInfoActiveAgentsRoot);
+            gameplayInfoModIconsRoot ??= ResolveSingleChildContainer(gameplayInfoActiveModsRoot);
+        }
+
+        private static RectTransform ResolveSingleChildContainer(RectTransform section)
+        {
+            if (section == null || section.childCount != 1)
+            {
+                return null;
+            }
+
+            return section.GetChild(0) as RectTransform;
+        }
+
+        private void RefreshGameplayInfoIcons()
+        {
+            if (progression == null)
+            {
+                return;
+            }
+
+            EnsureGameplayInfoIconReferences();
+
+            List<Sprite> agentSprites = new();
+            if (progression.AgentsMenuUnlocked)
+            {
+                for (int slotIndex = 0; slotIndex < progression.ActiveAgentSlots; slotIndex++)
+                {
+                    int activeAgentId = progression.GetActiveAgentIdAtSlot(slotIndex);
+                    if (activeAgentId < 0)
+                    {
+                        continue;
+                    }
+
+                    Sprite icon = GetAgentIcon((AgentId)activeAgentId);
+                    if (icon != null)
+                    {
+                        agentSprites.Add(icon);
+                    }
+                    else
+                    {
+                        WarnMissingIconOnce($"agent {(AgentId)activeAgentId}");
+                    }
+                }
+            }
+
+            List<Sprite> modifierSprites = new();
+            if (progression.ModifiersMenuUnlocked)
+            {
+                // Display order, not enum order — the strip should read like the Modifiers menu does.
+                for (int i = 0; i < ModifierDisplayOrder.Length; i++)
+                {
+                    ModifierId modifierId = ModifierDisplayOrder[i];
+                    if (progression.GetModifierLevel(modifierId) <= 0)
+                    {
+                        continue;
+                    }
+
+                    Sprite icon = GetModifierIcon(modifierId);
+                    if (icon != null)
+                    {
+                        modifierSprites.Add(icon);
+                    }
+                    else
+                    {
+                        WarnMissingIconOnce($"modifier {modifierId}");
+                    }
+                }
+            }
+
+            FillGameplayInfoIconStrip(
+                gameplayInfoActiveAgentsRoot,
+                gameplayInfoAgentIconsRoot != null ? gameplayInfoAgentIconsRoot : gameplayInfoActiveAgentsRoot,
+                agentSprites,
+                "AgentIcon");
+            FillGameplayInfoIconStrip(
+                gameplayInfoActiveModsRoot,
+                gameplayInfoModIconsRoot != null ? gameplayInfoModIconsRoot : gameplayInfoActiveModsRoot,
+                modifierSprites,
+                "ModIcon");
+        }
+
+        /// <param name="sectionRoot">Shown/hidden as a whole — may hold a heading as well as the icons.</param>
+        /// <param name="iconsRoot">The container the icon instances actually live in.</param>
+        /// <param name="instanceName">
+        /// Name stamped on spawned instances. Reuse matches on this name, so a heading or any other
+        /// pre-existing child in the container is never mistaken for an icon slot. Indexing blindly by
+        /// child order is what previously made the FIRST icon disappear: child 0 was not an icon.
+        /// </param>
+        private void FillGameplayInfoIconStrip(RectTransform sectionRoot, RectTransform iconsRoot, List<Sprite> sprites, string instanceName)
+        {
+            if (sectionRoot == null)
+            {
+                return;
+            }
+
+            // Nothing to show: hide the whole section, heading included.
+            if (sprites.Count == 0 || iconsRoot == null || gameplayInfoIconPrefab == null)
+            {
+                SetActive(sectionRoot.gameObject, false);
+                return;
+            }
+
+            SetActive(sectionRoot.gameObject, true);
+            SetActive(iconsRoot.gameObject, true);
+
+            // Collect only the instances this method owns; anything else in the container is left alone.
+            List<RectTransform> pool = new();
+            foreach (Transform child in iconsRoot)
+            {
+                if (child.name == instanceName && child is RectTransform rect)
+                {
+                    pool.Add(rect);
+                }
+            }
+
+            for (int i = 0; i < sprites.Count; i++)
+            {
+                RectTransform entry;
+                if (i < pool.Count)
+                {
+                    entry = pool[i];
+                }
+                else
+                {
+                    entry = (RectTransform)Instantiate(gameplayInfoIconPrefab, iconsRoot, false).transform;
+                    entry.name = instanceName;
+                }
+
+                entry.gameObject.SetActive(true);
+                entry.SetSiblingIndex(iconsRoot.childCount - 1);
+
+                Image image = entry.GetComponent<Image>() ?? entry.GetComponentInChildren<Image>(true);
+                if (image != null)
+                {
+                    image.sprite = sprites[i];
+                    image.enabled = true;
+                }
+            }
+
+            for (int i = sprites.Count; i < pool.Count; i++)
+            {
+                pool[i].gameObject.SetActive(false);
+            }
+
+            LayoutRebuilder.MarkLayoutForRebuild(iconsRoot);
+        }
+
+        // An owned agent/modifier with no mapped icon is silently absent from the Gameplay Info strip,
+        // which is indistinguishable from a bug. Say so once per id instead of leaving it a mystery.
+        private readonly HashSet<string> warnedMissingIcons = new();
+
+        private void WarnMissingIconOnce(string what)
+        {
+            if (warnedMissingIcons.Add(what))
+            {
+                Debug.LogWarning($"StackMerge: no icon mapped for {what} — it will not appear in Gameplay " +
+                                 "Info. Add it under Icons on the Bootstrap.");
+            }
+        }
+
+        private Sprite GetAchievementIcon(int achievementId)
+        {
+            for (int i = 0; i < achievementIcons.Length; i++)
+            {
+                if (achievementIcons[i] != null && achievementIcons[i].achievementId == achievementId)
+                {
+                    return achievementIcons[i].icon;
+                }
+            }
+
+            return defaultAchievementIcon;
+        }
+
+        /// <summary>
+        /// Applies a goal row's icon and completion colour. The plate stays visible either way — its
+        /// colour IS the completed/locked signal — while the icon itself is hidden when unmapped, since
+        /// these sprites are alpha masks and a null sprite would draw as a solid tinted square.
+        /// </summary>
+        private void ApplyGoalRowIcon(StackMergeGoalRow row, Sprite icon, bool complete)
+        {
+            if (row == null)
+            {
+                return;
+            }
+
+            Image background = row.iconBackground != null
+                ? row.iconBackground
+                : FindNamedDescendant(row.transform, "IconBackground")?.GetComponent<Image>();
+            if (background != null)
+            {
+                row.iconBackground = background;
+                // A fully transparent colour means the field was never authored (these are new
+                // serialized fields on a component that already exists in the scene). Fall back to the
+                // intended values rather than tinting the plate invisible.
+                Color completeColor = goalCompleteColor.a > 0f ? goalCompleteColor : GoalCompleteFallbackColor;
+                Color lockedColor = goalLockedColor.a > 0f ? goalLockedColor : GoalLockedFallbackColor;
+                background.color = complete ? completeColor : lockedColor;
+            }
+
+            Image iconImage = row.iconImage != null
+                ? row.iconImage
+                : FindNamedDescendant(row.transform, "Icon")?.GetComponent<Image>();
+            if (iconImage != null)
+            {
+                row.iconImage = iconImage;
+                ApplyIcon(iconImage, icon);
+            }
+        }
+
+        private Sprite GetAgentIcon(AgentId agentId)
+        {
+            for (int i = 0; i < agentIcons.Length; i++)
+            {
+                if (agentIcons[i] != null && agentIcons[i].agentId == agentId)
+                {
+                    return agentIcons[i].icon;
+                }
+            }
+
+            return null;
+        }
+
+        private Sprite GetModifierIcon(ModifierId modifierId)
+        {
+            for (int i = 0; i < modifierIcons.Length; i++)
+            {
+                if (modifierIcons[i] != null && modifierIcons[i].modifierId == modifierId)
+                {
+                    return modifierIcons[i].icon;
+                }
+            }
+
+            return null;
+        }
+
+        // Icons are alpha-only white masks tinted via Image.color, so an Image with a null sprite would
+        // render as a plain filled square in the tint colour — worse than nothing. Always hide instead.
+        private static void ApplyIcon(Image image, Sprite sprite)
+        {
+            if (image == null)
+            {
+                return;
+            }
+
+            image.sprite = sprite;
+            SetActive(image.gameObject, sprite != null);
+        }
+
+        private RectTransform ResolveOverlayModal(GameObject overlay)
+        {
+            if (overlay == null)
+            {
+                return null;
+            }
+
+            if (overlayModalCache.TryGetValue(overlay, out RectTransform cached) && cached != null)
+            {
+                return cached;
+            }
+
+            RectTransform modal = ResolveOverlayModalUncached(overlay);
+
+            // HARD GUARD. A full-screen-stretched rect is a dimming backdrop, never a modal — scaling
+            // one makes the dim visibly fail to cover the screen while it animates. If resolution lands
+            // on such a rect, animate NOTHING rather than animating the backdrop.
+            if (modal != null && IsFullScreenStretch(modal))
+            {
+                Debug.LogWarning($"StackMerge: '{overlay.name}' resolved to a full-screen rect " +
+                                 $"('{modal.name}'), which is a backdrop — skipping its open animation. " +
+                                 "Assign the real panel under Overlay Modal Bindings on the Bootstrap.");
+                modal = null;
+            }
+
+            overlayModalCache[overlay] = modal;
+            return modal;
+        }
+
+        private RectTransform ResolveOverlayModalUncached(GameObject overlay)
+        {
+            // 1. An explicit Inspector binding always wins.
+            for (int i = 0; i < overlayModalBindings.Length; i++)
+            {
+                OverlayModalBinding binding = overlayModalBindings[i];
+                if (binding != null && binding.overlay == overlay && binding.modal != null)
+                {
+                    return binding.modal;
+                }
+            }
+
+            // 2. Some panels ARE the modal and have no backdrop wrapper ("Prestige Reset Modal",
+            //    "Selected Research Modal"). Checking the root's own name first matters: otherwise the
+            //    child search below would grab one of their inner controls and animate that instead.
+            if (overlay.name.EndsWith("Modal", StringComparison.OrdinalIgnoreCase))
+            {
+                return overlay.transform as RectTransform;
+            }
+
+            // 3. The scene's naming convention ("Help Overlay" -> "Help Modal"). Searched recursively,
+            //    so a modal nested one level deeper is still found.
+            RectTransform named = FindModalDescendant(overlay.transform);
+            if (named != null)
+            {
+                return named;
+            }
+
+            // 4. No naming match: the first child that is NOT full-screen. Deliberately no fall-back to
+            //    the overlay root — see the guard in the caller.
+            foreach (Transform child in overlay.transform)
+            {
+                if (child is RectTransform rect && child.gameObject.activeSelf && !IsFullScreenStretch(rect))
+                {
+                    return rect;
+                }
+            }
+
+            return null;
+        }
+
+        private static RectTransform FindModalDescendant(Transform root)
+        {
+            foreach (Transform child in root)
+            {
+                if (child is RectTransform rect && child.name.EndsWith("Modal", StringComparison.OrdinalIgnoreCase))
+                {
+                    return rect;
+                }
+
+                RectTransform nested = FindModalDescendant(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsFullScreenStretch(RectTransform rect)
+        {
+            return rect != null
+                && Mathf.Approximately(rect.anchorMin.x, 0f)
+                && Mathf.Approximately(rect.anchorMin.y, 0f)
+                && Mathf.Approximately(rect.anchorMax.x, 1f)
+                && Mathf.Approximately(rect.anchorMax.y, 1f);
+        }
+
+        /// <summary>
+        /// Shows an overlay and plays its entrance animation on the inner modal. Use this instead of a
+        /// bare SetActive for anything the player opens, so every panel enters the same way.
+        /// </summary>
+        private void ShowOverlayAnimated(GameObject overlay, bool bringToFront = true)
+        {
+            if (overlay == null)
+            {
+                return;
+            }
+
+            bool wasVisible = overlay.activeSelf;
+            SetActive(overlay, true);
+            if (bringToFront)
+            {
+                overlay.transform.SetAsLastSibling();
+            }
+
+            // Re-opening an already-visible overlay should not replay the entrance.
+            if (!wasVisible)
+            {
+                AnimateOverlayIn(overlay);
+            }
+        }
+
+        private void AnimateOverlayIn(GameObject overlay)
+        {
+            if (juiceService == null || overlay == null)
+            {
+                return;
+            }
+
+            RectTransform modal = ResolveOverlayModal(overlay);
+            if (modal != null)
+            {
+                juiceService.PopIn(modal);
+            }
+
+            PlaySfx(StackMergeSfx.UiPanelOpen);
+        }
+
         // Visual counterpart of PlayMoveAudio. Deliberately minimal: the only per-move visual is the
         // feedback line's colour envelope, and the only board-adjacent effect is a screen flash on an
         // all-time record. Anything spawned or restarted per move breaks down at 60-100 moves/second.
@@ -1003,10 +1525,22 @@ namespace StackMerge
             for (int i = 0; i < buttons.Length; i++)
             {
                 Button button = buttons[i];
-                if (button != null && button.GetComponent<StackMergeButtonPress>() == null)
+                if (button == null || button.GetComponent<StackMergeButtonPress>() != null)
                 {
-                    button.gameObject.AddComponent<StackMergeButtonPress>();
+                    continue;
                 }
+
+                // NEVER animate a full-screen button. Several overlay roots (PPO Mode Overlay, Help
+                // Overlay, Offline Progress Overlay) are themselves click-to-close backdrops, and the
+                // injected "Runtime Backdrop Close" is one too. Pressing anywhere on such an overlay —
+                // including on the modal, whose press event bubbles up to the root — would scale the
+                // backdrop AND the modal inside it, so the dim visibly stops covering the screen.
+                if (IsFullScreenStretch(button.transform as RectTransform))
+                {
+                    continue;
+                }
+
+                button.gameObject.AddComponent<StackMergeButtonPress>();
             }
         }
 
@@ -3596,8 +4130,7 @@ namespace StackMerge
         {
             gameplayInfoOpen = true;
             RefreshGameplayInfo();
-            SetActive(gameplayInfoOverlay, true);
-            gameplayInfoOverlay?.transform.SetAsLastSibling();
+            ShowOverlayAnimated(gameplayInfoOverlay);
         }
 
         private void CloseGameplayInfo()
@@ -5349,11 +5882,10 @@ namespace StackMerge
             {
                 SetText(ppoModeHintText, playingUnlocked
                     ? "Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."
-                    : $"Normal mode unlocks after {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} cycle frames.\n{FormatNumber(frames)} / {FormatNumber(progression.EffectivePlayingModeFrameRequirement)}");
+                    : $"Normal mode unlocks after {FormatNumber(progression.EffectivePlayingModeFrameRequirement)} frames.\n{FormatNumber(frames)} / {FormatNumber(progression.EffectivePlayingModeFrameRequirement)}");
             }
 
-            SetActive(ppoModeOverlay, true);
-            ppoModeOverlay.transform.SetAsLastSibling();
+            ShowOverlayAnimated(ppoModeOverlay);
             ApplyButtonVisualState(ppoNormalButton);
             ApplyButtonVisualState(ppoTrainingButton);
         }
@@ -5375,8 +5907,21 @@ namespace StackMerge
             {
                 ppoModeHintText ??= FindNamedDescendant(ppoModeOverlay.transform, "InfoText")?.GetComponent<TMP_Text>();
 
+                // The modal's own Back button was never wired to anything, so the only way out was
+                // clicking the backdrop. Wire it here, and keep it out of the mode-button candidates
+                // so the name-lookup fallbacks below can never mistake it for Training/Normal.
+                Button backButton = ppoModeOverlay.GetComponentsInChildren<Button>(true)
+                    .FirstOrDefault(button => button != null
+                        && button.gameObject != ppoModeOverlay
+                        && (button.name == "Back" || button.name == "BackButton" || button.name == "CloseButton"));
+                if (backButton != null)
+                {
+                    backButton.onClick.RemoveAllListeners();
+                    backButton.onClick.AddListener(HidePpoModeModal);
+                }
+
                 Button[] modeButtons = ppoModeOverlay.GetComponentsInChildren<Button>(true)
-                    .Where(button => button != null && button.gameObject != ppoModeOverlay)
+                    .Where(button => button != null && button.gameObject != ppoModeOverlay && button != backButton)
                     .ToArray();
                 ppoTrainingButton ??= FindPpoModeButton(modeButtons, "TrainingModeButton", "Training");
                 ppoNormalButton ??= FindPpoModeButton(modeButtons, "NormalModeButton", "Normal", "PlayingModeButton");
@@ -6162,7 +6707,7 @@ namespace StackMerge
                 {
                     DatacenterFacilityId.PowerGrid => $"+{level * 5}% rack FLOPS",
                     DatacenterFacilityId.CoolingLoop => $"+{level * 10}% rack FLOPS",
-                    _ => $"×{1.0 + level * 0.18:0.00} TPU / Fabric output"
+                    _ => $"×{1.0 + level * 0.18:0.00} TPU / Fabric"
                 });
                 SetText(row.prodText, GetDatacenterFacilityEffectText(facilityId, level));
                 SetText(row.unitsText, $"{level}/{maxLevel}");
@@ -6228,7 +6773,7 @@ namespace StackMerge
             {
                 DatacenterFacilityId.PowerGrid => $"+5% rack FLOPS - total: +{level * 5}%",
                 DatacenterFacilityId.CoolingLoop => $"+10% rack FLOPS - total: +{level * 10}%",
-                _ => $"x1.18 TPU / Fabric output - total: x{1.0 + level * 0.18:0.00}"
+                _ => $"x1.18 TPU / Fabric - total: x{1.0 + level * 0.18:0.00}"
             };
         }
 
@@ -6339,8 +6884,7 @@ namespace StackMerge
             }
 
             RefreshOfflineProgressOverlay();
-            SetActive(offlineProgressOverlay, true);
-            offlineProgressOverlay.transform.SetAsLastSibling();
+            ShowOverlayAnimated(offlineProgressOverlay);
         }
 
         private void CloseOfflineProgressOverlay()
@@ -6397,8 +6941,7 @@ namespace StackMerge
                 return;
             }
 
-            SetActive(prestigeResetModal, true);
-            prestigeResetModal.transform.SetAsLastSibling();
+            ShowOverlayAnimated(prestigeResetModal);
             RefreshPrestigeResetModal();
         }
 
@@ -6427,7 +6970,7 @@ namespace StackMerge
 
             SetText(prestigeResetTrainingText, trained
                 ? "PPO Training complete — prestige reset unlocked."
-                : $"You have to finish PPO Training to unlock prestige.\n<b>{frames:N0} / {required:N0} cycle frames</b>");
+                : $"You have to finish PPO Training to unlock prestige.\n<b>{frames:N0} / {required:N0} frames</b>");
             SetText(prestigeResetInfoText, PrestigeResetInfoBody);
 
             if (prestigeResetSlider != null)
@@ -6831,8 +7374,7 @@ namespace StackMerge
             Debug.Log($"StackMerge: OpenResearchDetail({researchId}) called.");
 
             SelectResearchUpgrade(researchId);
-            SetActive(researchDetailModal, true);
-            researchDetailModal?.transform.SetAsLastSibling();
+            ShowOverlayAnimated(researchDetailModal);
 
             // The modal uses a Vertical Layout Group + Content Size Fitter, which can render at
             // zero size on the very first frame a GameObject is activated (same class of issue as
@@ -8488,6 +9030,8 @@ namespace StackMerge
                 return;
             }
 
+            RefreshGameplayInfoIcons();
+
             var builder = new StringBuilder();
 
             SolverId solverId = progression.SelectedSolver;
@@ -8753,6 +9297,7 @@ namespace StackMerge
                 AgentDefinition definition = progression.GetAgentDefinition(card.agentId);
                 SetText(card.nameText, definition.DisplayName);
                 SetText(card.descriptionText, definition.Description);
+                ApplyIcon(card.iconImage, GetAgentIcon(card.agentId));
 
                 if (!progression.AgentsMenuUnlocked)
                 {
@@ -8806,6 +9351,8 @@ namespace StackMerge
                 if (!progression.AgentsMenuUnlocked)
                 {
                     SetText(slot.nameText, "Locked");
+                    ApplyIcon(slot.iconImage, null);
+                    NoteSlotAgentChanged(slot, -1, animate: false);
                     continue;
                 }
 
@@ -8814,15 +9361,57 @@ namespace StackMerge
                 {
                     AgentDefinition definition = progression.GetAgentDefinition((AgentId)activeAgentId);
                     SetText(slot.nameText, definition.DisplayName);
-                }
-                else if (slot.slotIndex >= progression.ActiveAgentSlots)
-                {
-                    SetText(slot.nameText, "Needs upgrade");
+                    ApplyIcon(slot.iconImage, GetAgentIcon((AgentId)activeAgentId));
                 }
                 else
                 {
-                    SetText(slot.nameText, "Empty");
+                    SetText(slot.nameText, slot.slotIndex >= progression.ActiveAgentSlots ? "Needs upgrade" : "Empty");
+                    // An empty slot shows no icon at all rather than a placeholder — the icons are
+                    // alpha masks, so a stale sprite would read as a solid coloured block.
+                    ApplyIcon(slot.iconImage, null);
                 }
+
+                NoteSlotAgentChanged(slot, activeAgentId, animate: true);
+            }
+        }
+
+        // Plays the equip / unequip animation when a slot's occupant actually changes. The refresh runs
+        // on every currency tick, so comparing against the last known occupant is what keeps this from
+        // firing continuously.
+        private void NoteSlotAgentChanged(StackMergeAgentSlot slot, int activeAgentId, bool animate)
+        {
+            if (slot == null)
+            {
+                return;
+            }
+
+            int key = slot.slotIndex;
+            bool known = lastSlotAgentIds.TryGetValue(key, out int previous);
+            if (known && previous == activeAgentId)
+            {
+                return;
+            }
+
+            lastSlotAgentIds[key] = activeAgentId;
+
+            // Skip the very first observation: the panel opening is not an equip event.
+            if (!known || !animate || juiceService == null)
+            {
+                return;
+            }
+
+            RectTransform target = slot.AnimationTarget;
+            if (activeAgentId >= 0)
+            {
+                // Equip: the agent drops into the slot.
+                juiceService.Stamp(target, startScale: 1.35f, startRotation: -4f, duration: 0.26f);
+                PlaySfx(StackMergeSfx.SolverSelect);
+            }
+            else
+            {
+                // Unequip: a smaller, quieter settle — removing something should not feel like a reward.
+                juiceService.PopIn(target, startScale: 0.82f, duration: 0.2f);
+                PlaySfx(StackMergeSfx.UiClick);
             }
         }
 
@@ -8949,6 +9538,7 @@ namespace StackMerge
                 ModifierDefinition definition = progression.GetModifierDefinition(card.modifierId);
                 SetText(card.nameText, definition.DisplayName);
                 SetText(card.descriptionText, definition.Description);
+                ApplyIcon(card.iconImage, GetModifierIcon(card.modifierId));
 
                 if (!progression.ModifiersMenuUnlocked)
                 {
@@ -10278,6 +10868,7 @@ namespace StackMerge
                 SetText(row.progressText, complete
                     ? StackMergeLocalization.Translate("Completed")
                     : $"{FormatNumber(cappedProgress)} / {FormatNumber(achievement.Target)}");
+                ApplyGoalRowIcon(row, GetAchievementIcon(achievement.Id), complete);
             }
         }
 
@@ -10349,6 +10940,8 @@ namespace StackMerge
 
                 SetText(row.goalText, achievement.Hint);
                 SetText(row.progressText, complete ? "Completed" : "Locked");
+                // Every secret shares one icon by design — only the plate colour distinguishes them.
+                ApplyGoalRowIcon(row, secretAchievementIcon, complete);
                 if (descText != null)
                 {
                     SetActive(descText.gameObject, complete);
@@ -10580,8 +11173,7 @@ namespace StackMerge
 
             DrawLineChart(solverInfoChartRoot, values, HexColor("#34D399"), "No score history for this solver yet");
 
-            SetActive(solverInfoOverlay, true);
-            solverInfoOverlay.transform.SetAsLastSibling();
+            ShowOverlayAnimated(solverInfoOverlay);
         }
 
         private string BuildTuningSummary(SolverId solverId)
@@ -11410,12 +12002,14 @@ namespace StackMerge
                 && !trainingActive;
             // Stamp the modal down the moment it appears — the run gets marked "finished" rather than the
             // board being disturbed. Fires only on the false->true edge, so the effect plays once per run
-            // and not on every refresh while the overlay stays up.
+            // and not on every refresh while the overlay stays up. The target is the inner "Game Over
+            // Modal", NOT the overlay root: the root is the dimming backdrop, and scaling that would
+            // visibly grow the dimmer across the whole screen.
             bool wasVisible = gameOverOverlay.activeSelf;
             gameOverOverlay.SetActive(showOverlay);
             if (showOverlay && !wasVisible && juiceService != null)
             {
-                juiceService.Stamp((RectTransform)gameOverOverlay.transform);
+                juiceService.Stamp(ResolveOverlayModal(gameOverOverlay));
             }
 
             if (gameState == null || !gameState.IsGameOver)
