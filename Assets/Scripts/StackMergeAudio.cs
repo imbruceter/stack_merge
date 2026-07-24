@@ -146,6 +146,7 @@ namespace StackMerge
         private const int VoiceCount = 8;
         private const int MaxSfxPerFrame = 3;
         private const float MusicFadeSeconds = 1.2f;
+        private const float GameplaySfxFadeSeconds = 0.5f;
 
         public static StackMergeAudio Instance { get; private set; }
 
@@ -276,6 +277,10 @@ namespace StackMerge
         private float ambienceIntensity = 1f;
         private float musicFade = 1f;
         private float musicFadeTarget = 1f;
+        // Gameplay-SFX gate: smoothly ducks the board sounds (block/merge/game-over/...) when the player
+        // leaves the gameplay view, instead of cutting them dead. Driven by the bootstrap per frame.
+        private float gameplaySfxGate = 1f;
+        private float gameplaySfxGateTarget = 1f;
         private bool applicationFocused = true;
         private bool volumesLoaded;
         private readonly HashSet<int> hookedButtons = new();
@@ -330,6 +335,12 @@ namespace StackMerge
 
         private void Update()
         {
+            // The gameplay-SFX gate must keep lerping regardless of whether music/ambience exist.
+            if (!Mathf.Approximately(gameplaySfxGate, gameplaySfxGateTarget))
+            {
+                gameplaySfxGate = Mathf.MoveTowards(gameplaySfxGate, gameplaySfxGateTarget, Time.unscaledDeltaTime / Mathf.Max(0.01f, GameplaySfxFadeSeconds));
+            }
+
             if (musicSource == null && ambienceSource == null)
             {
                 return;
@@ -341,6 +352,41 @@ namespace StackMerge
             }
 
             ApplyLoopVolumes();
+        }
+
+        /// <summary>
+        /// Sets whether board/gameplay sounds are audible. Ramps over ~0.5s rather than cutting, so the
+        /// solver's sound stream fades out when the player opens another menu and fades back in on return.
+        /// </summary>
+        public static void SetGameplaySfxActive(bool active)
+        {
+            StackMergeAudio instance = Instance;
+            if (instance != null)
+            {
+                instance.gameplaySfxGateTarget = active ? 1f : 0f;
+            }
+        }
+
+        // Board sounds tied to WATCHING the game. UI and progression cues are NOT in this set, so they
+        // stay at full volume regardless of the gate.
+        private static bool IsGameplaySound(StackMergeSfx sfx)
+        {
+            switch (sfx)
+            {
+                case StackMergeSfx.BlockPlace:
+                case StackMergeSfx.Merge:
+                case StackMergeSfx.MergeChain:
+                case StackMergeSfx.NewHigh:
+                case StackMergeSfx.RunStart:
+                case StackMergeSfx.GameOver:
+                case StackMergeSfx.Pickaxe:
+                case StackMergeSfx.QueueScrub:
+                case StackMergeSfx.UnstableSave:
+                case StackMergeSfx.JokerMerge:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private void OnApplicationFocus(bool hasFocus)
@@ -422,29 +468,18 @@ namespace StackMerge
         }
 
         /// <summary>
-        /// Attaches the generic click sound to every Button under <paramref name="root"/> exactly once.
-        /// Safe to call repeatedly after rebuilding card lists — already-hooked buttons are skipped by
-        /// instance id, so runtime-instantiated rows get sound without any per-button wiring.
-        /// Unlike the press animation this is skipped entirely when no click clip is assigned.
+        /// Attaches the generic click sound to a single Button exactly once. Returns true if it was
+        /// newly hooked. The caller decides which buttons qualify (the bootstrap excludes board columns
+        /// and full-screen backdrops), so no sweep is done here.
         /// </summary>
-        public void HookButtonSounds(Component root)
+        public bool HookButtonSound(UnityEngine.UI.Button button)
         {
-            if (root == null || !uiClick.HasClip)
+            if (button == null || !uiClick.HasClip || !hookedButtons.Add(button.GetInstanceID()))
             {
-                return;
+                return false;
             }
 
-            UnityEngine.UI.Button[] buttons = root.GetComponentsInChildren<UnityEngine.UI.Button>(true);
-            for (int i = 0; i < buttons.Length; i++)
-            {
-                UnityEngine.UI.Button button = buttons[i];
-                if (button == null || !hookedButtons.Add(button.GetInstanceID()))
-                {
-                    continue;
-                }
-
-                button.onClick.AddListener(PlayUiClick);
-            }
+            button.onClick.AddListener(PlayUiClick);
 
             // Buttons destroyed since the last sweep would otherwise leak ids forever. The set is tiny
             // (a few hundred entries at most), but this keeps it honest across panel rebuilds.
@@ -452,6 +487,8 @@ namespace StackMerge
             {
                 hookedButtons.Clear();
             }
+
+            return true;
         }
 
         private void PlayUiClick()
@@ -476,6 +513,26 @@ namespace StackMerge
             }
         }
 
+        // Milestone sounds must never be dropped by the per-frame voice budget. The run-ending move can
+        // resolve a merge + a new high + a chain in one frame, which alone hits the 3-sound cap — so the
+        // Game Over cue (fired last) was intermittently swallowed. These bypass the budget (but still
+        // respect their own cooldown, so they can't machine-gun).
+        private static bool IsMilestoneSound(StackMergeSfx sfx)
+        {
+            switch (sfx)
+            {
+                case StackMergeSfx.GameOver:
+                case StackMergeSfx.NewHigh:
+                case StackMergeSfx.Prestige:
+                case StackMergeSfx.AchievementUnlocked:
+                case StackMergeSfx.PpoUnlocked:
+                case StackMergeSfx.OfflineReward:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private void PlayInternal(StackMergeSfx sfx, float pitchScale)
         {
             if (!HasAnyAudio || (muteWhenUnfocused && !applicationFocused))
@@ -484,6 +541,15 @@ namespace StackMerge
             }
 
             float effective = masterVolume * sfxVolume;
+
+            // Board sounds are ducked by the gameplay gate (fades when the player leaves the gameplay
+            // view). A one-shot's volume is fixed at trigger time, so applying the current gate value
+            // here makes the rapid solver sound-stream fade out smoothly over the ramp.
+            if (IsGameplaySound(sfx))
+            {
+                effective *= gameplaySfxGate;
+            }
+
             if (effective <= 0.001f)
             {
                 return;
@@ -502,14 +568,17 @@ namespace StackMerge
                 return;
             }
 
+            bool milestone = IsMilestoneSound(sfx);
+
             // Per-frame voice budget: a cascade resolving many merges must not eat the whole pool.
+            // Milestone cues are exempt so a busy final frame can never mute the game-over/new-high cue.
             if (lastSfxFrame != Time.frameCount)
             {
                 lastSfxFrame = Time.frameCount;
                 sfxPlayedThisFrame = 0;
             }
 
-            if (sfxPlayedThisFrame >= MaxSfxPerFrame)
+            if (!milestone && sfxPlayedThisFrame >= MaxSfxPerFrame)
             {
                 return;
             }

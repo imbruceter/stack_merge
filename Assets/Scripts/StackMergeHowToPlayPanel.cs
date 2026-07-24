@@ -345,7 +345,9 @@ namespace StackMerge
                 HowToPlayBlock block = blocks[i];
                 StackMergeHowToPlayElement selectedElement = Instantiate(GetElementPrefab(block.Style), contentRoot);
                 selectedElement.gameObject.SetActive(true);
-                selectedElement.SetContent(block.Title, block.Description);
+                // Block-level render path (used when the panel has tabs) — same localization as the
+                // section-level SetElementContent, otherwise these blocks stayed English for DE/FR/ES/RU.
+                selectedElement.SetContent(Localize(block.Title), Localize(block.Description));
                 runtimeElements.Add(selectedElement);
             }
         }
@@ -605,7 +607,17 @@ namespace StackMerge
         {
             bool unlocked = IsSectionUnlocked(index);
             string description = unlocked ? section.Description : GetLockedDescription(StackMergeLocalization.CurrentLanguage);
-            element.SetContent(section.Title, description);
+            // For non-Hungarian, GetSections returns the ENGLISH array, so titles/descriptions are English
+            // source strings — routed through the dictionary here to localize German/French/Spanish/Russian
+            // (English returns as-is; Hungarian already comes from its own section array).
+            element.SetContent(Localize(section.Title), Localize(description));
+        }
+
+        private static string Localize(string englishOrNative)
+        {
+            return string.IsNullOrEmpty(englishOrNative)
+                ? englishOrNative
+                : StackMergeLocalization.Translate(englishOrNative);
         }
 
         private bool IsSectionUnlocked(int index)
@@ -637,7 +649,15 @@ namespace StackMerge
 
         private string GetLockedDescription(StackMergeLanguage language)
         {
-            return language == StackMergeLanguage.Magyar ? lockedDescriptionHungarian : lockedDescriptionEnglish;
+            if (language == StackMergeLanguage.Magyar)
+            {
+                return lockedDescriptionHungarian;
+            }
+
+            // English text routed through the dictionary for the other languages.
+            return language == StackMergeLanguage.English
+                ? lockedDescriptionEnglish
+                : StackMergeLocalization.Translate(lockedDescriptionEnglish);
         }
 
         private void HideTemplateIfChild(GameObject template)

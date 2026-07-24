@@ -67,6 +67,24 @@ namespace StackMerge
                  "like the audio service. Everything it draws is built procedurally — no prefabs needed.")]
         [SerializeField] private StackMergeJuice juiceService;
 
+        [Tooltip("Haptics (vibration) service. Auto-found or created. Silent no-op on devices without a " +
+                 "vibrator and in the Editor.")]
+        [SerializeField] private StackMergeHaptics hapticsService;
+
+        [Serializable]
+        private sealed class HapticTestToggle
+        {
+            [Tooltip("A Toggle you place in the scene. Flipping it EITHER way fires the pattern below, so " +
+                     "you can feel each pattern on-device and decide where to wire it.")]
+            public Toggle toggle;
+
+            public StackMergeHapticPattern pattern;
+        }
+
+        [Tooltip("On-device haptic test rig. Make Toggles in the scene, drop them here and pick a pattern " +
+                 "for each; toggling one plays that pattern. Purely for testing — leave empty in a real build.")]
+        [SerializeField] private HapticTestToggle[] hapticTestToggles = System.Array.Empty<HapticTestToggle>();
+
         // Icon lookup is a list of explicit (id, sprite) PAIRS rather than a sprite array indexed by
         // the enum. That is deliberate: index-aligned arrays are the exact trap that already corrupted
         // the Agents definition array once when it got reordered in the Inspector. Here the id travels
@@ -229,11 +247,28 @@ namespace StackMerge
         [SerializeField] private Slider masterVolumeSlider;
         [SerializeField] private Slider sfxVolumeSlider;
         [SerializeField] private Slider musicVolumeSlider;
-        [Tooltip("Optional Settings controls for the local save backup. Auto-found by name: a Button " +
-                 "containing 'ExportSave', a Button containing 'ImportSave', and a TMP_InputField " +
-                 "containing 'SaveCode'. All optional — omit them and the feature is simply hidden.")]
+        [Tooltip("Optional Settings toggle for haptics. Auto-found by a name containing 'Haptics' / " +
+                 "'Vibration'. Flipping it on plays a confirmation tick so the player feels it working.")]
+        [SerializeField] private Toggle hapticsToggle;
+        [Tooltip("Settings 'Export' button — copies the save code to the clipboard. Auto-found by name.")]
         [SerializeField] private Button exportSaveButton;
+
+        [Tooltip("Settings 'Import' button — OPENS the Import Save Overlay (it does not import directly). " +
+                 "Auto-found by name.")]
         [SerializeField] private Button importSaveButton;
+
+        [Tooltip("The Import Save Overlay (backdrop + modal). Opened by the Settings Import button. " +
+                 "Auto-found by the name 'Import Save Overlay'.")]
+        [SerializeField] private GameObject importSaveOverlay;
+
+        [Tooltip("The final 'Import' button INSIDE the overlay — this one actually imports. Auto-found " +
+                 "as 'ImportButton' within the overlay.")]
+        [SerializeField] private Button importSaveConfirmButton;
+
+        [Tooltip("Closes the Import Save Overlay. Auto-found as 'Back' within the overlay.")]
+        [SerializeField] private Button importSaveBackButton;
+
+        [Tooltip("The paste target inside the overlay. Auto-found as 'InputField' within the overlay.")]
         [SerializeField] private TMP_InputField saveCodeInput;
         [Tooltip("Testing only: lowers the PPO Normal Mode frame requirement so late-game flow can be checked quickly.")]
         [SerializeField] private Toggle testingPpoFramesToggle;
@@ -567,6 +602,9 @@ namespace StackMerge
         private readonly System.Random solverRandom = new();
         private long highScore;
         private float autoSolveTimer;
+        // Counts down at launch so the solver does not start playing before the player sees the board.
+        private float startupActivationTimer;
+        private const float StartupActivationDelay = 2f;
         private float autoRestartTimer;
         private float saveFlushTimer;
         private const float SaveFlushInterval = 10f;
@@ -642,6 +680,9 @@ namespace StackMerge
         // Highest block reached this run, tracked purely for the "new high" sound/flash. Kept separate
         // from the progression metrics so audio never depends on award ordering.
         private int audioHighestBlockThisRun;
+        // Tracks the game-over state across frames so TickGameOverAudio fires the cue exactly once on
+        // the transition into game over, independent of which code path ended the run.
+        private bool audioWasGameOver;
         private bool lastMoveWasNewHigh;
         private bool lastMoveWasLifetimeRecord;
         private float ambienceIntensityTimer;
@@ -705,6 +746,7 @@ namespace StackMerge
             [NonSerialized] public Color buttonColor;
             [NonSerialized] public Color iconColor;
             [NonSerialized] public Color textColor;
+            [NonSerialized] public UnityEngine.Events.UnityAction clickAction;
         }
 
         private static readonly (ResearchId From, ResearchId To)[] ResearchConnections =
@@ -730,6 +772,8 @@ namespace StackMerge
         {
             StackMergeProgression.DebugUnlockDatacenter = unlockDatacenterInEditor && Application.isEditor;
             EnsureAudioService();
+            EnsureHapticsService();
+            WireHapticTestToggles();
             ConfigureCamera();
             EnsureEventSystem();
             EnsureOptionalUpgradeButtonReferences();
@@ -779,6 +823,11 @@ namespace StackMerge
             WireAchievementNotificationButton();
             SyncCompletedAchievements();
             CreateFreshGame();
+            // Only arm the startup grace period when a solver is actually set to auto-play — a manual
+            // player (no auto-solve, or deselected) is in control and needs no countdown.
+            bool willAutoPlay = (progression.AutoSolveEnabled && !solverDeselected && progression.HasPurchasedSolver)
+                || progression.IsMachineLearningTrainingActive;
+            startupActivationTimer = willAutoPlay ? StartupActivationDelay : 0f;
             PrimeGameplayPanelForInitialLayout();
             RefreshEverything();
             ForceGameplayLayoutPass();
@@ -886,6 +935,8 @@ namespace StackMerge
             TickAutoBuy();
             TickPlaytime();
             TickAudioAmbience();
+            TickGameplaySfxGate();
+            TickGameOverAudio();
             RefreshEconomyUiIfChanged();
             if (gameState != null && !gameState.IsGameOver)
             {
@@ -1028,6 +1079,47 @@ namespace StackMerge
             // Nothing in the scene: create a silent service so every Play call stays valid and the
             // volume settings still have something to talk to.
             audioService ??= gameObject.AddComponent<StackMergeAudio>();
+        }
+
+        private void EnsureHapticsService()
+        {
+            if (hapticsService == null)
+            {
+                hapticsService = GetComponent<StackMergeHaptics>() ?? StackMergeHaptics.Instance;
+            }
+
+            if (hapticsService == null)
+            {
+#if UNITY_2023_1_OR_NEWER
+                hapticsService = FindFirstObjectByType<StackMergeHaptics>(FindObjectsInactive.Include);
+#else
+                hapticsService = FindObjectOfType<StackMergeHaptics>(true);
+#endif
+            }
+
+            hapticsService ??= gameObject.AddComponent<StackMergeHaptics>();
+        }
+
+        // Test rig: flipping any assigned Toggle fires its pattern, so the haptics can be felt on-device
+        // and the final wiring decided from experience rather than guessed.
+        private void WireHapticTestToggles()
+        {
+            if (hapticTestToggles == null)
+            {
+                return;
+            }
+
+            foreach (HapticTestToggle entry in hapticTestToggles)
+            {
+                if (entry == null || entry.toggle == null)
+                {
+                    continue;
+                }
+
+                StackMergeHapticPattern pattern = entry.pattern;
+                entry.toggle.onValueChanged.RemoveAllListeners();
+                entry.toggle.onValueChanged.AddListener(_ => StackMergeHaptics.Play(pattern));
+            }
         }
 
         private void EnsureJuiceService()
@@ -1518,30 +1610,59 @@ namespace StackMerge
                 return;
             }
 
-            audioService?.HookButtonSounds(root);
-
-            // The press animation is independent of audio: it must work even with no clips assigned.
             Button[] buttons = root.GetComponentsInChildren<Button>(true);
             for (int i = 0; i < buttons.Length; i++)
             {
                 Button button = buttons[i];
-                if (button == null || button.GetComponent<StackMergeButtonPress>() != null)
+                if (button == null)
                 {
                     continue;
                 }
 
-                // NEVER animate a full-screen button. Several overlay roots (PPO Mode Overlay, Help
-                // Overlay, Offline Progress Overlay) are themselves click-to-close backdrops, and the
-                // injected "Runtime Backdrop Close" is one too. Pressing anywhere on such an overlay —
-                // including on the modal, whose press event bubbles up to the root — would scale the
-                // backdrop AND the modal inside it, so the dim visibly stops covering the screen.
+                // NEVER give feedback to a full-screen button. Several overlay roots (PPO Mode Overlay,
+                // Help Overlay, Offline Progress Overlay) are themselves click-to-close backdrops, and
+                // the injected "Runtime Backdrop Close" is one too. The press animation would scale the
+                // whole dimmer, and the click SOUND on a backdrop-close reads as wrong — a click sound
+                // should mean "I pressed a control", not "I dismissed a panel". So they get neither.
                 if (IsFullScreenStretch(button.transform as RectTransform))
                 {
                     continue;
                 }
 
-                button.gameObject.AddComponent<StackMergeButtonPress>();
+                // The board columns are gameplay actions, not UI buttons: a manual placement already
+                // makes its own placement/merge sound, so the generic click on top of it produced the
+                // overlapping double-sound the player noticed. Their own block-drop animation is the
+                // press feedback, so they get no click sound and no scale press either.
+                if (IsStackButton(button))
+                {
+                    continue;
+                }
+
+                audioService?.HookButtonSound(button);
+
+                if (button.GetComponent<StackMergeButtonPress>() == null)
+                {
+                    button.gameObject.AddComponent<StackMergeButtonPress>();
+                }
             }
+        }
+
+        private bool IsStackButton(Button button)
+        {
+            if (stackButtons == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < stackButtons.Length; i++)
+            {
+                if (stackButtons[i] == button)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         // Classifies the central toast message so purchases and rejections sound different without having
@@ -2044,6 +2165,7 @@ namespace StackMerge
             SetActive(achievementNotificationPanel, true);
             achievementNotificationPanel.transform.SetAsLastSibling();
             PlaySfx(StackMergeSfx.AchievementUnlocked);
+            StackMergeHaptics.Play(StackMergeHapticPattern.DoublePulse);
 
             if (achievementNotificationRect == null)
             {
@@ -2396,6 +2518,9 @@ namespace StackMerge
             ReparentOverlayToCanvas(ppoModeOverlay);
             ReparentOverlayToCanvas(prestigeResetModal);
             ReparentOverlayToCanvas(offlineProgressOverlay);
+            ReparentOverlayToCanvas(importSaveOverlay);
+            // The Import Save Overlay is opened on demand only; make sure it starts hidden.
+            SetActive(importSaveOverlay, false);
 
             // Clicking the dimmed backdrop closes these. The Offline Progress and Game Over
             // overlays deliberately get NO backdrop close; the PPO mode overlay and the research
@@ -3161,9 +3286,26 @@ namespace StackMerge
             masterVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "MasterVolume", "Master");
             sfxVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "SfxVolume", "SoundVolume", "Sfx");
             musicVolumeSlider ??= FindComponentByNormalizedName<Slider>(settingsRoot, "MusicVolume", "Music");
+            hapticsToggle ??= FindComponentByNormalizedName<Toggle>(settingsRoot, "Haptics", "Vibration", "Vibrate");
             exportSaveButton ??= FindComponentByNormalizedName<Button>(settingsRoot, "ExportSave", "SaveExport", "Export");
             importSaveButton ??= FindComponentByNormalizedName<Button>(settingsRoot, "ImportSave", "SaveImport", "Import");
-            saveCodeInput ??= FindComponentByNormalizedName<TMP_InputField>(settingsRoot, "SaveCode", "SaveInput", "ImportField");
+
+            // The overlay lives under the canvas, not inside the Settings panel, so it is searched from
+            // the canvas root. Everything else (the input field, the confirm/back buttons) is resolved
+            // relative to the overlay so names cannot collide with the Settings-panel Import button.
+            Transform canvasSearchRoot = canvas != null ? canvas.transform : settingsRoot;
+            if (importSaveOverlay == null)
+            {
+                importSaveOverlay = FindNamedDescendant(canvasSearchRoot, "Import Save Overlay")?.gameObject;
+            }
+
+            if (importSaveOverlay != null)
+            {
+                Transform overlayRoot = importSaveOverlay.transform;
+                saveCodeInput ??= FindComponentByNormalizedName<TMP_InputField>(overlayRoot, "InputField", "SaveCode", "SaveInput");
+                importSaveConfirmButton ??= FindComponentByNormalizedName<Button>(overlayRoot, "ImportButton", "Import", "Confirm");
+                importSaveBackButton ??= FindComponentByNormalizedName<Button>(overlayRoot, "Back", "BackButton", "Close");
+            }
             howToPlayPanel ??= FindAnyObjectByType<StackMergeHowToPlayPanel>(FindObjectsInactive.Include);
             menuHelpOverlay ??= FindAnyObjectByType<StackMergeHelpOverlay>(FindObjectsInactive.Include);
         }
@@ -3204,9 +3346,10 @@ namespace StackMerge
             testingTripleIncome = PlayerPrefs.GetInt(TestingTripleIncomeSettingKey, 0) == 1;
             StackMergeProgression.DebugFastPpoFrames = testingPpoFrames;
             StackMergeProgression.DebugTripleIncome = testingTripleIncome;
-            currentLanguage = PlayerPrefs.GetInt(LanguageSettingKey, 0) == 1
-                ? StackMergeLanguage.Magyar
-                : StackMergeLanguage.English;
+            // The language is stored as its enum index (0 = English ... 5 = Russian). Older saves used
+            // a 0/1 English/Magyar flag, which still resolves correctly since those indices match.
+            currentLanguage = (StackMergeLanguage)Mathf.Clamp(
+                PlayerPrefs.GetInt(LanguageSettingKey, 0), 0, StackMergeLocalization.LanguageCount - 1);
             StackMergeLocalization.CurrentLanguage = currentLanguage;
             blockNumeralStyle = (BlockNumeralStyle)Mathf.Clamp(PlayerPrefs.GetInt(BlockNumeralSettingKey, 0), 0, 5);
         }
@@ -3256,17 +3399,58 @@ namespace StackMerge
             WireVolumeSlider(sfxVolumeSlider, value => SetVolumeSetting(StackMergeVolumeChannel.Sfx, value));
             WireVolumeSlider(musicVolumeSlider, value => SetVolumeSetting(StackMergeVolumeChannel.Music, value));
 
+            if (hapticsToggle != null)
+            {
+                hapticsToggle.onValueChanged.RemoveAllListeners();
+                hapticsToggle.onValueChanged.AddListener(SetHapticsEnabled);
+            }
+
             if (exportSaveButton != null)
             {
                 exportSaveButton.onClick.RemoveAllListeners();
                 exportSaveButton.onClick.AddListener(ExportSaveToClipboard);
             }
 
+            // Settings 'Import' only OPENS the overlay; the actual import is the button inside it.
             if (importSaveButton != null)
             {
                 importSaveButton.onClick.RemoveAllListeners();
-                importSaveButton.onClick.AddListener(ImportSaveFromField);
+                importSaveButton.onClick.AddListener(OpenImportSaveOverlay);
             }
+
+            if (importSaveConfirmButton != null)
+            {
+                importSaveConfirmButton.onClick.RemoveAllListeners();
+                importSaveConfirmButton.onClick.AddListener(ImportSaveFromField);
+            }
+
+            if (importSaveBackButton != null)
+            {
+                importSaveBackButton.onClick.RemoveAllListeners();
+                importSaveBackButton.onClick.AddListener(CloseImportSaveOverlay);
+            }
+
+            // Click-outside-to-close, matching the other overlays.
+            AddOverlayBackdropClose(importSaveOverlay, CloseImportSaveOverlay);
+        }
+
+        private void OpenImportSaveOverlay()
+        {
+            if (importSaveOverlay == null)
+            {
+                ShowFeedbackModal("Import Save Overlay is not assigned.");
+                return;
+            }
+
+            // Start from a clean field each time so a previous paste is not silently re-imported.
+            saveCodeInput?.SetTextWithoutNotify(string.Empty);
+            ShowOverlayAnimated(importSaveOverlay);
+        }
+
+        private void CloseImportSaveOverlay()
+        {
+            SetActive(importSaveOverlay, false);
+            PlaySfx(StackMergeSfx.UiPanelClose);
         }
 
         // ------------------------------------------------------------------------------------------
@@ -3330,6 +3514,21 @@ namespace StackMerge
             slider.onValueChanged.AddListener(handler);
         }
 
+        private void SetHapticsEnabled(bool on)
+        {
+            if (syncingSettingsControls || hapticsService == null)
+            {
+                return;
+            }
+
+            hapticsService.Enabled = on;
+            // Confirm the change on the body — turning it on should immediately be felt.
+            if (on)
+            {
+                StackMergeHaptics.Play(StackMergeHapticPattern.Medium);
+            }
+        }
+
         private void SetVolumeSetting(StackMergeVolumeChannel channel, float value)
         {
             if (syncingSettingsControls || audioService == null)
@@ -3368,6 +3567,11 @@ namespace StackMerge
                 masterVolumeSlider?.SetValueWithoutNotify(audioService.MasterVolume);
                 sfxVolumeSlider?.SetValueWithoutNotify(audioService.SfxVolume);
                 musicVolumeSlider?.SetValueWithoutNotify(audioService.MusicVolume);
+            }
+
+            if (hapticsService != null)
+            {
+                hapticsToggle?.SetIsOnWithoutNotify(hapticsService.Enabled);
             }
 
             if (showFpsToggle != null)
@@ -3413,15 +3617,28 @@ namespace StackMerge
             }
 
             ConfigureDropdownTextReferences(languageDropdown);
-            if (languageDropdown.options.Count != 2
-                || !IsLanguageOption(languageDropdown.options[0].text, StackMergeLanguage.English)
-                || !IsLanguageOption(languageDropdown.options[1].text, StackMergeLanguage.Magyar))
+            // Build one option per language, in enum order, using each language's own native name — so
+            // the dropdown index equals (int)StackMergeLanguage. Rebuild only when the option list does
+            // not already match, to avoid clobbering a hand-authored dropdown every frame.
+            string[] names = StackMergeLocalization.NativeLanguageNames;
+            bool matches = languageDropdown.options.Count == names.Length;
+            for (int i = 0; matches && i < names.Length; i++)
             {
-                languageDropdown.options = new List<TMP_Dropdown.OptionData>
+                if (!string.Equals(NormalizeLookupName(languageDropdown.options[i].text), NormalizeLookupName(names[i]), StringComparison.Ordinal))
                 {
-                    new("English"),
-                    new("Magyar")
-                };
+                    matches = false;
+                }
+            }
+
+            if (!matches)
+            {
+                var options = new List<TMP_Dropdown.OptionData>(names.Length);
+                for (int i = 0; i < names.Length; i++)
+                {
+                    options.Add(new TMP_Dropdown.OptionData(names[i]));
+                }
+
+                languageDropdown.options = options;
             }
 
             languageDropdown.RefreshShownValue();
@@ -3463,55 +3680,15 @@ namespace StackMerge
             dropdown.itemText = itemToggle != null ? itemToggle.GetComponentInChildren<TMP_Text>(true) : null;
         }
 
+        // The dropdown is built in enum order (ConfigureLanguageDropdownFromScene), so index == enum int.
         private int GetLanguageDropdownIndex(StackMergeLanguage language)
         {
-            if (languageDropdown != null)
-            {
-                for (int i = 0; i < languageDropdown.options.Count; i++)
-                {
-                    if (IsLanguageOption(languageDropdown.options[i].text, language))
-                    {
-                        return i;
-                    }
-                }
-
-                if (languageDropdown.options.Count > 0)
-                {
-                    return language == StackMergeLanguage.Magyar
-                        ? Mathf.Min(1, languageDropdown.options.Count - 1)
-                        : 0;
-                }
-            }
-
-            return 0;
+            return Mathf.Clamp((int)language, 0, StackMergeLocalization.LanguageCount - 1);
         }
 
         private StackMergeLanguage ResolveLanguageDropdownSelection(int index)
         {
-            if (languageDropdown != null && index >= 0 && index < languageDropdown.options.Count)
-            {
-                if (IsLanguageOption(languageDropdown.options[index].text, StackMergeLanguage.Magyar))
-                {
-                    return StackMergeLanguage.Magyar;
-                }
-
-                if (IsLanguageOption(languageDropdown.options[index].text, StackMergeLanguage.English))
-                {
-                    return StackMergeLanguage.English;
-                }
-            }
-
-            return index == GetLanguageDropdownIndex(StackMergeLanguage.Magyar)
-                ? StackMergeLanguage.Magyar
-                : StackMergeLanguage.English;
-        }
-
-        private static bool IsLanguageOption(string optionText, StackMergeLanguage language)
-        {
-            string optionName = NormalizeLookupName(optionText);
-            return language == StackMergeLanguage.Magyar
-                ? optionName == "magyar"
-                : optionName == "english" || optionName == "angol";
+            return (StackMergeLanguage)Mathf.Clamp(index, 0, StackMergeLocalization.LanguageCount - 1);
         }
 
         private void TickDropdownSelectionVisuals()
@@ -3665,7 +3842,7 @@ namespace StackMerge
             currentLanguage = ResolveLanguageDropdownSelection(index);
             lastLanguageDropdownValue = index;
             StackMergeLocalization.CurrentLanguage = currentLanguage;
-            PlayerPrefs.SetInt(LanguageSettingKey, currentLanguage == StackMergeLanguage.Magyar ? 1 : 0);
+            PlayerPrefs.SetInt(LanguageSettingKey, (int)currentLanguage);
             PlayerPrefs.Save();
             ApplyLanguageToUi();
             RefreshBlockNumeralDropdown();
@@ -3694,6 +3871,15 @@ namespace StackMerge
             RefreshTabButtons();
             RefreshBottomMenuIconStates();
             SyncSettingsControls();
+
+            // Translated labels change width (e.g. the "New run" button), but the gameplay sections are
+            // laid out manually and their ContentSizeFitters don't reflow on a pure text change. Force a
+            // full gameplay layout pass so nothing is left clipped or mis-sized after switching language.
+            if (selectedTabIndex == 0 && !historyOpen && !achievementsOpen)
+            {
+                ForceGameplayLayoutPass();
+                ScheduleGameplayLayoutWarmup(TabGameplayLayoutWarmupFrames);
+            }
         }
 
         private void ApplySettingsPanelLocalization()
@@ -4315,24 +4501,26 @@ namespace StackMerge
                 };
             }
 
-            if (entry != null && !string.IsNullOrWhiteSpace(entry.title))
-            {
-                return entry.title;
-            }
+            string english = entry != null && !string.IsNullOrWhiteSpace(entry.title)
+                ? entry.title
+                : layer switch
+                {
+                    StackMergeHowToPlayLayer.Gameplay => "Welcome!",
+                    StackMergeHowToPlayLayer.Algorithms => "Algorithms",
+                    StackMergeHowToPlayLayer.Upgrades => "Upgrades",
+                    StackMergeHowToPlayLayer.Agents => "Agents",
+                    StackMergeHowToPlayLayer.Modifiers => "Modifiers",
+                    StackMergeHowToPlayLayer.Research => "Research",
+                    StackMergeHowToPlayLayer.Datacenter => "Datacenter",
+                    StackMergeHowToPlayLayer.History => "History",
+                    StackMergeHowToPlayLayer.Achievements => "Achievements",
+                    _ => "Help"
+                };
 
-            return layer switch
-            {
-                StackMergeHowToPlayLayer.Gameplay => "Welcome!",
-                StackMergeHowToPlayLayer.Algorithms => "Algorithms",
-                StackMergeHowToPlayLayer.Upgrades => "Upgrades",
-                StackMergeHowToPlayLayer.Agents => "Agents",
-                StackMergeHowToPlayLayer.Modifiers => "Modifiers",
-                StackMergeHowToPlayLayer.Research => "Research",
-                StackMergeHowToPlayLayer.Datacenter => "Datacenter",
-                StackMergeHowToPlayLayer.History => "History",
-                StackMergeHowToPlayLayer.Achievements => "Achievements",
-                _ => "Help"
-            };
+            // German / French / Spanish / Russian route through the dictionary (English text = key).
+            return StackMergeLocalization.CurrentLanguage == StackMergeLanguage.English
+                ? english
+                : StackMergeLocalization.Translate(english);
         }
 
         private static string GetMenuHelpBody(StackMergeHowToPlayLayer layer, MenuHelpOverlayEntry entry)
@@ -4388,11 +4576,17 @@ namespace StackMerge
                 };
             }
 
-            if (entry != null && !string.IsNullOrWhiteSpace(entry.body))
-            {
-                return entry.body;
-            }
+            string english = entry != null && !string.IsNullOrWhiteSpace(entry.body)
+                ? entry.body
+                : EnglishMenuHelpBody(layer);
 
+            return StackMergeLocalization.CurrentLanguage == StackMergeLanguage.English
+                ? english
+                : StackMergeLocalization.Translate(english);
+        }
+
+        private static string EnglishMenuHelpBody(StackMergeHowToPlayLayer layer)
+        {
             return layer switch
             {
                 StackMergeHowToPlayLayer.Gameplay => "Place the blocks into one of the four stacks.\n\n" +
@@ -5051,7 +5245,7 @@ namespace StackMerge
                     }
 
                     autoRestartTimer += Time.deltaTime;
-                    SetText(runStatusText, $"Restart in {Mathf.Max(0f, AutoRestartDelay - autoRestartTimer):0.0}s");
+                    SetText(runStatusText, $"{L("Restart in")} {Mathf.Max(0f, AutoRestartDelay - autoRestartTimer):0.0}s");
                     RebuildTextLayout(runStatusText);
                     UpdateGameOverAutoRestartSlider();
                     if (autoRestartTimer >= AutoRestartDelay)
@@ -5086,6 +5280,23 @@ namespace StackMerge
             if (solverDeselected && !progression.IsMachineLearningTrainingActive)
             {
                 return;
+            }
+
+            // Startup grace period: on launch the solver would otherwise begin playing (and firing
+            // sounds) before the player has even seen the board. Hold the first move for a moment and
+            // count it down in the moves readout, but only while nothing has happened yet — a single
+            // placed block ends the countdown for good.
+            if (startupActivationTimer > 0f && gameState.BlocksDropped <= 0)
+            {
+                startupActivationTimer -= Time.deltaTime;
+                float remaining = Mathf.Max(0f, startupActivationTimer);
+                // English is passed raw; SetText runs it through the localizer (which knows the
+                // "Algorithm activates in " prefix), so this must NOT be pre-translated.
+                SetText(droppedText, $"Algorithm activates in {remaining.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}s");
+                if (startupActivationTimer > 0f)
+                {
+                    return;
+                }
             }
 
             autoSolveTimer += Time.deltaTime;
@@ -5421,6 +5632,7 @@ namespace StackMerge
             }
 
             PlayMoveAudio(result);
+            PlayMoveHaptics(result, autoSolverMove);
 
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             long chipsGained = progression.AwardMove(result, machineLearningTraining);
@@ -5456,22 +5668,23 @@ namespace StackMerge
             UpdateHighScore();
             QueueAchievementNotificationsForNewCompletions();
 
+            // Fixed label pieces are translated via L(); the dynamic numbers/values stay.
             string chipText = machineLearningTraining
-                ? "training: +0 chips"
+                ? L("training: +0 chips")
                 : $"+{FormatNumber(chipsGained + runBonus)} <sprite name=\"chips\" tint=1>";
             string moveText = result.ActionKind switch
             {
-                SolverActionKind.Pickaxe => $"Pickaxe -{FormatBlockValue(result.RemovedValue)}",
-                SolverActionKind.QueueSkip => $"Scrubbed {FormatBlockValue(result.RemovedValue)}",
+                SolverActionKind.Pickaxe => $"{L("Pickaxe")} -{FormatBlockValue(result.RemovedValue)}",
+                SolverActionKind.QueueSkip => $"{L("Scrubbed")} {FormatBlockValue(result.RemovedValue)}",
                 _ => result.MergeCount > 0
-                    ? $"Merge x{result.MergeCount}: {FormatBlockValue(result.ResultingTopValue)}"
+                    ? $"{L("Merge")} x{result.MergeCount}: {FormatBlockValue(result.ResultingTopValue)}"
                     : $"+{FormatBlockValue(result.PlacedValue)}"
             };
 
             // Combo Engine: surface the running streak so the multiplier is visible in play.
             if (progression.ComboEngineLevel > 0 && progression.CurrentComboStreak >= 2)
             {
-                moveText += $" | Combo x{progression.CurrentComboStreak}";
+                moveText += $" | {L("Combo")} x{progression.CurrentComboStreak}";
             }
             string resultReason = string.IsNullOrWhiteSpace(result.Reason)
                 ? reason
@@ -5479,7 +5692,7 @@ namespace StackMerge
                     ? result.Reason
                     : $"{reason}; {result.Reason}";
             string learningText = progression.SelectedSolver == SolverId.MachineLearning
-                ? $" | PPO knowledge {progression.MachineLearningSkill * 100f:0}%"
+                ? $" | {L("PPO knowledge")} {progression.MachineLearningSkill * 100f:0}%"
                 : string.Empty;
             SetText(feedbackText, $"{moveText}\n{chipText}{learningText}\n{resultReason}");
 
@@ -5498,6 +5711,19 @@ namespace StackMerge
 
         // Fires the gameplay sounds for one accepted move. Ordering matters: the rarest, loudest event
         // wins the frame's voice budget, so a new-high merge is never drowned out by the placement tick.
+        // True only while the player is actually looking at the board (gameplay tab, no full-screen
+        // panel over it). Gameplay sounds are gated on this so off-screen solver moves stay silent.
+        private bool IsGameplayViewActive()
+        {
+            return selectedTabIndex == 0 && !historyOpen && !achievementsOpen;
+        }
+
+        // Drives the audio service's smooth gameplay-SFX duck each frame from the current view.
+        private void TickGameplaySfxGate()
+        {
+            StackMergeAudio.SetGameplaySfxActive(IsGameplayViewActive());
+        }
+
         private void PlayMoveAudio(MoveResult result)
         {
             // Both flags are also read by PlayMoveJuice, so they must be updated even when audio is
@@ -5515,6 +5741,12 @@ namespace StackMerge
                 && progression != null
                 && result.ResultingTopValue > progression.LifetimeHighestBlockEver;
 
+            // Gameplay sounds are tied to WATCHING the board. The solver keeps playing on other tabs
+            // (it is an idle game), but firing block/merge/game-over sounds while the player reads the
+            // Upgrades or Agents menu is off-screen noise. Rather than a hard gate here, the sounds are
+            // still requested and StackMergeAudio's gameplay-SFX gate (driven each frame by
+            // TickGameplaySfxGate) fades them out/in over ~0.5s — so leaving the tab tapers the solver's
+            // sound stream instead of cutting it dead.
             if (audioService == null || !audioService.HasAnyAudio)
             {
                 return;
@@ -5554,10 +5786,73 @@ namespace StackMerge
                 PlaySfx(StackMergeSfx.BlockPlace);
             }
 
-            if (result.IsGameOver)
+            // NOTE: the game-over sound is NOT played here. A run can end through several different code
+            // paths (a legal final move, a stuck-run dead end, an invalid solver decision), and RAND/PPO
+            // reach the non-move ones so often that hooking any single path missed ~half of them.
+            // TickGameOverAudio detects the game-over TRANSITION in one place instead.
+        }
+
+        // Haptics for a move (user's chosen mapping):
+        //   all-time record (either mode) -> Heavy
+        //   solver stream                 -> Selection ONLY on a run-local new high, nothing otherwise
+        //   manual placement              -> Selection
+        //   manual merge                  -> Light
+        // PlayMoveAudio, called just before this, has already set the two "new high" flags.
+        private void PlayMoveHaptics(MoveResult result, bool autoSolverMove)
+        {
+            // Gameplay-menu haptics only fire while the player is actually on the gameplay view — the
+            // solver keeps playing under other menus, but its buzzes there would be off-screen noise.
+            if (hapticsService == null || !IsGameplayViewActive())
             {
-                PlaySfx(StackMergeSfx.GameOver);
+                return;
             }
+
+            if (lastMoveWasLifetimeRecord)
+            {
+                StackMergeHaptics.Play(StackMergeHapticPattern.Heavy);
+                return;
+            }
+
+            if (autoSolverMove)
+            {
+                // The solver's rapid stream stays silent except for a run-local new high — a small,
+                // occasional Selection tick that marks progress without buzzing on every move.
+                if (lastMoveWasNewHigh)
+                {
+                    StackMergeHaptics.Play(StackMergeHapticPattern.Selection);
+                }
+
+                return;
+            }
+
+            StackMergeHaptics.Play(result.MergeCount > 0
+                ? StackMergeHapticPattern.Light
+                : StackMergeHapticPattern.Selection);
+        }
+
+        // Plays the game-over cue exactly once, when the game transitions into game over, regardless of
+        // which path caused it. Training mode is deliberately silent (it has no game-over screen — it
+        // just evaluates and restarts). The Medium haptic fires only for a MANUAL run's game over
+        // (per the user's mapping) — a solver ending its own fast runs should not buzz.
+        private void TickGameOverAudio()
+        {
+            bool isGameOver = gameState != null && gameState.IsGameOver;
+            if (isGameOver && !audioWasGameOver)
+            {
+                bool training = progression != null && progression.IsMachineLearningTrainingActive;
+                if (!training)
+                {
+                    PlaySfx(StackMergeSfx.GameOver);
+
+                    bool manualRun = currentRunManualMoves > 0 && !currentRunUsedAutoSolve;
+                    if (manualRun && IsGameplayViewActive())
+                    {
+                        StackMergeHaptics.Play(StackMergeHapticPattern.Medium);
+                    }
+                }
+            }
+
+            audioWasGameOver = isGameOver;
         }
 
         // Awards the run-completion rewards (chips, history, ML run) for the current game state.
@@ -5632,6 +5927,8 @@ namespace StackMerge
         {
             bool machineLearningTraining = progression.IsMachineLearningTrainingActive;
             gameState.ForceGameOver();
+            // Game-over sound is handled centrally by TickGameOverAudio (transition detection), so it is
+            // NOT played here — this path no longer needs to know about audio.
             CompleteRun(machineLearningTraining);
             StartGameOverOverlayDelay();
             progression.Save();
@@ -5690,6 +5987,8 @@ namespace StackMerge
             currentRunChipsEarned = 0L;
             timeSinceLastAcceptedMove = float.MaxValue;
             audioHighestBlockThisRun = 0;
+            // RunStart is a gameplay sound, so the gameplay-SFX gate already ducks it to silence when
+            // the player is on another tab — no explicit tab check needed here.
             PlaySfx(StackMergeSfx.RunStart);
             gameOverOverlayTimer = 0f;
             nextTrainingOverlayRefreshTime = 0f;
@@ -6600,12 +6899,12 @@ namespace StackMerge
             double totalGigaflops = progression.DatacenterTotalGigaflops;
 
             SetText(datacenterComputeText, unlocked
-                ? $"Total compute: {FormatFlops(totalGigaflops)}"
-                : $"Locked — reach Prestige {StackMergeProgression.DatacenterUnlockPrestigeCount} ({progression.PrestigeCount}/{StackMergeProgression.DatacenterUnlockPrestigeCount})");
+                ? $"{L("Total compute")}: {FormatFlops(totalGigaflops)}"
+                : $"{L("Locked")} — {L("reach Prestige")} {StackMergeProgression.DatacenterUnlockPrestigeCount} ({progression.PrestigeCount}/{StackMergeProgression.DatacenterUnlockPrestigeCount})");
 
             // --- Allocation ---
             float allocatedTotal = progression.DatacenterAllocatedFraction;
-            SetText(datacenterAllocationTotalText, $"{Mathf.RoundToInt(allocatedTotal * 100f)}% allocated");
+            SetText(datacenterAllocationTotalText, $"{Mathf.RoundToInt(allocatedTotal * 100f)}% {L("allocated")}");
             if (datacenterAllocationSegments != null)
             {
                 // Stacked bar: each segment spans its share of the 0..1 anchor range; whatever is
@@ -6668,7 +6967,7 @@ namespace StackMerge
             }
 
             // --- Racks ---
-            SetText(datacenterRackUnitsText, $"{progression.TotalDatacenterRackUnits} units");
+            SetText(datacenterRackUnitsText, $"{progression.TotalDatacenterRackUnits} {L("units")}");
             for (int i = 0; i < datacenterRackRows.Length; i++)
             {
                 DatacenterItemRow row = datacenterRackRows[i];
@@ -6681,7 +6980,7 @@ namespace StackMerge
                 int count = progression.GetDatacenterRackCount(rackId);
                 double unitFlops = progression.GetDatacenterRackUnitGigaflops(rackId);
                 long cost = progression.GetDatacenterRackCost(rackId);
-                SetText(row.prodText, $"unit: {FormatFlops(unitFlops)} - total: {FormatFlops(count * unitFlops)}");
+                SetText(row.prodText, $"{L("unit")}: {FormatFlops(unitFlops)} - {L("total")}: {FormatFlops(count * unitFlops)}");
                 SetText(row.unitsText, $"x{count}");
                 if (row.buyButton != null)
                 {
@@ -6734,17 +7033,19 @@ namespace StackMerge
         private static string GetDatacenterAllocationBody(DatacenterAllocationId allocationId)
         {
             bool magyar = StackMergeLocalization.CurrentLanguage == StackMergeLanguage.Magyar;
+            // Hungarian keeps its hand-written text; every other non-English language routes the English
+            // source through the dictionary (English returns as-is).
             return allocationId switch
             {
                 DatacenterAllocationId.TrainingCluster => magyar
                     ? "Passzívan tanítja a PPO-t, ami a Normál Mód frames-be beleszámít. <b>A PPO permanens tanul akkor is, amikor nincs használva.</b>"
-                    : "Passively trains PPO, which counts as Training Mode frames. <b>PPO learns permanently even when not in use.</b>",
+                    : L("Passively trains PPO, which counts as Training Mode frames. <b>PPO learns permanently even when not in use.</b>"),
                 DatacenterAllocationId.AnalysisNode => magyar
                     ? "Passzívan termel <sprite name=\"insight\" tint=1>-ot a játék bármelyik szakaszában, így a PPO-t innentől kezdve nem kell ehhez Normál Módban használni."
-                    : "Passively generates <sprite name=\"insight\" tint=1> at any stage of the game, so using PPO in Normal Mode is no longer required for that.",
+                    : L("Passively generates <sprite name=\"insight\" tint=1> at any stage of the game, so using PPO in Normal Mode is no longer required for that."),
                 DatacenterAllocationId.MarketBots => magyar
                     ? "Bevételi szorzód ad mindennek, ami bármilyen formában <sprite name=\"chips\" tint=1>-et termel."
-                    : "It gives an income multiplier to everything that produces <sprite name=\"chips\" tint=1> in any form.",
+                    : L("It gives an income multiplier to everything that produces <sprite name=\"chips\" tint=1> in any form."),
                 _ => string.Empty
             };
         }
@@ -6769,11 +7070,12 @@ namespace StackMerge
 
         private static string GetDatacenterFacilityEffectText(DatacenterFacilityId facilityId, int level)
         {
+            string total = L("total");
             return facilityId switch
             {
-                DatacenterFacilityId.PowerGrid => $"+5% rack FLOPS - total: +{level * 5}%",
-                DatacenterFacilityId.CoolingLoop => $"+10% rack FLOPS - total: +{level * 10}%",
-                _ => $"x1.18 TPU / Fabric - total: x{1.0 + level * 0.18:0.00}"
+                DatacenterFacilityId.PowerGrid => $"+5% {L("rack FLOPS")} - {total}: +{level * 5}%",
+                DatacenterFacilityId.CoolingLoop => $"+10% {L("rack FLOPS")} - {total}: +{level * 10}%",
+                _ => $"x1.18 {L("TPU / Fabric")} - {total}: x{1.0 + level * 0.18:0.00}"
             };
         }
 
@@ -6983,7 +7285,7 @@ namespace StackMerge
             SetActive(prestigeResetAmountText != null ? prestigeResetAmountText.gameObject : null, false);
             if (prestigeResetBuyButton != null)
             {
-                SetButtonText(prestigeResetBuyButton, $"Reset for <sprite name=\"insight\" tint=1> {FormatNumber(gain)}");
+                SetButtonText(prestigeResetBuyButton, $"{L("Reset for")} <sprite name=\"insight\" tint=1> {FormatNumber(gain)}");
                 prestigeResetBuyButton.interactable = gain > 0;
             }
         }
@@ -7337,6 +7639,7 @@ namespace StackMerge
             }
 
             PlaySfx(StackMergeSfx.Prestige);
+            StackMergeHaptics.Play(StackMergeHapticPattern.Prestige);
             if (juiceService != null)
             {
                 juiceService.Flash(PrestigeFlashColor, 0.7f);
@@ -7765,7 +8068,7 @@ namespace StackMerge
                 droppedText,
                 gameState.BlocksDropped <= 0
                     ? "The run hasn't started yet."
-                    : $"{FormatNumber(gameState.BlocksDropped)} moves");
+                    : $"{FormatNumber(gameState.BlocksDropped)} {L("moves")}");
 
             bool trainingView = progression != null
                 && progression.IsMachineLearningTrainingActive
@@ -8679,6 +8982,9 @@ namespace StackMerge
                     bool showTuneButton = unlocked && progression.SolverTuningUnlocked && tuningDefinition.HasParameters;
                     card.tuneButton.gameObject.SetActive(showTuneButton);
                     card.tuneButton.interactable = showTuneButton;
+                    // The label was static "Tune" in the scene and so never went through the localizer;
+                    // set it here (SetButtonText runs it through Translate → "Hangolás").
+                    SetButtonText(card.tuneButton, "Tune");
                 }
             }
         }
@@ -9039,37 +9345,34 @@ namespace StackMerge
             SolverTuningDefinition tuningDefinition = StackMergeSolverCatalog.GetTuningDefinition(solverId);
             SolverTuningSettings tuning = progression.GetSolverTuning(solverId);
 
+            // These lines are composed from dynamic values ("Auto solve: ON"), so the whole line is never
+            // a dictionary key. Each fixed label/value piece is translated individually via L() instead,
+            // which is why the panel now localizes (it previously stayed English even in Hungarian).
             if (!IsManualModeActive())
             {
-                builder.AppendLine($"Solver: {solverDefinition.DisplayName}");
+                builder.AppendLine($"{L("Solver")}: {solverDefinition.DisplayName}");
             }
 
             if (solverId == SolverId.MachineLearning)
             {
-                builder.AppendLine(progression.IsMachineLearningTrainingActive ? "Mode: PPO Training" : "Mode: PPO Normal");
+                builder.AppendLine($"{L("Mode")}: PPO {(progression.IsMachineLearningTrainingActive ? L("Training Mode") : L("Normal Mode"))}");
             }
 
             if (IsManualModeActive())
             {
-                builder.AppendLine("Mode: Manual");
-                builder.AppendLine();
-                if (gameState != null)
-                {
-                    builder.AppendLine($"<b>Available Mods</b>");
-                    builder.AppendLine($"{gameState.PickaxeUsesRemaining} Miner's Pickaxe\n{gameState.QueueSkipsRemaining} Queue Scrubber");
-                }
+                builder.AppendLine($"{L("Mode")}: {L("Manual")}");
 
                 builder.AppendLine();
-                builder.AppendLine("<b>Manual controls</b>");
-                builder.AppendLine("Tap a stack to place the current next block.");
+                builder.AppendLine(L("<b>Manual controls</b>"));
+                builder.AppendLine(L("Tap a stack to place the current next block."));
                 if (IsGameplayModifierUnlocked(ModifierId.MinersPickaxe))
                 {
-                    builder.AppendLine("Equip Miner's Pickaxe, then tap a stack block to remove it.");
+                    builder.AppendLine(L("Equip Miner's Pickaxe, then tap a stack block to remove it."));
                 }
 
                 if (IsGameplayModifierUnlocked(ModifierId.QueueScrubber))
                 {
-                    builder.AppendLine("Equip Queue Scrubber, then tap the first next block to remove it.");
+                    builder.AppendLine(L("Equip Queue Scrubber, then tap the first next block to remove it."));
                 }
 
                 SetText(gameplayInfoText, builder.ToString());
@@ -9078,47 +9381,96 @@ namespace StackMerge
 
             builder.AppendLine();
 
-            builder.AppendLine($"Auto solve: {(progression.AutoSolveEnabled ? "ON" : "OFF")}");
-            builder.AppendLine($"Auto restart: {(progression.AutoRestartEnabled ? progression.AutoRestartIsTokenFree ? "ON (free)" : $"ON ({progression.Tokens} tokens)" : "OFF")}");
-            builder.AppendLine($"Stack capacity: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
-            //builder.AppendLine($"Difficulty: Level {progression.DifficultyLevel}");
-            //builder.AppendLine($"Speed: Level {progression.SpeedLevel} ({progression.MoveInterval:0.00}s)");
+            string autoSolveState = L(progression.AutoSolveEnabled ? "Enabled" : "Disabled");
+            string autoRestartState = progression.AutoRestartEnabled
+                ? progression.AutoRestartIsTokenFree
+                    ? L("Enabled")
+                    : $"{L("Enabled")} ({progression.Tokens} <sprite name=\"token\" tint=1>)"
+                : L("Disabled");
+            builder.AppendLine($"{L("Auto solve")}: {autoSolveState}");
+            builder.AppendLine($"{L("Auto restart")}: {autoRestartState}");
+            builder.AppendLine($"{L("Stack capacity")}: {progression.StackCapacity}/{StackMergeGameState.MaxStackCapacity}");
 
             builder.AppendLine();
 
-            if (progression.NeuralAcceleratorActive)
-            {
-                builder.AppendLine("Neural Accelerator speed boost active");
-            }
-
-            builder.AppendLine();
-
-            //if (gameState != null)
-            //{
-            //    builder.AppendLine($"Mods: {gameState.UnstableSavesRemaining} Unstable Stack, {gameState.PickaxeUsesRemaining} Miner's Pickaxe, {gameState.QueueSkipsRemaining} Queue Scrubber");
-            //    builder.AppendLine($"Special blocks: {(gameState.JokerBlocksEnabled ? "Joker ON" : "Joker OFF")}, Mirror: {(gameState.MirrorStackEnabled ? "ON" : "OFF")}");
-            //}
-            //builder.AppendLine();
-            builder.AppendLine("<b>Solver tuning</b>");
+            builder.AppendLine($"<b>{L("Solver tuning")}</b>");
 
             if (!progression.SolverTuningUnlocked)
             {
-                builder.AppendLine("Locked in Upgrades.");
+                builder.AppendLine(L("Locked in Upgrades."));
             }
             else if (!tuningDefinition.HasParameters)
             {
-                builder.AppendLine("No tuning available for this solver.");
+                builder.AppendLine(L("No tuning available for this solver."));
             }
             else
             {
                 for (int i = 0; i < tuningDefinition.Parameters.Length; i++)
                 {
                     SolverTuningParameterDefinition parameter = tuningDefinition.Parameters[i];
-                    builder.AppendLine($"{parameter.DisplayName}: {parameter.FormatValue(tuning.GetSlotValue(i))}");
+                    builder.AppendLine($"{L(parameter.DisplayName)}: {parameter.FormatValue(tuning.GetSlotValue(i))}");
                 }
             }
 
             SetText(gameplayInfoText, builder.ToString());
+        }
+
+        // Short alias for the localizer, used where a line is composed from translated pieces.
+        private static string L(string source) => StackMergeLocalization.Translate(source);
+
+        // Research effect summaries are composed with dynamic numbers ("Offline cap 1h >> Offline cap 3h"),
+        // so they are never whole dict keys. Each half is first tried as an exact key (sentence forms like
+        // "Start with BAL." and the Hungarian .Replace path handle themselves); otherwise the known English
+        // label prefixes/suffixes are swapped for their dictionary translations, leaving the numbers intact.
+        private static readonly string[] ResearchEffectPrefixes =
+        {
+            "Offline cap ", "Offline efficiency ", "New-high learning ", "Survival shaping ",
+            "PPO Normal mode at ", "Start with "
+        };
+        private static readonly string[] ResearchEffectSuffixes = { " cycle frames", " frames retained" };
+
+        private static string LocalizeResearchEffect(string effectDisplay)
+        {
+            if (string.IsNullOrEmpty(effectDisplay) || StackMergeLocalization.CurrentLanguage == StackMergeLanguage.English)
+            {
+                return effectDisplay;
+            }
+
+            string[] halves = effectDisplay.Split(new[] { " >> " }, StringSplitOptions.None);
+            for (int i = 0; i < halves.Length; i++)
+            {
+                string half = halves[i];
+                string exact = StackMergeLocalization.Translate(half);
+                if (!string.Equals(exact, half, StringComparison.Ordinal))
+                {
+                    halves[i] = exact;
+                    continue;
+                }
+
+                foreach (string prefix in ResearchEffectPrefixes)
+                {
+                    if (half.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        string label = prefix.TrimEnd();
+                        half = StackMergeLocalization.Translate(label) + half.Substring(label.Length);
+                        break;
+                    }
+                }
+
+                foreach (string suffix in ResearchEffectSuffixes)
+                {
+                    if (half.EndsWith(suffix, StringComparison.Ordinal))
+                    {
+                        string label = suffix.TrimStart();
+                        half = half.Substring(0, half.Length - label.Length) + StackMergeLocalization.Translate(label);
+                        break;
+                    }
+                }
+
+                halves[i] = half;
+            }
+
+            return string.Join(" >> ", halves);
         }
 
         private void RefreshAgentButtons()
@@ -10207,7 +10559,7 @@ namespace StackMerge
             string reason = progression.GetResearchUnavailableReason(selectedResearchId);
 
             SetText(researchDetailNameText, definition.DisplayName);
-            SetText(researchDetailStatusText, $"Level {level}/{definition.MaxLevel}");
+            SetText(researchDetailStatusText, $"{L("Level")} {level}/{definition.MaxLevel}");
 
             //string availability = maxed
             //    ? "This research is maxed."
@@ -10215,7 +10567,7 @@ namespace StackMerge
             //        ? $"Ready to buy for <sprite name=\"insight\" tint=1> {FormatNumber(progression.GetResearchCost(selectedResearchId))}."
             //        : string.Empty;
 
-            string detailText = $"{definition.Description}\n\nEffect: {effectDisplay}";
+            string detailText = $"{definition.Description}\n\n{L("Effect")}: {LocalizeResearchEffect(effectDisplay)}";
             //if (!string.IsNullOrEmpty(availability))
             //{
             //    detailText += $"\n\n{availability}";
@@ -10393,8 +10745,16 @@ namespace StackMerge
                 tab.icon ??= FindNamedDescendant(tab.button.transform, "Icon")?.GetComponent<Image>();
                 tab.text ??= FindFirstNamedDescendant(tab.button.transform, "Text", "Label", "Name")?.GetComponent<TMP_Text>();
                 CacheAchievementTabDefaults(tab);
-                tab.button.onClick.RemoveAllListeners();
-                tab.button.onClick.AddListener(() => SelectAchievementTab(kind));
+                // Remove ONLY our own previous listener, never RemoveAllListeners: the latter also wipes
+                // the click sound the canvas feedback sweep attached via onClick, which is exactly why
+                // these tabs were silent while the How To Play tabs (which use RemoveListener) were not.
+                if (tab.clickAction != null)
+                {
+                    tab.button.onClick.RemoveListener(tab.clickAction);
+                }
+
+                tab.clickAction = () => SelectAchievementTab(kind);
+                tab.button.onClick.AddListener(tab.clickAction);
             }
         }
 
@@ -10645,6 +11005,10 @@ namespace StackMerge
                 y += rowHeight + 3f;
             }
 
+            // These rows are instantiated after the startup canvas sweep, and the info button above is
+            // wired with RemoveAllListeners — so their click sound / press animation has to be attached
+            // here, after the loop, or the SolverStatRow buttons stay silent.
+            HookButtonFeedback(root);
             SetManualContentHeight(root, y);
         }
 
@@ -10753,16 +11117,16 @@ namespace StackMerge
             SetText(achievementPlaytimeText, FormatDurationCompact(progression.TotalPlaytimeSeconds));
             SetText(
                 achievementStatsText,
-                $"Completed goals: {completed}/{goalCount}\n" +
-                $"Runs: {FormatNumber(progression.LifetimeRunsCompleted)} ({FormatNumber(progression.LifetimeManualRunsCompleted)} manual)\n" +
-                $"Resets: {FormatNumber(progression.PrestigeCount)}\n" +
-                $"Playtime: {FormatDurationCompact(progression.TotalPlaytimeSeconds)}\n" +
-                $"Moves: {FormatNumber(progression.LifetimeMoves)}\n" +
-                $"Merges: {FormatNumber(progression.LifetimeMerges)}\n" +
-                $"Highest: {progression.LifetimeHighestBlockEver}\n" +
-                $"Earned: {FormatNumber(progression.LifetimeChipsEarned)}\n" +
-                $"Spent: {FormatNumber(progression.LifetimeChipsSpent)}\n" +
-                $"Best run: {FormatNumber(progression.LifetimeBestRunScore)}");
+                $"{L("Completed goals")}: {completed}/{goalCount}\n" +
+                $"{L("Runs")}: {FormatNumber(progression.LifetimeRunsCompleted)} ({FormatNumber(progression.LifetimeManualRunsCompleted)} {L("manual")})\n" +
+                $"{L("Resets")}: {FormatNumber(progression.PrestigeCount)}\n" +
+                $"{L("Playtime")}: {FormatDurationCompact(progression.TotalPlaytimeSeconds)}\n" +
+                $"{L("Moves")}: {FormatNumber(progression.LifetimeMoves)}\n" +
+                $"{L("Merges")}: {FormatNumber(progression.LifetimeMerges)}\n" +
+                $"{L("Highest")}: {progression.LifetimeHighestBlockEver}\n" +
+                $"{L("Earned")}: {FormatNumber(progression.LifetimeChipsEarned)}\n" +
+                $"{L("Spent")}: {FormatNumber(progression.LifetimeChipsSpent)}\n" +
+                $"{L("Best run")}: {FormatNumber(progression.LifetimeBestRunScore)}");
 
             RefreshPpoProgressStats();
 
@@ -11120,28 +11484,25 @@ namespace StackMerge
             RunHistoryEntry[] solverRuns = progression.PlaythroughRunHistory.Where(entry => entry.solverId == (int)solverId).ToArray();
             int lifetime = progression.GetSolverLifetimeRuns(solverId);
 
-            SetText(solverInfoTitle, $"{definition.DisplayName} detail");
+            SetText(solverInfoTitle, $"{definition.DisplayName} — {L("Statistics")}");
 
+            // Structural labels translated per-piece via L() (same reason as the gameplay-info panel).
             var stats = new StringBuilder();
-            //stats.AppendLine(definition.Description);
-            //stats.AppendLine();
-            stats.AppendLine($"<b>Runs</b>\n" +
-                $"Total: <b>{FormatNumber(lifetime)}</b> (<b>{FormatNumber(solverRuns.Length)}</b> this playthrough)\n");
+            stats.AppendLine($"<b>{L("Runs")}</b>\n" +
+                $"{L("Total runs")}: <b>{FormatNumber(lifetime)}</b> (<b>{FormatNumber(solverRuns.Length)}</b>)\n");
             if (solverRuns.Length > 0)
             {
                 long[] scores = solverRuns.Select(entry => entry.score).OrderBy(value => value).ToArray();
-                stats.AppendLine($"<b>Score</b>\n" +
-                    $"Best: <b>{FormatNumber(scores[^1])}</b>\n" +
-                    $"Median: <b>{FormatNumber(Median(scores))}</b>\n" +
-                    $"Average: <b>{FormatNumber((long)scores.Average())}</b>");
-                stats.AppendLine($"Range: <b>{FormatNumber(scores[0])} – {FormatNumber(scores[^1])}</b>\n");
-                stats.AppendLine($"Highest block: <b>{FormatBlockValue(solverRuns.Max(entry => entry.highestMergedBlock))}</b>\n\n" +
-                    $"Average moves: <b>{solverRuns.Average(entry => entry.moves):0}</b>\n" +
-                    $"Average merges: <b>{solverRuns.Average(entry => entry.merges):0}</b>");
+                stats.AppendLine($"<b>{L("Score")}</b>\n" +
+                    $"{L("Best")}: <b>{FormatNumber(scores[^1])}</b>\n" +
+                    $"{L("Median")}: <b>{FormatNumber(Median(scores))}</b>");
+                stats.AppendLine($"{L("Highest")}: <b>{FormatBlockValue(solverRuns.Max(entry => entry.highestMergedBlock))}</b>\n\n" +
+                    $"{L("Total moves")}: <b>{solverRuns.Average(entry => entry.moves):0}</b>\n" +
+                    $"{L("Total merges")}: <b>{solverRuns.Average(entry => entry.merges):0}</b>");
             }
             else
             {
-                stats.AppendLine("No stored runs for this solver yet.");
+                stats.AppendLine(L("No completed runs yet. Let a run end to start collecting solver stats."));
             }
 
             if (solverId == SolverId.MachineLearning)
@@ -12462,9 +12823,19 @@ namespace StackMerge
         private static bool HasSubduedButtonLabel(Button button)
         {
             TMP_Text text = button != null ? button.GetComponentInChildren<TMP_Text>(true) : null;
-            return text != null
-                && (text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0
-                    || text.text.IndexOf("Mellőz", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (text == null || string.IsNullOrEmpty(text.text))
+            {
+                return false;
+            }
+
+            // The label is already localized, so matching the English/Hungarian words alone missed the
+            // "Deselect" state for German/French/Spanish/Russian (their translations share no substring).
+            // Compare against the CURRENT language's translation of "Deselect" as well.
+            string localizedDeselect = StackMergeLocalization.Translate("Deselect");
+            return text.text.IndexOf("Deselect", StringComparison.OrdinalIgnoreCase) >= 0
+                || text.text.IndexOf("Mellőz", StringComparison.OrdinalIgnoreCase) >= 0
+                || (!string.IsNullOrEmpty(localizedDeselect)
+                    && text.text.IndexOf(localizedDeselect, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         // Redesigned Upgrades menu: every upgrade button carries its own NameText + Cost/InfoText
@@ -12819,7 +13190,11 @@ namespace StackMerge
             "#22D3EE", // 2048
             "#2DD4BF", // 4096
             "#A3E635", // 8192
-            "#FACC15"  // 16384
+            "#FACC15", // 16384
+            "#FB7185", // 32768  — top tiers climb from hot rose into deep royal tones, so the rare
+            "#F43F5E", // 65536    high-value tiles read as increasingly "precious"
+            "#D946EF", // 131072
+            "#7C3AED"  // 262144
         };
 
         private static Color GetBlockColor(int value)

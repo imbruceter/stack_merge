@@ -7,12 +7,30 @@ namespace StackMerge
     public enum StackMergeLanguage
     {
         English = 0,
-        Magyar = 1
+        Magyar = 1,
+        Deutsch = 2,
+        Francais = 3,
+        Espanol = 4,
+        Russian = 5
     }
 
     public static class StackMergeLocalization
     {
         public static StackMergeLanguage CurrentLanguage { get; set; } = StackMergeLanguage.English;
+
+        // Native display names for the settings dropdown, indexed by (int)StackMergeLanguage.
+        public static readonly string[] NativeLanguageNames =
+        {
+            "English",
+            "Magyar",
+            "Deutsch",
+            "Français",
+            "Español",
+            "Русский"
+        };
+
+        // The number of selectable languages, so the bootstrap can build the dropdown without hardcoding.
+        public static int LanguageCount => NativeLanguageNames.Length;
 
         private static readonly Dictionary<StackMergeLanguage, Dictionary<string, string>> RegisteredTranslations = new();
 
@@ -36,6 +54,7 @@ namespace StackMerge
             ["Select"] = "Kiválaszt",
             ["Deselect"] = "Mellőz",
             ["Tune"] = "Hangolás",
+            ["Change mode"] = "Mód váltás",
             ["Buy"] = "Vásárlás",
             ["Equip"] = "Felszerel",
             ["Unequip"] = "Levesz",
@@ -48,6 +67,11 @@ namespace StackMerge
             ["Auto solving"] = "Auto megoldás",
             ["Run ended"] = "Run vége",
             ["Run time"] = "Run ideje",
+
+            //Modal headers
+
+            ["Config info"] = "Konfig infó",
+            ["Import save"] = "Mentés importálása",
 
             ["Automatization"] = "Automatizáció",
             ["Income Bonus"] = "Bevétel Bónusz",
@@ -79,6 +103,8 @@ namespace StackMerge
 
             ["Collection"] = "Gyűjtemény",
 
+            ["PPO Training complete — prestige reset unlocked."] = "PPO Tréning befejeződött — prestige visszaállítás feloldva.",
+
             ["Auto restart needs token"] = "Az auto újraindításhoz token kell",
             ["The run hasn't started yet."] = "A run még nem indult el.",
             ["No moves left — run over"] = "Nincs több lépés - a run véget ért",
@@ -106,10 +132,12 @@ namespace StackMerge
             ["Training: keeps learning, earns no chips.\nNormal: plays for chips like other solvers."] = "Tréning: tovább tanul, de nem szerez chipet.\nNormál: chipekért játszik, mint a többi solver.",
             ["Music"] = "Zene",
             ["Sound"] = "Hang",
+            ["Enable haptic feedback"] = "Haptikus visszajelzés engedélyezése",
             ["Show FPS"] = "FPS mutatása",
             ["Hide FPS"] = "FPS elrejtése",
             ["Achievement Pop-ups"] = "Eredmény értesítések",
             ["Hide achievement pop-ups"] = "Eredmény értesítések elrejtése",
+            ["Export / Import game"] = "Játék exportálása / importálása",
             ["Language"] = "Nyelv",
             ["Manual controls"] = "Manuális irányítás",
             ["Tap a stack to place the current next block."] = "Koppints egy stackre az aktuális next blokk lerakásához.",
@@ -401,8 +429,10 @@ namespace StackMerge
             ["Scientific"] = "Tudományos",
 
             ["Audio"] = "Hangok",
+            ["Accessibility"] = "Akadálymentesség",
             ["Application"] = "Alkalmazás",
             ["Display"] = "Kijelző",
+            ["Manage save files"] = "Mentési fájlok kezelése",
             ["Block numerals visual"] = "Blokkszámok vizuális megjelenése",
             ["How to play"] = "Hogyan kell játszani",
 
@@ -726,6 +756,42 @@ namespace StackMerge
             ["PLAN deselected"] = "PLAN mellőzve",
             ["PLAN tuning updated"] = "PLAN tuning mdosítva",
             ["PLAN tuning reset"] = "PLAN tuning visszaállítva",
+
+            ["Export"] = "Exportálás",
+            ["Import"] = "Importálás",
+            ["To import your game data, paste in your export text.\n\n" +
+                "Importing will overwrite all progress in all of your saves, and it will not be possible to recover old progress."] =
+            "A játékadatok importálásához illeszd be az exportált szöveget.\n\n" +
+            "Az importálás felülírja az összes mentésedben lévő összes előrehaladást, a korábbi előrehaladás nem lesz visszaállítható.",
+
+            // ---- Dynamically-composed labels (translated piece-by-piece via L() at composition) -----
+            ["reach Prestige"] = "érd el a Prestige",
+            ["rack FLOPS"] = "rack FLOPS",
+            ["TPU / Fabric"] = "TPU / Szövet",
+            ["Effect"] = "Hatás",
+            ["Level"] = "Szint",
+            ["Completed goals"] = "Teljesített célok",
+            ["Best run"] = "Legjobb run",
+            ["moves"] = "lépés",
+            ["manual"] = "manuális",
+            ["Restart in"] = "Újraindítás",
+            ["Equipped Agents"] = "Felszerelt Ügynökök",
+            ["Active Modifiers"] = "Aktív Módosítók",
+            ["Buy all Facility Upgrades"] = "Vedd meg az összes Létesítményfejlesztést",
+            ["Offline cap"] = "Offline limit",
+            ["Offline efficiency"] = "Offline hatékonyság",
+            ["New-high learning"] = "Új-csúcs tanulás",
+            ["Survival shaping"] = "Túlélés-formálás",
+            ["PPO Normal mode at"] = "PPO Normál mód",
+            ["Start with"] = "Kezdés:",
+            ["cycle frames"] = "ciklus frame",
+            ["frames retained"] = "frame megőrizve",
+            ["training: +0 chips"] = "tréning: +0 chip",
+            ["Pickaxe"] = "Csákány",
+            ["Scrubbed"] = "Törölve",
+            ["Merge"] = "Merge",
+            ["Combo"] = "Kombó",
+            ["Spent"] = "Költött",
         };
 
         public static void ClearRegisteredTranslations()
@@ -841,13 +907,29 @@ namespace StackMerge
                 return true;
             }
 
-            if (language == StackMergeLanguage.Magyar && Hungarian.TryGetValue(key, out value))
+            Dictionary<string, string> builtIn = GetBuiltInTable(language);
+            if (builtIn != null && builtIn.TryGetValue(key, out value))
             {
                 return true;
             }
 
             value = null;
             return false;
+        }
+
+        // The compiled-in dictionary for a language (Hungarian is inline; the other four live in their
+        // own StackMergeLocalization{De,Fr,Es,Ru} files). English has none — it is the source text.
+        private static Dictionary<string, string> GetBuiltInTable(StackMergeLanguage language)
+        {
+            return language switch
+            {
+                StackMergeLanguage.Magyar => Hungarian,
+                StackMergeLanguage.Deutsch => StackMergeLocalizationDe.Table,
+                StackMergeLanguage.Francais => StackMergeLocalizationFr.Table,
+                StackMergeLanguage.Espanol => StackMergeLocalizationEs.Table,
+                StackMergeLanguage.Russian => StackMergeLocalizationRu.Table,
+                _ => null
+            };
         }
 
         private static string ReplaceKnownPrefixes(string line)
@@ -942,6 +1024,25 @@ namespace StackMerge
             translated = ReplacePrefix(translated, "Requires:", "Követelmény:");
             translated = ReplacePrefix(translated, "Requires every Modifier maxed:", "Minden Módosítót maxolni kell:");
             translated = ReplacePrefix(translated, "Reset for ", "Reset jutalom: ");
+            // Research "Effect:" detail line + the effect-summary fragments it contains. These run
+            // BEFORE the generic " frames" -> " frame" replacement below, so they match the original
+            // English wording.
+            translated = ReplacePrefix(translated, "Effect:", "Hatás:");
+            translated = translated.Replace("frames retained", "frame megőrizve");
+            translated = translated.Replace("cycle frames", "ciklus frame");
+            translated = translated.Replace("PPO Normal mode at ", "PPO Normal mód ");
+            translated = translated.Replace("New-high learning ", "Új-csúcs tanulás ");
+            translated = translated.Replace("Survival shaping ", "Túlélés-formálás ");
+            translated = translated.Replace("Offline efficiency ", "Offline hatékonyság ");
+            translated = translated.Replace("Offline cap ", "Offline limit ");
+            translated = translated.Replace("No automation is remembered yet.", "Még nincs megőrzött automatizálás.");
+            translated = translated.Replace("Auto Solve unlock remembered.", "Auto Solve feloldás megőrizve.");
+            translated = translated.Replace("Auto Restart unlock and ", "Auto Restart feloldás és ");
+            translated = translated.Replace(" tokens remembered.", " token megőrizve.");
+            translated = translated.Replace("Auto Solve, Auto Restart, tokens, and Solver Tuning remembered.", "Auto Solve, Auto Restart, tokenek és Solver Tuning megőrizve.");
+            translated = translated.Replace("No algorithms remembered yet.", "Még nincs megőrzött algoritmus.");
+            translated = translated.Replace("Start with ", "Kezdés: ");
+            translated = translated.Replace("Algorithm activates in ", "Az algoritmus indul: ");
             translated = translated.Replace("Agents ", "Ügynökök ");
             translated = translated.Replace("Solvers ", "Solverek ");
             translated = translated.Replace("Runs ", "Runok ");
